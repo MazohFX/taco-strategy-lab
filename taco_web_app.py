@@ -390,12 +390,14 @@ def render_cot_gauge(title: str, stats: dict) -> None:
     score = stats["score"]
     label = stats["label"]
     color = "#22c55e" if score > 55 else "#ef4444" if score < 45 else "#94a3b8"
+    st.markdown(f"### {title}")
+    st.markdown(f"**{label}**")
     fig = go.Figure(
         go.Indicator(
             mode="gauge+number",
             value=score,
             number={"suffix": "%", "font": {"size": 32}},
-            title={"text": f"<b>{title}</b><br><span style='font-size:0.9em'>{label}</span>", "font": {"size": 19}},
+            title={"text": ""},
             gauge={
                 "axis": {"range": [0, 100], "tickvals": [0, 25, 50, 75, 100], "ticktext": ["Short", "25", "Neutral", "75", "Long"]},
                 "bar": {"color": color},
@@ -410,7 +412,7 @@ def render_cot_gauge(title: str, stats: dict) -> None:
             },
         )
     )
-    fig.update_layout(height=245, margin=dict(l=8, r=8, t=62, b=8))
+    fig.update_layout(height=225, margin=dict(l=8, r=8, t=18, b=8))
     st.plotly_chart(fig, use_container_width=True)
     st.markdown(
         f"""
