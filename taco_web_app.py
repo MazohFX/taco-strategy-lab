@@ -193,6 +193,14 @@ def backtest(df: pd.DataFrame, settings: Settings) -> tuple[pd.DataFrame, pd.Dat
                 equity += pnl
                 mae = ((position["low"] - position["entry"]) / position["entry"] * 100) if side == "Long" else ((position["entry"] - position["high"]) / position["entry"] * 100)
                 mfe = ((position["high"] - position["entry"]) / position["entry"] * 100) if side == "Long" else ((position["entry"] - position["low"]) / position["entry"] * 100)
+                realized_pct = pnl_points / position["entry"] * 100
+                risk_points = abs(position["entry"] - position["stop"])
+                r_multiple = pnl_points / risk_points if risk_points > 0 else np.nan
+                stop_breach_pct = 0.0
+                if side == "Long":
+                    stop_breach_pct = max(0.0, (position["stop"] - position["low"]) / position["entry"] * 100)
+                else:
+                    stop_breach_pct = max(0.0, (position["high"] - position["stop"]) / position["entry"] * 100)
                 trades.append({
                     "entry_date": position["date"],
                     "exit_date": date,
@@ -203,8 +211,11 @@ def backtest(df: pd.DataFrame, settings: Settings) -> tuple[pd.DataFrame, pd.Dat
                     "qty": position["qty"],
                     "pnl": pnl,
                     "pnl_pct_equity": pnl / max(settings.initial_capital, 1) * 100,
+                    "realized_pct": realized_pct,
+                    "r_multiple": r_multiple,
                     "mae_pct": mae,
                     "mfe_pct": mfe,
+                    "stop_breach_pct": stop_breach_pct,
                     "bars": i - position["bar"],
                 })
                 position = None
@@ -238,30 +249,93 @@ def backtest(df: pd.DataFrame, settings: Settings) -> tuple[pd.DataFrame, pd.Dat
     equity_df = pd.DataFrame(equity_rows).set_index("date") if equity_rows else pd.DataFrame(columns=["equity"])
 
     if trades_df.empty:
-        metrics = {"Trades": 0, "Winrate": np.nan, "Profit Factor": np.nan, "Net Profit": 0, "Max DD": np.nan, "Avg MAE": np.nan, "Avg MFE": np.nan}
+        metrics = {
+            "Trades": 0,
+            "Winrate": np.nan,
+            "Profit Factor": np.nan,
+            "Net Profit": 0,
+            "Max DD": np.nan,
+            "Intratrade MAE": np.nan,
+            "Avg MFE": np.nan,
+            "Avg Realized Win": np.nan,
+            "Avg Realized Loss": np.nan,
+            "Avg R": np.nan,
+            "Expectancy R": np.nan,
+            "Max Loss Streak": 0,
+            "Stop Breach Count": 0,
+            "Stop Breach Avg": np.nan,
+        }
     else:
         wins = trades_df[trades_df["pnl"] > 0]
         losses = trades_df[trades_df["pnl"] <= 0]
         gross_profit = wins["pnl"].sum()
         gross_loss = abs(losses["pnl"].sum())
         dd = equity_df["equity"] / equity_df["equity"].cummax() - 1
+        loss_flags = (trades_df["pnl"] <= 0).astype(int).tolist()
+        max_loss_streak = 0
+        current_loss_streak = 0
+        for flag in loss_flags:
+            if flag:
+                current_loss_streak += 1
+                max_loss_streak = max(max_loss_streak, current_loss_streak)
+            else:
+                current_loss_streak = 0
+        stop_breaches = trades_df[trades_df["stop_breach_pct"] > 0]
         metrics = {
             "Trades": len(trades_df),
             "Winrate": len(wins) / len(trades_df) * 100,
             "Profit Factor": gross_profit / gross_loss if gross_loss else np.nan,
             "Net Profit": equity - settings.initial_capital,
             "Max DD": dd.min() * 100,
-            "Avg MAE": trades_df["mae_pct"].mean(),
+            "Intratrade MAE": trades_df["mae_pct"].mean(),
             "Avg MFE": trades_df["mfe_pct"].mean(),
+            "Avg Realized Win": wins["realized_pct"].mean() if not wins.empty else np.nan,
+            "Avg Realized Loss": losses["realized_pct"].mean() if not losses.empty else np.nan,
+            "Avg R": trades_df["r_multiple"].mean(),
+            "Expectancy R": trades_df["r_multiple"].mean(),
+            "Max Loss Streak": max_loss_streak,
+            "Stop Breach Count": len(stop_breaches),
+            "Stop Breach Avg": stop_breaches["stop_breach_pct"].mean() if not stop_breaches.empty else 0.0,
         }
     return trades_df, equity_df, metrics
+
+
+def plot_backtest_charts(df: pd.DataFrame, trades: pd.DataFrame, equity: pd.DataFrame, settings: Settings) -> None:
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=df.index, open=df["open"], high=df["high"], low=df["low"], close=df["close"], name="Price"))
+    if not trades.empty:
+        longs = trades[trades["side"] == "Long"]
+        shorts = trades[trades["side"] == "Short"]
+        if not longs.empty:
+            fig.add_trace(go.Scatter(x=longs["entry_date"], y=longs["entry"], mode="markers", name="Long", marker=dict(color="#2f6bff", symbol="triangle-up", size=10)))
+        if not shorts.empty:
+            fig.add_trace(go.Scatter(x=shorts["entry_date"], y=shorts["entry"], mode="markers", name="Short", marker=dict(color="#ff3b3b", symbol="triangle-down", size=10)))
+    fig.update_layout(height=430, margin=dict(l=20, r=20, t=30, b=20), xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig, use_container_width=True)
+
+    osc_fig = go.Figure()
+    osc_fig.add_trace(go.Scatter(x=df.index, y=df["osc"], mode="lines", name="TACO Oscillator", line=dict(color="#bd37dc", width=2)))
+    osc_fig.add_hline(y=settings.upper, line_dash="dash", line_color="rgba(255,0,0,.45)")
+    osc_fig.add_hline(y=0, line_dash="dash", line_color="rgba(100,100,100,.45)")
+    osc_fig.add_hline(y=settings.lower, line_dash="dash", line_color="rgba(0,200,90,.45)")
+    osc_fig.update_layout(height=260, margin=dict(l=20, r=20, t=20, b=20), yaxis=dict(range=[-110, 110]))
+    st.plotly_chart(osc_fig, use_container_width=True)
+
+    if not equity.empty:
+        equity_fig = go.Figure()
+        equity_fig.add_trace(go.Scatter(x=equity.index, y=equity["equity"], mode="lines", name="Equity", line=dict(color="#2aa889", width=2)))
+        equity_fig.update_layout(height=260, margin=dict(l=20, r=20, t=20, b=20))
+        st.plotly_chart(equity_fig, use_container_width=True)
 
 
 st.title("TACO Strategy Lab")
 st.caption("Python-Backtester und visuelle Website fuer den TACO Asset Comparison Oscillator.")
 
+CORE_METRICS = ["Trades", "Winrate", "Profit Factor", "Net Profit", "Max DD", "Expectancy R", "Max Loss Streak"]
+PRACTICE_METRICS = ["Avg Realized Win", "Avg Realized Loss", "Avg R", "Intratrade MAE", "Avg MFE", "Stop Breach Count", "Stop Breach Avg"]
+
 with st.sidebar:
-    test_mode = st.radio("Modus", ["Manual Backtest", "Cycle Scanner"], horizontal=False)
+    test_mode = st.radio("Modus", ["Manual Backtest", "Cycle Scanner", "SL Scanner"], horizontal=False)
 
     st.header("Daten")
     data_mode = st.radio("Datenquelle", ["Demo", "CSV Upload", "Yahoo Symbol"], horizontal=True)
@@ -336,6 +410,29 @@ with st.sidebar:
         scan_cycle_to = st.number_input("Cycle To", 2, 100, 30)
         scan_cycle_step = st.number_input("Cycle Step", 1, 20, 1)
         run_scan = st.button("Run Cycle Scan", type="primary")
+        sl_asset_preset = list(ASSET_PRESETS.keys())[0]
+        sl_comp_preset = list(COMPARISON_PRESETS.keys())[0]
+        sl_directions = []
+        sl_from = 0.25
+        sl_to = 2.0
+        sl_step = 0.05
+        run_sl_scan = False
+    elif test_mode == "SL Scanner":
+        scan_assets = []
+        scan_comps = []
+        scan_directions = []
+        scan_cycle_from = 5
+        scan_cycle_to = 30
+        scan_cycle_step = 1
+        run_scan = False
+        st.header("SL Scanner")
+        sl_asset_preset = st.selectbox("SL Scanner Asset", list(ASSET_PRESETS.keys()))
+        sl_comp_preset = st.selectbox("SL Scanner Comparison", list(COMPARISON_PRESETS.keys()))
+        sl_directions = st.multiselect("SL Scanner Directions", ["Long Only", "Short Only", "Long & Short"], default=["Long Only"])
+        sl_from = st.number_input("SL From %", 0.05, 20.0, 0.25, step=0.05)
+        sl_to = st.number_input("SL To %", 0.05, 20.0, 2.00, step=0.05)
+        sl_step = st.number_input("SL Step %", 0.05, 5.0, 0.05, step=0.05)
+        run_sl_scan = st.button("Run SL Scan", type="primary")
     else:
         scan_assets = []
         scan_comps = []
@@ -344,10 +441,21 @@ with st.sidebar:
         scan_cycle_to = 30
         scan_cycle_step = 1
         run_scan = False
+        sl_asset_preset = list(ASSET_PRESETS.keys())[0]
+        sl_comp_preset = list(COMPARISON_PRESETS.keys())[0]
+        sl_directions = []
+        sl_from = 0.25
+        sl_to = 2.0
+        sl_step = 0.05
+        run_sl_scan = False
 
 with st.expander("Info: Wie funktioniert der TACO Backtest?", expanded=True):
     st.markdown(
         """
+        **Strategie-Ablauf:** Die Strategie wartet auf ein bestaetigtes TACO-Signal zum Daily-Close.
+        Danach wird der Entry zum Schlusskurs der Tageskerze simuliert. Stop Loss und Take Profit werden
+        direkt beim Entry fix berechnet und nicht nachtraeglich verschoben.
+
         **Berechnung:** Das Chart-Asset wird mit einem Vergleichsasset verglichen. Im Modus `Ratio Z-Score`
         wird `Chart Close / Comparison Close` berechnet, per Mittelwert und Standardabweichung normalisiert
         und mit `tanh()` auf etwa `-100` bis `+100` begrenzt.
@@ -359,9 +467,24 @@ with st.expander("Info: Wie funktioniert der TACO Backtest?", expanded=True):
         von oben zurueck unter die Ueberbewertungszone.
 
         **Risk:** `Risk Per Trade %` bestimmt dein Kontorisiko. `Fixed Stop Loss %` bestimmt den Abstand vom
-        Entry zum Stop. Die Positionsgroesse wird daraus automatisch berechnet.
+        Entry zum Stop. Die Positionsgroesse wird daraus automatisch berechnet. Beispiel: Bei 10.000 USD Konto,
+        1% Risiko und 0,70% Stop wird die Positionsgroesse so gewaehlt, dass ein sauberer Stop etwa 100 USD
+        Verlust entspricht.
 
         **Exit:** Je nach Einstellung per Risk-Reward-Target, Fixed-%-Target, Zero-Line-Exit oder Time-Exit.
+
+        **Manual Backtest:** Du testest ein einzelnes Setup visuell.
+
+        **Cycle Scanner:** Die App testet viele Cycle Lengths ueber ausgewaehlte Assets, Vergleichsassets
+        und Richtungen.
+
+        **SL Scanner:** Die App testet einen Stop-Loss-Bereich, z.B. 0,25% bis 2,00% in 0,05er-Schritten.
+        Wichtig fuer die Auswertung sind hier `Avg Realized Win`, `Avg Realized Loss`, `Expectancy R`,
+        `Max Loss Streak`, `Intratrade MAE` und `Stop Breach`.
+
+        **Hinweis:** `Intratrade MAE` misst den groessten Kerzen-Gegenlauf waehrend des Trades. Das kann tiefer
+        sein als dein Stop, weil Daily-Kerzen nur Open/High/Low/Close liefern. `Avg Realized Loss` und `Avg R`
+        zeigen dagegen, was im Backtest tatsaechlich realisiert wurde.
         """
     )
 
@@ -371,9 +494,164 @@ if asset_df is None or comp_df is None:
         st.stop()
     if test_mode == "Cycle Scanner" and run_scan:
         pass
+    elif test_mode == "SL Scanner" and not run_sl_scan:
+        st.info("Waehle links Asset, Comparison Asset, Direction und SL Range aus. Danach auf Run SL Scan klicken.")
+        st.stop()
+    elif test_mode == "SL Scanner" and run_sl_scan:
+        pass
     else:
         st.info("Bitte Daten laden oder Demo nutzen.")
         st.stop()
+
+if test_mode == "SL Scanner":
+    if not run_sl_scan:
+        st.info("Waehle links Asset, Comparison Asset, Direction und SL Range aus. Danach auf Run SL Scan klicken.")
+        st.stop()
+
+    if sl_to < sl_from:
+        st.error("SL To muss groesser oder gleich SL From sein.")
+        st.stop()
+
+    asset_symbol = ASSET_PRESETS[sl_asset_preset]
+    comp_symbol = COMPARISON_PRESETS[sl_comp_preset]
+    asset_data = load_yahoo(asset_symbol)
+    comp_data = load_yahoo(comp_symbol)
+    if asset_data is None or comp_data is None:
+        st.error("Yahoo-Daten konnten fuer den SL Scanner nicht geladen werden.")
+        st.stop()
+
+    sl_values = np.round(np.arange(float(sl_from), float(sl_to) + float(sl_step) / 2, float(sl_step)), 4)
+    rows = []
+    progress = st.progress(0)
+    combos = [(direction, sl) for direction in sl_directions for sl in sl_values]
+    if not combos:
+        st.warning("Bitte mindestens eine Direction auswaehlen.")
+        st.stop()
+
+    for idx, (direction, sl) in enumerate(combos, start=1):
+        sl_settings = Settings(
+            cycle_length=settings.cycle_length,
+            smoothing=settings.smoothing,
+            softness=settings.softness,
+            mode=settings.mode,
+            trade_direction=direction,
+            start_year=settings.start_year,
+            end_year=settings.end_year,
+            upper=settings.upper,
+            lower=settings.lower,
+            risk_pct=settings.risk_pct,
+            stop_pct=float(sl),
+            tp_mode=settings.tp_mode,
+            rr=settings.rr,
+            fixed_tp_pct=settings.fixed_tp_pct,
+            exit_on_zero=settings.exit_on_zero,
+            time_exit=settings.time_exit,
+            exit_after_bars=settings.exit_after_bars,
+            initial_capital=settings.initial_capital,
+            commission_pct=settings.commission_pct,
+        )
+        sl_df = calculate_oscillator(asset_data, comp_data, sl_settings)
+        sl_trades, _, sl_metrics = backtest(sl_df, sl_settings)
+        rows.append({
+            "Asset": sl_asset_preset.split(" proxy:")[0].replace(" proxy", ""),
+            "Comparison": sl_comp_preset.split(" proxy:")[0].replace(" futures", ""),
+            "Asset Symbol": asset_symbol,
+            "Comparison Symbol": comp_symbol,
+            "Direction": direction,
+            "Cycle": settings.cycle_length,
+            "SL %": float(sl),
+            "Trades": sl_metrics["Trades"],
+            "Winrate": sl_metrics["Winrate"],
+            "Profit Factor": sl_metrics["Profit Factor"],
+            "Net Profit": sl_metrics["Net Profit"],
+            "Max DD": sl_metrics["Max DD"],
+            "Avg Realized Win": sl_metrics["Avg Realized Win"],
+            "Avg Realized Loss": sl_metrics["Avg Realized Loss"],
+            "Avg R": sl_metrics["Avg R"],
+            "Expectancy R": sl_metrics["Expectancy R"],
+            "Max Loss Streak": sl_metrics["Max Loss Streak"],
+            "Intratrade MAE": sl_metrics["Intratrade MAE"],
+            "Avg MFE": sl_metrics["Avg MFE"],
+            "Stop Breach Count": sl_metrics["Stop Breach Count"],
+            "Stop Breach Avg": sl_metrics["Stop Breach Avg"],
+        })
+        progress.progress(idx / len(combos))
+
+    sl_results = pd.DataFrame(rows).sort_values(["Profit Factor", "Net Profit"], ascending=[False, False]).reset_index(drop=True)
+    st.subheader("SL Scanner Ergebnisse")
+    st.caption("Suche robuste Stop-Zonen, nicht nur den besten Einzelwert. Gute Stops bleiben oft ueber mehrere benachbarte SL-Stufen stabil.")
+    st.dataframe(sl_results, use_container_width=True)
+
+    st.subheader("Top robuste SL-Bereiche")
+    robust_rows = []
+    for direction, group in sl_results.dropna(subset=["Profit Factor"]).groupby("Direction"):
+        group = group.sort_values("SL %")
+        for _, row in group.iterrows():
+            sl = row["SL %"]
+            neighbors = group[group["SL %"].between(sl - sl_step, sl + sl_step)]
+            if len(neighbors) >= 2:
+                robust_rows.append({
+                    "Direction": direction,
+                    "Center SL %": sl,
+                    "Neighbor Count": len(neighbors),
+                    "Avg Profit Factor": neighbors["Profit Factor"].mean(),
+                    "Avg Net Profit": neighbors["Net Profit"].mean(),
+                    "Avg Expectancy R": neighbors["Expectancy R"].mean(),
+                    "Worst Max DD": neighbors["Max DD"].min(),
+                    "Avg Trades": neighbors["Trades"].mean(),
+                    "Avg Realized Loss": neighbors["Avg Realized Loss"].mean(),
+                })
+    robust_sl = pd.DataFrame(robust_rows)
+    if not robust_sl.empty:
+        robust_sl = robust_sl.sort_values(["Avg Profit Factor", "Avg Expectancy R"], ascending=[False, False])
+        st.dataframe(robust_sl.head(30), use_container_width=True)
+
+    st.subheader("Ausgewaehltes SL-Setup visualisieren")
+    labels = [
+        f"#{idx} | {row.Direction} | SL {row['SL %']:.2f}% | PF {row['Profit Factor']:.2f} | ExpR {row['Expectancy R']:.2f} | Net {row['Net Profit']:.0f}"
+        for idx, row in sl_results.head(100).iterrows()
+    ]
+    selected_label = st.selectbox("SL-Ergebnis anzeigen", labels)
+    selected_idx = int(selected_label.split(" | ")[0].replace("#", ""))
+    selected = sl_results.loc[selected_idx]
+    selected_settings = Settings(
+        cycle_length=int(selected["Cycle"]),
+        smoothing=settings.smoothing,
+        softness=settings.softness,
+        mode=settings.mode,
+        trade_direction=str(selected["Direction"]),
+        start_year=settings.start_year,
+        end_year=settings.end_year,
+        upper=settings.upper,
+        lower=settings.lower,
+        risk_pct=settings.risk_pct,
+        stop_pct=float(selected["SL %"]),
+        tp_mode=settings.tp_mode,
+        rr=settings.rr,
+        fixed_tp_pct=settings.fixed_tp_pct,
+        exit_on_zero=settings.exit_on_zero,
+        time_exit=settings.time_exit,
+        exit_after_bars=settings.exit_after_bars,
+        initial_capital=settings.initial_capital,
+        commission_pct=settings.commission_pct,
+    )
+    selected_df = calculate_oscillator(asset_data, comp_data, selected_settings)
+    selected_trades, selected_equity, selected_metrics = backtest(selected_df, selected_settings)
+    metric_cols = st.columns(7)
+    for col, key in zip(metric_cols, CORE_METRICS):
+        val = selected_metrics[key]
+        col.metric(key, "n/a" if pd.isna(val) else f"{val:,.2f}")
+    practice_cols = st.columns(7)
+    for col, key in zip(practice_cols, PRACTICE_METRICS):
+        val = selected_metrics[key]
+        col.metric(key, "n/a" if pd.isna(val) else f"{val:,.2f}")
+    plot_backtest_charts(selected_df, selected_trades, selected_equity, selected_settings)
+    st.subheader("Trades des ausgewaehlten SL-Setups")
+    st.dataframe(selected_trades, use_container_width=True)
+
+    csv = sl_results.to_csv(index=False).encode("utf-8")
+    st.download_button("SL Scanner Ergebnisse als CSV laden", data=csv, file_name="taco_sl_scan.csv", mime="text/csv")
+    st.stop()
 
 if test_mode == "Cycle Scanner":
     if not run_scan:
@@ -440,6 +718,8 @@ if test_mode == "Cycle Scanner":
         rows.append({
             "Asset": asset_name.split(" proxy:")[0].replace(" proxy", ""),
             "Comparison": comp_name.split(" proxy:")[0].replace(" futures", ""),
+            "Asset Symbol": asset_symbol,
+            "Comparison Symbol": comp_symbol,
             "Direction": direction,
             "Cycle": cycle,
             "Trades": scan_metrics["Trades"],
@@ -447,8 +727,15 @@ if test_mode == "Cycle Scanner":
             "Profit Factor": scan_metrics["Profit Factor"],
             "Net Profit": scan_metrics["Net Profit"],
             "Max DD": scan_metrics["Max DD"],
-            "Avg MAE": scan_metrics["Avg MAE"],
+            "Expectancy R": scan_metrics["Expectancy R"],
+            "Max Loss Streak": scan_metrics["Max Loss Streak"],
+            "Avg Realized Win": scan_metrics["Avg Realized Win"],
+            "Avg Realized Loss": scan_metrics["Avg Realized Loss"],
+            "Avg R": scan_metrics["Avg R"],
+            "Intratrade MAE": scan_metrics["Intratrade MAE"],
             "Avg MFE": scan_metrics["Avg MFE"],
+            "Stop Breach Count": scan_metrics["Stop Breach Count"],
+            "Stop Breach Avg": scan_metrics["Stop Breach Avg"],
         })
         progress.progress(idx / len(combos))
 
@@ -458,6 +745,7 @@ if test_mode == "Cycle Scanner":
         st.stop()
 
     results = results.sort_values(["Profit Factor", "Net Profit"], ascending=[False, False])
+    results = results.reset_index(drop=True)
     st.subheader("Cycle Scanner Ergebnisse")
     st.caption("Sortiere nicht nur nach dem besten Einzelwert. Suche stabile Cluster ueber mehrere benachbarte Cycles.")
     st.dataframe(results, use_container_width=True)
@@ -487,6 +775,53 @@ if test_mode == "Cycle Scanner":
         robust = robust.sort_values(["Avg Profit Factor", "Avg Net Profit"], ascending=[False, False])
         st.dataframe(robust.head(30), use_container_width=True)
 
+    st.subheader("Ausgewaehltes Scanner-Setup visualisieren")
+    st.caption("Waehle ein Ergebnis aus der Scanner-Tabelle aus. Danach wird es wie ein manueller Backtest mit Chart, Oszillator, Equity und Trades angezeigt.")
+    labels = [
+        f"#{idx} | {row.Asset} | {row.Comparison} | {row.Direction} | Cycle {int(row.Cycle)} | PF {row['Profit Factor']:.2f} | Net {row['Net Profit']:.0f}"
+        for idx, row in results.head(100).iterrows()
+    ]
+    selected_label = st.selectbox("Scanner-Ergebnis anzeigen", labels)
+    selected_idx = int(selected_label.split(" | ")[0].replace("#", ""))
+    selected = results.loc[selected_idx]
+
+    selected_asset_data = data_cache[selected["Asset Symbol"]]
+    selected_comp_data = data_cache[selected["Comparison Symbol"]]
+    selected_settings = Settings(
+        cycle_length=int(selected["Cycle"]),
+        smoothing=settings.smoothing,
+        softness=settings.softness,
+        mode=settings.mode,
+        trade_direction=str(selected["Direction"]),
+        start_year=settings.start_year,
+        end_year=settings.end_year,
+        upper=settings.upper,
+        lower=settings.lower,
+        risk_pct=settings.risk_pct,
+        stop_pct=settings.stop_pct,
+        tp_mode=settings.tp_mode,
+        rr=settings.rr,
+        fixed_tp_pct=settings.fixed_tp_pct,
+        exit_on_zero=settings.exit_on_zero,
+        time_exit=settings.time_exit,
+        exit_after_bars=settings.exit_after_bars,
+        initial_capital=settings.initial_capital,
+        commission_pct=settings.commission_pct,
+    )
+    selected_df = calculate_oscillator(selected_asset_data, selected_comp_data, selected_settings)
+    selected_trades, selected_equity, selected_metrics = backtest(selected_df, selected_settings)
+    metric_cols = st.columns(7)
+    for col, key in zip(metric_cols, CORE_METRICS):
+        val = selected_metrics[key]
+        col.metric(key, "n/a" if pd.isna(val) else f"{val:,.2f}")
+    practice_cols = st.columns(7)
+    for col, key in zip(practice_cols, PRACTICE_METRICS):
+        val = selected_metrics[key]
+        col.metric(key, "n/a" if pd.isna(val) else f"{val:,.2f}")
+    plot_backtest_charts(selected_df, selected_trades, selected_equity, selected_settings)
+    st.subheader("Trades des ausgewaehlten Scanner-Setups")
+    st.dataframe(selected_trades, use_container_width=True)
+
     csv = results.to_csv(index=False).encode("utf-8")
     st.download_button("Scanner Ergebnisse als CSV laden", data=csv, file_name="taco_cycle_scan.csv", mime="text/csv")
     st.stop()
@@ -499,33 +834,16 @@ df = calculate_oscillator(asset_df, comp_df, settings)
 trades, equity, metrics = backtest(df, settings)
 
 cols = st.columns(7)
-for col, key in zip(cols, ["Trades", "Winrate", "Profit Factor", "Net Profit", "Max DD", "Avg MAE", "Avg MFE"]):
+for col, key in zip(cols, CORE_METRICS):
     val = metrics[key]
     col.metric(key, "n/a" if pd.isna(val) else f"{val:,.2f}")
 
-fig = go.Figure()
-fig.add_trace(go.Candlestick(x=df.index, open=df["open"], high=df["high"], low=df["low"], close=df["close"], name="Price"))
-if not trades.empty:
-    longs = trades[trades["side"] == "Long"]
-    shorts = trades[trades["side"] == "Short"]
-    fig.add_trace(go.Scatter(x=longs["entry_date"], y=longs["entry"], mode="markers", name="Long", marker=dict(color="#2f6bff", symbol="triangle-up", size=10)))
-    fig.add_trace(go.Scatter(x=shorts["entry_date"], y=shorts["entry"], mode="markers", name="Short", marker=dict(color="#ff3b3b", symbol="triangle-down", size=10)))
-fig.update_layout(height=430, margin=dict(l=20, r=20, t=30, b=20), xaxis_rangeslider_visible=False)
-st.plotly_chart(fig, use_container_width=True)
+practice_cols = st.columns(7)
+for col, key in zip(practice_cols, PRACTICE_METRICS):
+    val = metrics[key]
+    col.metric(key, "n/a" if pd.isna(val) else f"{val:,.2f}")
 
-osc_fig = go.Figure()
-osc_fig.add_trace(go.Scatter(x=df.index, y=df["osc"], mode="lines", name="TACO Oscillator", line=dict(color="#bd37dc", width=2)))
-osc_fig.add_hline(y=settings.upper, line_dash="dash", line_color="rgba(255,0,0,.45)")
-osc_fig.add_hline(y=0, line_dash="dash", line_color="rgba(100,100,100,.45)")
-osc_fig.add_hline(y=settings.lower, line_dash="dash", line_color="rgba(0,200,90,.45)")
-osc_fig.update_layout(height=260, margin=dict(l=20, r=20, t=20, b=20), yaxis=dict(range=[-110, 110]))
-st.plotly_chart(osc_fig, use_container_width=True)
-
-if not equity.empty:
-    equity_fig = go.Figure()
-    equity_fig.add_trace(go.Scatter(x=equity.index, y=equity["equity"], mode="lines", name="Equity", line=dict(color="#2aa889", width=2)))
-    equity_fig.update_layout(height=260, margin=dict(l=20, r=20, t=20, b=20))
-    st.plotly_chart(equity_fig, use_container_width=True)
+plot_backtest_charts(df, trades, equity, settings)
 
 st.subheader("Trades")
 st.dataframe(trades, use_container_width=True)
