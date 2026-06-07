@@ -141,9 +141,14 @@ def load_fear_greed() -> dict | None:
             f"https://production.dataviz.cnn.io/index/fearandgreed/graphdata/{today}",
         ]
         headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json,text/plain,*/*",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9,de;q=0.8",
+            "Origin": "https://edition.cnn.com",
             "Referer": "https://edition.cnn.com/markets/fear-and-greed",
+            "Sec-Fetch-Site": "same-site",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
         }
         payload = None
         for url in urls:
@@ -230,16 +235,22 @@ def render_fear_greed_panel() -> None:
         st.markdown("[Quelle: CNN Fear & Greed Index](https://edition.cnn.com/markets/fear-and-greed)")
 
 
-COT_DEFAULT_MARKETS = [
-    "E-MINI S&P 500",
-    "NASDAQ-100 Consolidated",
-    "NASDAQ MINI",
-    "MICRO E-MINI NASDAQ-100 INDEX",
-    "EURO FX",
-    "BRITISH POUND",
-    "JAPANESE YEN",
-    "CANADIAN DOLLAR",
-    "SWISS FRANC",
+COT_WATCHLIST = [
+    ("S&P500 Futures", ["E-MINI S&P 500", "S&P 500 STOCK INDEX", "S&P 500"]),
+    ("US30 Futures", ["DOW JONES", "DJIA"]),
+    ("NQ Futures", ["NASDAQ-100 Consolidated", "NASDAQ MINI", "MICRO E-MINI NASDAQ-100"]),
+    ("EURO Futures", ["EURO FX"]),
+    ("CANADA Futures", ["CANADIAN DOLLAR"]),
+    ("YEN Futures", ["JAPANESE YEN"]),
+    ("CHF Futures", ["SWISS FRANC"]),
+    ("Pfund Futures", ["BRITISH POUND"]),
+    ("AUD Futures", ["AUSTRALIAN DOLLAR"]),
+    ("NZD Futures", ["NEW ZEALAND DOLLAR"]),
+    ("DXY", ["U.S. DOLLAR INDEX", "US DOLLAR INDEX", "DOLLAR INDEX"]),
+    ("Gold", ["GOLD"]),
+    ("Silver", ["SILVER"]),
+    ("Copper", ["COPPER"]),
+    ("Platinum", ["PLATINUM"]),
 ]
 
 
@@ -278,6 +289,36 @@ def cot_bias_label(score: float) -> str:
 
 @st.cache_data(ttl=12 * 60 * 60)
 def load_cot_cme_legacy() -> tuple[pd.DataFrame, str | None]:
+    try:
+        from io import StringIO
+
+        import requests
+
+        url = "https://www.cftc.gov/dea/newcot/deafut.txt"
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        response.raise_for_status()
+        raw = pd.read_csv(StringIO(response.text))
+        rows = pd.DataFrame({
+            "market": raw["Market_and_Exchange_Names"].astype(str).str.strip(),
+            "code": raw.get("CFTC_Contract_Market_Code", ""),
+            "open_interest": pd.to_numeric(raw["Open_Interest_All"], errors="coerce"),
+            "noncomm_long": pd.to_numeric(raw["Noncommercial_Positions_Long_All"], errors="coerce"),
+            "noncomm_short": pd.to_numeric(raw["Noncommercial_Positions_Short_All"], errors="coerce"),
+            "noncomm_spread": pd.to_numeric(raw["Noncommercial_Positions_Spread_All"], errors="coerce"),
+            "comm_long": pd.to_numeric(raw["Commercial_Positions_Long_All"], errors="coerce"),
+            "comm_short": pd.to_numeric(raw["Commercial_Positions_Short_All"], errors="coerce"),
+            "total_long": pd.to_numeric(raw["Total_Reportable_Positions_Long_All"], errors="coerce"),
+            "total_short": pd.to_numeric(raw["Total_Reportable_Positions_Short_All"], errors="coerce"),
+            "retail_long": pd.to_numeric(raw["Nonreportable_Positions_Long_All"], errors="coerce"),
+            "retail_short": pd.to_numeric(raw["Nonreportable_Positions_Short_All"], errors="coerce"),
+        })
+        report_date = None
+        if "Report_Date_as_YYYY-MM-DD" in raw.columns and not raw.empty:
+            report_date = str(raw["Report_Date_as_YYYY-MM-DD"].iloc[0])
+        return rows.dropna(subset=["open_interest"]), report_date
+    except Exception:
+        pass
+
     try:
         import html
         import re
@@ -354,7 +395,7 @@ def render_cot_gauge(title: str, stats: dict) -> None:
             mode="gauge+number",
             value=score,
             number={"suffix": "%", "font": {"size": 32}},
-            title={"text": f"{title}<br><span style='font-size:0.75em'>{label}</span>"},
+            title={"text": f"<b>{title}</b><br><span style='font-size:0.9em'>{label}</span>", "font": {"size": 19}},
             gauge={
                 "axis": {"range": [0, 100], "tickvals": [0, 25, 50, 75, 100], "ticktext": ["Short", "25", "Neutral", "75", "Long"]},
                 "bar": {"color": color},
@@ -369,42 +410,68 @@ def render_cot_gauge(title: str, stats: dict) -> None:
             },
         )
     )
-    fig.update_layout(height=230, margin=dict(l=8, r=8, t=45, b=8))
+    fig.update_layout(height=245, margin=dict(l=8, r=8, t=62, b=8))
     st.plotly_chart(fig, use_container_width=True)
-    st.caption(
-        f"Long {stats['long']:,.0f} | Short {stats['short']:,.0f} | Net {stats['net']:,.0f}. "
-        f"Bereinigt: Long / (Long + Short) = {score:.1f}%."
+    st.markdown(
+        f"""
+        **Long:** {stats['long']:,.0f}  
+        **Short:** {stats['short']:,.0f}  
+        **Net:** {stats['net']:,.0f}  
+        **Bereinigt:** Long / (Long + Short) = {score:.1f}%
+        """
     )
+
+
+def find_cot_market(markets: list[str], queries: list[str]) -> str | None:
+    for query in queries:
+        match = next((m for m in markets if query.upper() in m.upper()), None)
+        if match:
+            return match
+    return None
+
+
+def build_cot_options(markets: list[str]) -> dict[str, str]:
+    options = {}
+    for label, queries in COT_WATCHLIST:
+        market = find_cot_market(markets, queries)
+        if market:
+            options[label] = market
+    return options
 
 
 def render_cot_panel(auto_match: bool, asset_label: str | None, asset_symbol: str | None) -> list[str]:
     data, report_date = load_cot_cme_legacy()
-    st.subheader("CFTC COT Positioning - CME Futures Only")
+    st.subheader("CFTC COT Positioning")
     if data.empty:
         st.warning("COT-Daten konnten gerade nicht geladen werden. Die CFTC-Seite kann externe Requests zeitweise blockieren.")
         st.markdown("[CFTC Commitments of Traders oeffnen](https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm)")
         return []
 
     markets = data["market"].tolist()
-    default_market = next((m for m in markets if "E-MINI S&P 500" in m), markets[0])
-    preset_markets = [m for label in COT_DEFAULT_MARKETS for m in markets if label in m]
-    ordered_markets = list(dict.fromkeys(preset_markets + markets))
+    options = build_cot_options(markets)
+    if not options:
+        st.warning("Die gewuenschte COT-Watchlist wurde in der aktuellen CFTC-Datei nicht gefunden.")
+        return markets
+    default_label = "S&P500 Futures" if "S&P500 Futures" in options else next(iter(options))
     inferred_query, inferred_reason = infer_cot_query_from_asset(asset_label, asset_symbol)
-    inferred_market = next((m for m in markets if inferred_query in m), default_market)
-    default_selection = inferred_market if auto_match else default_market
-    selected_market = st.selectbox(
+    inferred_market = find_cot_market(markets, [inferred_query]) or options[default_label]
+    inferred_label = next((label for label, market in options.items() if market == inferred_market), default_label)
+    default_selection = inferred_label if auto_match else default_label
+    selected_label = st.selectbox(
         "COT Market",
-        ordered_markets,
-        index=ordered_markets.index(default_selection) if default_selection in ordered_markets else 0,
+        list(options.keys()),
+        index=list(options.keys()).index(default_selection) if default_selection in options else 0,
         disabled=auto_match,
         help="COT-Daten sind Wochen-Daten. Die Auswahl betrifft nur das Positionierungs-Panel, nicht TACO.",
     )
+    selected_market = options[selected_label]
     if auto_match:
         selected_market = inferred_market
-        st.caption(f"Auto-match aktiv: {inferred_reason} -> {selected_market}. Fuer UK100/GER40 ist das ein Risk-Proxy, kein direkter CFD-COT-Markt.")
+        selected_label = inferred_label
+        st.caption(f"Auto-match aktiv: {inferred_reason} -> {selected_label} ({selected_market}). Fuer UK100/GER40 ist das ein Risk-Proxy, kein direkter CFD-COT-Markt.")
     row = data.loc[data["market"] == selected_market].iloc[0]
     st.caption(
-        f"Wochenbasierte COT-Daten, Report-Datum: {report_date or 'n/a'} | Markt: {selected_market} | "
+        f"Wochenbasierte COT-Daten, Report-Datum: {report_date or 'n/a'} | Auswahl: {selected_label} | CFTC-Markt: {selected_market} | "
         f"Open Interest: {row['open_interest']:,.0f}. Separates Positionierungs-Panel, nicht Teil der TACO-Logik."
     )
 
