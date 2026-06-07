@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -115,6 +116,315 @@ COMPARISON_PRESETS = {
     "Silver futures (SI=F)": "SI=F",
     "Oil futures (CL=F)": "CL=F",
 }
+
+
+def classify_fear_greed(score: float) -> str:
+    if score <= 24:
+        return "Extreme Fear"
+    if score <= 44:
+        return "Fear"
+    if score <= 55:
+        return "Neutral"
+    if score <= 75:
+        return "Greed"
+    return "Extreme Greed"
+
+
+@st.cache_data(ttl=30 * 60)
+def load_fear_greed() -> dict | None:
+    try:
+        import requests
+
+        today = date.today().isoformat()
+        urls = [
+            "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
+            f"https://production.dataviz.cnn.io/index/fearandgreed/graphdata/{today}",
+        ]
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json,text/plain,*/*",
+            "Referer": "https://edition.cnn.com/markets/fear-and-greed",
+        }
+        payload = None
+        for url in urls:
+            response = requests.get(url, headers=headers, timeout=8)
+            if response.ok:
+                payload = response.json()
+                break
+        if not payload:
+            return None
+
+        current = payload.get("fear_and_greed", {})
+        if not current and "data" in payload:
+            current = payload["data"].get("fear_and_greed", {})
+        score = current.get("score")
+        if isinstance(score, dict):
+            score = score.get("value")
+        if score is None:
+            hist = payload.get("fear_and_greed_historical", {}).get("data", [])
+            if hist:
+                score = hist[-1].get("y")
+        if score is None:
+            return None
+
+        score = float(score)
+        rating = current.get("rating") or current.get("status") or classify_fear_greed(score)
+        rating = str(rating).replace("_", " ").title()
+        return {
+            "score": score,
+            "rating": rating,
+            "previous_close": current.get("previous_close"),
+            "previous_1_week": current.get("previous_1_week"),
+            "previous_1_month": current.get("previous_1_month"),
+            "previous_1_year": current.get("previous_1_year"),
+            "updated": current.get("timestamp") or current.get("last_updated"),
+        }
+    except Exception:
+        return None
+
+
+def render_fear_greed_panel() -> None:
+    data = load_fear_greed()
+    st.subheader("CNN Fear & Greed Index")
+    if not data:
+        st.warning("Fear & Greed konnte gerade nicht geladen werden. CNN kann externe Requests zeitweise blockieren.")
+        st.markdown("[CNN Fear & Greed Index oeffnen](https://edition.cnn.com/markets/fear-and-greed)")
+        return
+
+    score = data["score"]
+    rating = data["rating"]
+    gauge_color = "#22c55e" if score > 55 else "#f59e0b" if score >= 45 else "#ef4444"
+
+    left, right = st.columns([1.15, 2])
+    with left:
+        fig = go.Figure(
+            go.Indicator(
+                mode="gauge+number",
+                value=score,
+                number={"font": {"size": 44}},
+                title={"text": rating},
+                gauge={
+                    "axis": {"range": [0, 100]},
+                    "bar": {"color": gauge_color},
+                    "steps": [
+                        {"range": [0, 25], "color": "rgba(239,68,68,.30)"},
+                        {"range": [25, 45], "color": "rgba(249,115,22,.24)"},
+                        {"range": [45, 55], "color": "rgba(148,163,184,.24)"},
+                        {"range": [55, 75], "color": "rgba(132,204,22,.24)"},
+                        {"range": [75, 100], "color": "rgba(34,197,94,.30)"},
+                    ],
+                    "threshold": {"line": {"color": "white", "width": 3}, "value": score},
+                },
+            )
+        )
+        fig.update_layout(height=220, margin=dict(l=16, r=16, t=36, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+    with right:
+        cols = st.columns(5)
+        cols[0].metric("Now", f"{score:.0f}", rating)
+        cols[1].metric("Prev Close", "n/a" if data["previous_close"] is None else f"{float(data['previous_close']):.0f}")
+        cols[2].metric("1 Week", "n/a" if data["previous_1_week"] is None else f"{float(data['previous_1_week']):.0f}")
+        cols[3].metric("1 Month", "n/a" if data["previous_1_month"] is None else f"{float(data['previous_1_month']):.0f}")
+        cols[4].metric("1 Year", "n/a" if data["previous_1_year"] is None else f"{float(data['previous_1_year']):.0f}")
+        st.caption("Separates Marktstimmungs-Panel. Es beeinflusst den TACO Backtest nicht.")
+        st.markdown("[Quelle: CNN Fear & Greed Index](https://edition.cnn.com/markets/fear-and-greed)")
+
+
+COT_DEFAULT_MARKETS = [
+    "E-MINI S&P 500",
+    "NASDAQ-100 Consolidated",
+    "NASDAQ MINI",
+    "MICRO E-MINI NASDAQ-100 INDEX",
+    "EURO FX",
+    "BRITISH POUND",
+    "JAPANESE YEN",
+    "CANADIAN DOLLAR",
+    "SWISS FRANC",
+]
+
+
+def infer_cot_query_from_asset(asset_label: str | None, asset_symbol: str | None) -> tuple[str, str]:
+    text = f"{asset_label or ''} {asset_symbol or ''}".upper()
+    if "US100" in text or "NASDAQ" in text or "^NDX" in text:
+        return "NASDAQ-100 Consolidated", "US100/Nasdaq proxy"
+    if "S&P500" in text or "US500" in text or "S&P 500" in text or "^GSPC" in text:
+        return "E-MINI S&P 500", "S&P500/US500 proxy"
+    if "US30" in text or "DOW" in text or "^DJI" in text:
+        return "DOW JONES", "US30/Dow proxy"
+    if "EURUSD" in text or "EURO" in text or "6E" in text:
+        return "EURO FX", "EURUSD proxy"
+    if "GBPUSD" in text or "BRITISH POUND" in text or "6B" in text:
+        return "BRITISH POUND", "GBPUSD proxy"
+    if "AUDUSD" in text or "AUSTRALIAN" in text or "6A" in text:
+        return "AUSTRALIAN DOLLAR", "AUDUSD proxy"
+    if "NZD" in text or "NEW ZEALAND" in text:
+        return "NEW ZEALAND DOLLAR", "NZD proxy"
+    if "UK100" in text or "FTSE" in text or "GER40" in text or "DAX" in text:
+        return "E-MINI S&P 500", "Risk proxy for UK100/GER40"
+    return "E-MINI S&P 500", "default risk proxy"
+
+
+def cot_bias_label(score: float) -> str:
+    if score >= 65:
+        return "Strong Long"
+    if score >= 55:
+        return "Long"
+    if score > 45:
+        return "Neutral"
+    if score > 35:
+        return "Short"
+    return "Strong Short"
+
+
+@st.cache_data(ttl=12 * 60 * 60)
+def load_cot_cme_legacy() -> tuple[pd.DataFrame, str | None]:
+    try:
+        import html
+        import re
+        import requests
+
+        url = "https://www.cftc.gov/dea/futures/deacmesf.htm"
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        response.raise_for_status()
+        text = html.unescape(response.text)
+        pre_match = re.search(r"<pre>(.*?)</pre>", text, flags=re.I | re.S)
+        report = pre_match.group(1) if pre_match else text
+        blocks = re.split(r"\n(?=[A-Z0-9][A-Za-z0-9/&., \-\(\)]+ - CHICAGO MERCANTILE EXCHANGE\s+Code-)", report)
+        rows = []
+        report_date = None
+        for block in blocks:
+            header = re.search(r"^\s*(.*?)\s+- CHICAGO MERCANTILE EXCHANGE\s+Code-([A-Z0-9+]+)", block, flags=re.M)
+            if not header:
+                continue
+            date_match = re.search(r"POSITIONS AS OF\s+([0-9/]+)", block)
+            if date_match:
+                report_date = date_match.group(1)
+            oi_match = re.search(r"OPEN INTEREST:\s*([0-9,]+)", block)
+            nums = re.search(
+                r"COMMITMENTS\s*\n\s*([0-9,\-]+)\s+([0-9,\-]+)\s+([0-9,\-]+)\s+([0-9,\-]+)\s+([0-9,\-]+)\s+([0-9,\-]+)\s+([0-9,\-]+)\s+([0-9,\-]+)\s+([0-9,\-]+)",
+                block,
+            )
+            if not nums:
+                continue
+
+            def to_int(value: str) -> int:
+                return int(value.replace(",", ""))
+
+            values = [to_int(x) for x in nums.groups()]
+            rows.append({
+                "market": header.group(1).strip(),
+                "code": header.group(2).strip(),
+                "open_interest": to_int(oi_match.group(1)) if oi_match else np.nan,
+                "noncomm_long": values[0],
+                "noncomm_short": values[1],
+                "noncomm_spread": values[2],
+                "comm_long": values[3],
+                "comm_short": values[4],
+                "total_long": values[5],
+                "total_short": values[6],
+                "retail_long": values[7],
+                "retail_short": values[8],
+            })
+        return pd.DataFrame(rows), report_date
+    except Exception:
+        return pd.DataFrame(), None
+
+
+def cot_group_stats(row: pd.Series, long_col: str, short_col: str) -> dict:
+    long_value = float(row[long_col])
+    short_value = float(row[short_col])
+    total = long_value + short_value
+    score = long_value / total * 100 if total > 0 else 50.0
+    net = long_value - short_value
+    return {
+        "long": long_value,
+        "short": short_value,
+        "net": net,
+        "score": score,
+        "label": cot_bias_label(score),
+    }
+
+
+def render_cot_gauge(title: str, stats: dict) -> None:
+    score = stats["score"]
+    label = stats["label"]
+    color = "#22c55e" if score > 55 else "#ef4444" if score < 45 else "#94a3b8"
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=score,
+            number={"suffix": "%", "font": {"size": 32}},
+            title={"text": f"{title}<br><span style='font-size:0.75em'>{label}</span>"},
+            gauge={
+                "axis": {"range": [0, 100], "tickvals": [0, 25, 50, 75, 100], "ticktext": ["Short", "25", "Neutral", "75", "Long"]},
+                "bar": {"color": color},
+                "steps": [
+                    {"range": [0, 35], "color": "rgba(239,68,68,.30)"},
+                    {"range": [35, 45], "color": "rgba(249,115,22,.22)"},
+                    {"range": [45, 55], "color": "rgba(148,163,184,.25)"},
+                    {"range": [55, 65], "color": "rgba(132,204,22,.22)"},
+                    {"range": [65, 100], "color": "rgba(34,197,94,.30)"},
+                ],
+                "threshold": {"line": {"color": "white", "width": 3}, "value": score},
+            },
+        )
+    )
+    fig.update_layout(height=230, margin=dict(l=8, r=8, t=45, b=8))
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        f"Long {stats['long']:,.0f} | Short {stats['short']:,.0f} | Net {stats['net']:,.0f}. "
+        f"Bereinigt: Long / (Long + Short) = {score:.1f}%."
+    )
+
+
+def render_cot_panel(auto_match: bool, asset_label: str | None, asset_symbol: str | None) -> list[str]:
+    data, report_date = load_cot_cme_legacy()
+    st.subheader("CFTC COT Positioning - CME Futures Only")
+    if data.empty:
+        st.warning("COT-Daten konnten gerade nicht geladen werden. Die CFTC-Seite kann externe Requests zeitweise blockieren.")
+        st.markdown("[CFTC Commitments of Traders oeffnen](https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm)")
+        return []
+
+    markets = data["market"].tolist()
+    default_market = next((m for m in markets if "E-MINI S&P 500" in m), markets[0])
+    preset_markets = [m for label in COT_DEFAULT_MARKETS for m in markets if label in m]
+    ordered_markets = list(dict.fromkeys(preset_markets + markets))
+    inferred_query, inferred_reason = infer_cot_query_from_asset(asset_label, asset_symbol)
+    inferred_market = next((m for m in markets if inferred_query in m), default_market)
+    default_selection = inferred_market if auto_match else default_market
+    selected_market = st.selectbox(
+        "COT Market",
+        ordered_markets,
+        index=ordered_markets.index(default_selection) if default_selection in ordered_markets else 0,
+        disabled=auto_match,
+        help="COT-Daten sind Wochen-Daten. Die Auswahl betrifft nur das Positionierungs-Panel, nicht TACO.",
+    )
+    if auto_match:
+        selected_market = inferred_market
+        st.caption(f"Auto-match aktiv: {inferred_reason} -> {selected_market}. Fuer UK100/GER40 ist das ein Risk-Proxy, kein direkter CFD-COT-Markt.")
+    row = data.loc[data["market"] == selected_market].iloc[0]
+    st.caption(
+        f"Wochenbasierte COT-Daten, Report-Datum: {report_date or 'n/a'} | Markt: {selected_market} | "
+        f"Open Interest: {row['open_interest']:,.0f}. Separates Positionierungs-Panel, nicht Teil der TACO-Logik."
+    )
+
+    noncomm = cot_group_stats(row, "noncomm_long", "noncomm_short")
+    comm = cot_group_stats(row, "comm_long", "comm_short")
+    retail = cot_group_stats(row, "retail_long", "retail_short")
+
+    cols = st.columns(3)
+    with cols[0]:
+        render_cot_gauge("Non Commercials", noncomm)
+        st.write("Spekulative grosse Marktteilnehmer. Long-Bias bedeutet, dass diese Gruppe netto eher auf steigende Kurse positioniert ist.")
+    with cols[1]:
+        render_cot_gauge("Commercials", comm)
+        st.write("Hedger/Commercials. Sie sind oft gegenlaeufig zu Spekulanten positioniert; die Anzeige zeigt trotzdem rein die bereinigte Long/Short-Balance.")
+    with cols[2]:
+        render_cot_gauge("Retail Trader", retail)
+        st.write("Non-Reportable Positions. Das sind kleinere, nicht meldepflichtige Positionen, hier als Retail Trader zusammengefasst.")
+
+    st.markdown("[Quelle: CFTC Commitments of Traders](https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm)")
+    return markets
 
 
 def tanh_bounded(x: pd.Series) -> pd.Series:
@@ -334,8 +644,11 @@ st.caption("Python-Backtester und visuelle Website fuer den TACO Asset Compariso
 CORE_METRICS = ["Trades", "Winrate", "Profit Factor", "Net Profit", "Max DD", "Expectancy R", "Max Loss Streak"]
 PRACTICE_METRICS = ["Avg Realized Win", "Avg Realized Loss", "Avg R", "Intratrade MAE", "Avg MFE", "Stop Breach Count", "Stop Breach Avg"]
 
+render_fear_greed_panel()
+
 with st.sidebar:
     test_mode = st.radio("Modus", ["Manual Backtest", "Cycle Scanner", "SL Scanner"], horizontal=False)
+    auto_match_cot = st.checkbox("Auto-match COT market to selected asset", True)
 
     st.header("Daten")
     data_mode = st.radio("Datenquelle", ["Demo", "CSV Upload", "Yahoo Symbol"], horizontal=True)
@@ -358,6 +671,8 @@ with st.sidebar:
             if asset_df is None or comp_df is None:
                 st.warning("Yahoo-Daten konnten nicht geladen werden. Nutze CSV oder Demo.")
     else:
+        asset_preset = "Demo"
+        asset_symbol = "Demo"
         asset_df, comp_df = make_demo_data()
 
     st.header("Einstellungen")
@@ -448,6 +763,10 @@ with st.sidebar:
         sl_to = 2.0
         sl_step = 0.05
         run_sl_scan = False
+
+cot_asset_label = sl_asset_preset if test_mode == "SL Scanner" else asset_preset if data_mode == "Yahoo Symbol" else "Demo"
+cot_asset_symbol = ASSET_PRESETS.get(cot_asset_label, asset_symbol if "asset_symbol" in locals() else None)
+render_cot_panel(auto_match_cot, cot_asset_label, cot_asset_symbol)
 
 with st.expander("Info: Wie funktioniert der TACO Backtest?", expanded=True):
     st.markdown(
