@@ -103,7 +103,11 @@ ASSET_PRESETS = {
     "US30 proxy: Dow Jones Industrial Average (^DJI)": "^DJI",
     "EURUSD (EURUSD=X)": "EURUSD=X",
     "GBPUSD (GBPUSD=X)": "GBPUSD=X",
+    "NZDUSD (NZDUSD=X)": "NZDUSD=X",
+    "USDCAD (CAD=X)": "CAD=X",
+    "USDCHF (CHF=X)": "CHF=X",
     "AUDUSD (AUDUSD=X)": "AUDUSD=X",
+    "USDJPY (JPY=X)": "JPY=X",
     "NZDJPY (NZDJPY=X)": "NZDJPY=X",
 }
 
@@ -270,6 +274,12 @@ def infer_cot_query_from_asset(asset_label: str | None, asset_symbol: str | None
         return "AUSTRALIAN DOLLAR", "AUDUSD proxy"
     if "NZD" in text or "NEW ZEALAND" in text:
         return "NEW ZEALAND DOLLAR", "NZD proxy"
+    if "USDCAD" in text or "CAD=X" in text or "CANADIAN" in text or "6C" in text:
+        return "CANADIAN DOLLAR", "USDCAD proxy"
+    if "USDCHF" in text or "CHF=X" in text or "SWISS" in text or "6S" in text:
+        return "SWISS FRANC", "USDCHF proxy"
+    if "USDJPY" in text or "JPY=X" in text or "JAPANESE" in text or "6J" in text:
+        return "JAPANESE YEN", "USDJPY proxy"
     if "UK100" in text or "FTSE" in text or "GER40" in text or "DAX" in text:
         return "E-MINI S&P 500", "Risk proxy for UK100/GER40"
     return "E-MINI S&P 500", "default risk proxy"
