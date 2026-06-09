@@ -803,6 +803,8 @@ with st.sidebar:
         scan_cycle_from = st.number_input("Cycle From", 2, 100, 5)
         scan_cycle_to = st.number_input("Cycle To", 2, 100, 30)
         scan_cycle_step = st.number_input("Cycle Step", 1, 20, 1)
+        top_curve_min_trades = st.number_input("Top Curves Min Trades", 1, 1000, 50)
+        top_curve_max_loss_streak = st.number_input("Top Curves Max Loss Streak", 0, 100, 5)
         run_scan = st.button("Run Cycle Scan", type="primary")
         sl_asset_preset = list(ASSET_PRESETS.keys())[0]
         sl_comp_preset = list(COMPARISON_PRESETS.keys())[0]
@@ -818,6 +820,8 @@ with st.sidebar:
         scan_cycle_from = 5
         scan_cycle_to = 30
         scan_cycle_step = 1
+        top_curve_min_trades = 50
+        top_curve_max_loss_streak = 5
         run_scan = False
         st.header("SL Scanner")
         sl_asset_preset = st.selectbox("SL Scanner Asset", list(ASSET_PRESETS.keys()))
@@ -834,6 +838,8 @@ with st.sidebar:
         scan_cycle_from = 5
         scan_cycle_to = 30
         scan_cycle_step = 1
+        top_curve_min_trades = 50
+        top_curve_max_loss_streak = 5
         run_scan = False
         sl_asset_preset = list(ASSET_PRESETS.keys())[0]
         sl_comp_preset = list(COMPARISON_PRESETS.keys())[0]
@@ -1172,6 +1178,89 @@ if test_mode == "Cycle Scanner":
     if not robust.empty:
         robust = robust.sort_values(["Avg Profit Factor", "Avg Net Profit"], ascending=[False, False])
         st.dataframe(robust.head(30), use_container_width=True)
+
+    st.subheader("Top 5 Scanner Equity-Kurven")
+    st.caption(
+        "Diese Ansicht filtert zuerst nach Mindestanzahl Trades und maximaler Losing Streak. "
+        "Danach werden die besten Setups nach Profit Factor, Expectancy R und Net Profit als Equity-Kurven angezeigt."
+    )
+    top_candidates = results[
+        (results["Trades"] >= int(top_curve_min_trades))
+        & (results["Max Loss Streak"] <= int(top_curve_max_loss_streak))
+        & results["Profit Factor"].notna()
+    ].copy()
+    if top_candidates.empty:
+        st.info("Keine Top-5-Kurven fuer diese Filter. Senke links Min Trades oder erhoehe Max Loss Streak.")
+    else:
+        top_candidates["Top Score"] = (
+            top_candidates["Profit Factor"].fillna(0) * 2.0
+            + top_candidates["Expectancy R"].fillna(0) * 1.5
+            + top_candidates["Winrate"].fillna(0) / 100
+            - top_candidates["Max Loss Streak"].fillna(0) * 0.08
+            - top_candidates["Max DD"].abs().fillna(0) * 0.03
+        )
+        top5 = top_candidates.sort_values(["Top Score", "Net Profit"], ascending=[False, False]).head(5).reset_index(drop=True)
+        st.dataframe(
+            top5[[
+                "Asset",
+                "Comparison",
+                "Direction",
+                "Cycle",
+                "Trades",
+                "Winrate",
+                "Profit Factor",
+                "Net Profit",
+                "Max DD",
+                "Expectancy R",
+                "Max Loss Streak",
+            ]],
+            use_container_width=True,
+        )
+
+        equity_fig = go.Figure()
+        for _, row in top5.iterrows():
+            curve_settings = Settings(
+                cycle_length=int(row["Cycle"]),
+                smoothing=settings.smoothing,
+                softness=settings.softness,
+                mode=settings.mode,
+                trade_direction=str(row["Direction"]),
+                start_year=settings.start_year,
+                end_year=settings.end_year,
+                upper=settings.upper,
+                lower=settings.lower,
+                risk_pct=settings.risk_pct,
+                stop_pct=settings.stop_pct,
+                tp_mode=settings.tp_mode,
+                rr=settings.rr,
+                fixed_tp_pct=settings.fixed_tp_pct,
+                exit_on_zero=settings.exit_on_zero,
+                time_exit=settings.time_exit,
+                exit_after_bars=settings.exit_after_bars,
+                initial_capital=settings.initial_capital,
+                commission_pct=settings.commission_pct,
+            )
+            curve_asset = data_cache[row["Asset Symbol"]]
+            curve_comp = data_cache[row["Comparison Symbol"]]
+            curve_df = calculate_oscillator(curve_asset, curve_comp, curve_settings)
+            _, curve_equity, _ = backtest(curve_df, curve_settings)
+            if curve_equity.empty:
+                continue
+            equity_fig.add_trace(
+                go.Scatter(
+                    x=curve_equity.index,
+                    y=curve_equity["equity"],
+                    mode="lines",
+                    name=f"{row['Asset']} / {row['Comparison']} / {row['Direction']} / Cycle {int(row['Cycle'])}",
+                )
+            )
+        equity_fig.update_layout(
+            height=420,
+            margin=dict(l=20, r=20, t=30, b=20),
+            yaxis_title="Equity",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        )
+        st.plotly_chart(equity_fig, use_container_width=True)
 
     st.subheader("Ausgewaehltes Scanner-Setup visualisieren")
     st.caption("Waehle ein Ergebnis aus der Scanner-Tabelle aus. Danach wird es wie ein manueller Backtest mit Chart, Oszillator, Equity und Trades angezeigt.")
