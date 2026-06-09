@@ -32,6 +32,7 @@ class Settings:
     exit_after_bars: int
     initial_capital: float
     commission_pct: float
+    slippage_pct: float
 
 
 def normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
@@ -575,6 +576,10 @@ def backtest(df: pd.DataFrame, settings: Settings) -> tuple[pd.DataFrame, pd.Dat
                 exit_price, exit_reason = row["close"], "Time Exit"
 
             if exit_price is not None:
+                if side == "Long":
+                    exit_price = exit_price * (1 - settings.slippage_pct / 100)
+                else:
+                    exit_price = exit_price * (1 + settings.slippage_pct / 100)
                 pnl_points = exit_price - position["entry"] if side == "Long" else position["entry"] - exit_price
                 gross = pnl_points * position["qty"]
                 commission = settings.commission_pct / 100 * (position["entry"] * position["qty"] + exit_price * position["qty"])
@@ -616,7 +621,7 @@ def backtest(df: pd.DataFrame, settings: Settings) -> tuple[pd.DataFrame, pd.Dat
             allow_short = settings.trade_direction in ["Long & Short", "Short Only"]
 
             if long_signal and allow_long:
-                entry = row["close"]
+                entry = row["close"] * (1 + settings.slippage_pct / 100)
                 stop = entry * (1 - settings.stop_pct / 100)
                 risk_cash = equity * settings.risk_pct / 100
                 qty = risk_cash / max(entry - stop, 1e-9)
@@ -624,7 +629,7 @@ def backtest(df: pd.DataFrame, settings: Settings) -> tuple[pd.DataFrame, pd.Dat
                 tp = entry + risk_points * settings.rr if settings.tp_mode == "Risk Reward" else entry * (1 + settings.fixed_tp_pct / 100) if settings.tp_mode == "Fixed %" else math.nan
                 position = {"side": "Long", "entry": entry, "stop": stop, "tp": tp, "qty": qty, "date": date, "bar": i, "high": row["high"], "low": row["low"]}
             elif short_signal and allow_short:
-                entry = row["close"]
+                entry = row["close"] * (1 - settings.slippage_pct / 100)
                 stop = entry * (1 + settings.stop_pct / 100)
                 risk_cash = equity * settings.risk_pct / 100
                 qty = risk_cash / max(stop - entry, 1e-9)
@@ -726,7 +731,7 @@ PRACTICE_METRICS = ["Avg Realized Win", "Avg Realized Loss", "Avg R", "Intratrad
 render_fear_greed_panel()
 
 with st.sidebar:
-    test_mode = st.radio("Modus", ["Manual Backtest", "Cycle Scanner", "SL Scanner"], horizontal=False)
+    test_mode = st.radio("Modus", ["Manual Backtest", "Cycle Scanner", "SL Scanner", "TACO Radar"], horizontal=False)
     auto_match_cot = st.checkbox("Auto-match COT market to selected asset", True)
 
     st.header("Daten")
@@ -755,6 +760,8 @@ with st.sidebar:
         asset_df, comp_df = make_demo_data()
 
     st.header("Einstellungen")
+    enable_take_profit = st.checkbox("Enable Take Profit", True)
+    selected_tp_mode = st.selectbox("Take Profit Mode", ["Risk Reward", "Fixed %"]) if enable_take_profit else "None"
     settings = Settings(
         cycle_length=st.number_input("Cycle Length", 2, 100, 10),
         smoothing=st.number_input("Glaettung", 1, 50, 5),
@@ -767,7 +774,7 @@ with st.sidebar:
         lower=st.number_input("Lower Bound", value=-75.0),
         risk_pct=st.number_input("Risk Per Trade %", 0.1, 10.0, 1.0, step=0.5),
         stop_pct=st.number_input("Fixed Stop Loss %", 0.05, 20.0, 0.65, step=0.05),
-        tp_mode=st.selectbox("Take Profit Mode", ["Risk Reward", "Fixed %", "None"]),
+        tp_mode=selected_tp_mode,
         rr=st.number_input("Take Profit R Multiple", 0.1, 20.0, 2.0, step=0.1),
         fixed_tp_pct=st.number_input("Fixed Take Profit %", 0.05, 50.0, 1.3, step=0.05),
         exit_on_zero=st.checkbox("Exit When Oscillator Returns To Zero", False),
@@ -775,9 +782,65 @@ with st.sidebar:
         exit_after_bars=st.number_input("Exit After X Bars", 1, 500, 20),
         initial_capital=st.number_input("Initial Capital", 100.0, 1_000_000.0, 10_000.0, step=100.0),
         commission_pct=st.number_input("Commission %", 0.0, 2.0, 0.05, step=0.01),
+        slippage_pct=st.number_input("Slippage %", 0.0, 2.0, 0.02, step=0.01),
     )
+    if not enable_take_profit and not settings.exit_on_zero and not settings.time_exit:
+        st.warning(
+            "Take Profit ist deaktiviert und es ist kein Zero-Line- oder Time-Exit aktiv. "
+            "Dann hat die Strategie nur den Stop Loss als echten Exit."
+        )
 
-    if test_mode == "Cycle Scanner":
+    if test_mode == "TACO Radar":
+        scan_assets = []
+        scan_comps = []
+        scan_directions = []
+        scan_cycle_from = 5
+        scan_cycle_to = 30
+        scan_cycle_step = 1
+        top_curve_min_trades = 50
+        top_curve_max_loss_streak = 5
+        run_scan = False
+        sl_asset_preset = list(ASSET_PRESETS.keys())[0]
+        sl_comp_preset = list(COMPARISON_PRESETS.keys())[0]
+        sl_directions = []
+        sl_from = 0.25
+        sl_to = 2.0
+        sl_step = 0.05
+        run_sl_scan = False
+
+        st.header("TACO Radar")
+        radar_assets = st.multiselect(
+            "Radar Assets",
+            list(ASSET_PRESETS.keys()),
+            default=[
+                "EURUSD (EURUSD=X)",
+                "GBPUSD (GBPUSD=X)",
+                "AUDUSD (AUDUSD=X)",
+                "NZDUSD (NZDUSD=X)",
+                "USDCAD (CAD=X)",
+                "USDCHF (CHF=X)",
+                "USDJPY (JPY=X)",
+                "UK100 proxy: FTSE 100 Index (^FTSE)",
+                "GER40 proxy: DAX Index (^GDAXI)",
+                "US100 proxy: Nasdaq 100 (^NDX)",
+                "S&P500 / US500 proxy: S&P 500 (^GSPC)",
+                "US30 proxy: Dow Jones Industrial Average (^DJI)",
+            ],
+        )
+        radar_comps = st.multiselect(
+            "Radar Comparison Assets",
+            list(COMPARISON_PRESETS.keys()),
+            default=["DXY proxy: US Dollar Index (DX-Y.NYB)", "Gold futures (GC=F)", "10Y Treasury Note futures (ZN=F)"],
+        )
+        radar_cycle_from = st.number_input("Radar Cycle From", 2, 100, 5)
+        radar_cycle_to = st.number_input("Radar Cycle To", 2, 100, 30)
+        radar_cycle_step = st.number_input("Radar Cycle Step", 1, 20, 1)
+        radar_min_trades = st.number_input("Radar Min Trades", 1, 1000, 30)
+        radar_max_loss_streak = st.number_input("Radar Max Loss Streak", 0, 100, 5)
+        radar_top_cycles = st.number_input("Cycle Vorschlaege pro Signal", 1, 10, 5)
+        radar_near_zone = st.number_input("Near Zone Buffer", 0.0, 50.0, 5.0, step=1.0)
+        run_radar = st.button("Run TACO Radar", type="primary")
+    elif test_mode == "Cycle Scanner":
         st.header("Scanner")
         scan_assets = st.multiselect(
             "Assets",
@@ -876,6 +939,12 @@ with st.expander("Info: Wie funktioniert der TACO Backtest?", expanded=True):
         Verlust entspricht.
 
         **Exit:** Je nach Einstellung per Risk-Reward-Target, Fixed-%-Target, Zero-Line-Exit oder Time-Exit.
+        Wenn `Enable Take Profit` deaktiviert ist, arbeitet die Strategie ohne festes Profit Target und beendet
+        Trades nur ueber Stop, Zero-Line-Exit oder Time-Exit.
+
+        **Wichtig bei deaktiviertem Take Profit:** Wenn `Enable Take Profit` ausgeschaltet ist, sollte mindestens
+        `Exit When Oscillator Returns To Zero` oder `Enable Exit After X Bars` aktiviert sein. Sonst hat die
+        Strategie nur den Stop Loss als echten Exit und Gewinner koennen theoretisch sehr lange offen bleiben.
 
         **Manual Backtest:** Du testest ein einzelnes Setup visuell.
 
@@ -889,8 +958,196 @@ with st.expander("Info: Wie funktioniert der TACO Backtest?", expanded=True):
         **Hinweis:** `Intratrade MAE` misst den groessten Kerzen-Gegenlauf waehrend des Trades. Das kann tiefer
         sein als dein Stop, weil Daily-Kerzen nur Open/High/Low/Close liefern. `Avg Realized Loss` und `Avg R`
         zeigen dagegen, was im Backtest tatsaechlich realisiert wurde.
+
+        **Slippage:** `Slippage %` verschlechtert Entry und Exit leicht. Beispiel: 0,02% bedeutet, dass Long-Entries
+        etwas hoeher und Long-Exits etwas tiefer simuliert werden. Das macht den Backtest konservativer.
         """
     )
+
+if test_mode == "TACO Radar":
+    st.subheader("TACO Radar")
+    st.caption(
+        "Der Radar scannt mehrere Assets automatisch. Er zeigt nur Maerkte, bei denen der aktuelle TACO-Oszillator "
+        "in oder nahe einer Ueber-/Unterbewertungszone liegt und die Cycle-Kennzahlen robust genug sind."
+    )
+
+    if not run_radar:
+        st.info("Waehle links Radar Assets, Comparison Assets und Cycle Range aus. Danach auf Run TACO Radar klicken.")
+        st.stop()
+
+    if radar_cycle_to < radar_cycle_from:
+        st.error("Radar Cycle To muss groesser oder gleich Radar Cycle From sein.")
+        st.stop()
+
+    radar_combos = []
+    for asset_name in radar_assets:
+        for comp_name in radar_comps:
+            for cycle in range(int(radar_cycle_from), int(radar_cycle_to) + 1, int(radar_cycle_step)):
+                radar_combos.append((asset_name, comp_name, cycle))
+
+    if not radar_combos:
+        st.warning("Bitte mindestens ein Radar Asset und ein Comparison Asset auswaehlen.")
+        st.stop()
+
+    data_cache = {}
+    radar_rows = []
+    progress = st.progress(0)
+
+    for idx, (asset_name, comp_name, cycle) in enumerate(radar_combos, start=1):
+        asset_symbol = ASSET_PRESETS[asset_name]
+        comp_symbol = COMPARISON_PRESETS[comp_name]
+
+        if asset_symbol not in data_cache:
+            data_cache[asset_symbol] = load_yahoo(asset_symbol)
+        if comp_symbol not in data_cache:
+            data_cache[comp_symbol] = load_yahoo(comp_symbol)
+
+        asset_data = data_cache[asset_symbol]
+        comp_data = data_cache[comp_symbol]
+        if asset_data is None or comp_data is None:
+            progress.progress(idx / len(radar_combos))
+            continue
+
+        for direction in ["Long Only", "Short Only"]:
+            radar_settings = Settings(
+                cycle_length=int(cycle),
+                smoothing=settings.smoothing,
+                softness=settings.softness,
+                mode=settings.mode,
+                trade_direction=direction,
+                start_year=settings.start_year,
+                end_year=settings.end_year,
+                upper=settings.upper,
+                lower=settings.lower,
+                risk_pct=settings.risk_pct,
+                stop_pct=settings.stop_pct,
+                tp_mode=settings.tp_mode,
+                rr=settings.rr,
+                fixed_tp_pct=settings.fixed_tp_pct,
+                exit_on_zero=settings.exit_on_zero,
+                time_exit=settings.time_exit,
+                exit_after_bars=settings.exit_after_bars,
+                initial_capital=settings.initial_capital,
+                commission_pct=settings.commission_pct,
+                slippage_pct=settings.slippage_pct,
+            )
+            radar_df = calculate_oscillator(asset_data, comp_data, radar_settings)
+            if radar_df.empty:
+                continue
+
+            latest = radar_df.iloc[-1]
+            latest_date = radar_df.index[-1]
+            osc = float(latest["osc"])
+            side = "Long" if direction == "Long Only" else "Short"
+            in_zone = osc <= settings.lower if side == "Long" else osc >= settings.upper
+            near_zone = osc <= settings.lower + radar_near_zone if side == "Long" else osc >= settings.upper - radar_near_zone
+            if not near_zone:
+                continue
+
+            _, _, radar_metrics = backtest(radar_df, radar_settings)
+            trades = radar_metrics["Trades"]
+            max_loss_streak = radar_metrics["Max Loss Streak"]
+            pf = radar_metrics["Profit Factor"]
+            if trades < int(radar_min_trades) or max_loss_streak > int(radar_max_loss_streak) or pd.isna(pf):
+                continue
+
+            signal_status = "In Extremzone" if in_zone else "Nahe Extremzone"
+            radar_score = (
+                float(pf) * 2.0
+                + float(radar_metrics["Expectancy R"] or 0) * 1.5
+                + float(radar_metrics["Winrate"] or 0) / 100
+                - float(max_loss_streak) * 0.08
+                - abs(float(radar_metrics["Max DD"] or 0)) * 0.03
+            )
+            radar_rows.append({
+                "Asset": asset_name.split(" proxy:")[0].replace(" proxy", ""),
+                "Comparison": comp_name.split(" proxy:")[0].replace(" futures", ""),
+                "Asset Symbol": asset_symbol,
+                "Comparison Symbol": comp_symbol,
+                "Signal": side,
+                "Status": signal_status,
+                "Latest Date": latest_date.date(),
+                "Current Osc": osc,
+                "Cycle": int(cycle),
+                "Trades": trades,
+                "Winrate": radar_metrics["Winrate"],
+                "Profit Factor": pf,
+                "Net Profit": radar_metrics["Net Profit"],
+                "Max DD": radar_metrics["Max DD"],
+                "Expectancy R": radar_metrics["Expectancy R"],
+                "Max Loss Streak": max_loss_streak,
+                "Avg Realized Win": radar_metrics["Avg Realized Win"],
+                "Avg Realized Loss": radar_metrics["Avg Realized Loss"],
+                "Radar Score": radar_score,
+            })
+        progress.progress(idx / len(radar_combos))
+
+    radar_results = pd.DataFrame(radar_rows)
+    if radar_results.empty:
+        st.warning(
+            "Aktuell keine Radar-Signale mit deinen Filtern. Du kannst links Near Zone Buffer erhoehen, "
+            "Radar Min Trades senken oder Max Loss Streak etwas erhoehen."
+        )
+        st.stop()
+
+    top_signal_rows = []
+    grouped = radar_results.groupby(["Asset", "Comparison", "Signal", "Status"], dropna=False)
+    for keys, group in grouped:
+        top_group = group.sort_values(["Radar Score", "Profit Factor", "Net Profit"], ascending=[False, False, False]).head(int(radar_top_cycles))
+        best = top_group.iloc[0]
+        top_signal_rows.append({
+            "Asset": keys[0],
+            "Comparison": keys[1],
+            "Signal": keys[2],
+            "Status": keys[3],
+            "Current Osc": best["Current Osc"],
+            "Best Cycle": int(best["Cycle"]),
+            "Best Winrate": best["Winrate"],
+            "Best PF": best["Profit Factor"],
+            "Best Max DD": best["Max DD"],
+            "Best Loss Streak": int(best["Max Loss Streak"]),
+            "Top Cycles": ", ".join(str(int(c)) for c in top_group["Cycle"].tolist()),
+            "Latest Date": best["Latest Date"],
+            "Radar Score": best["Radar Score"],
+        })
+
+    signal_overview = pd.DataFrame(top_signal_rows).sort_values(["Status", "Radar Score"], ascending=[True, False])
+    st.subheader("Aktuelle TACO Radar Signale")
+    st.dataframe(signal_overview.drop(columns=["Radar Score"]), use_container_width=True)
+
+    st.subheader("Cycle-Vorschlaege pro Signal")
+    for _, signal in signal_overview.iterrows():
+        signal_group = radar_results[
+            (radar_results["Asset"] == signal["Asset"])
+            & (radar_results["Comparison"] == signal["Comparison"])
+            & (radar_results["Signal"] == signal["Signal"])
+            & (radar_results["Status"] == signal["Status"])
+        ].sort_values(["Radar Score", "Profit Factor", "Net Profit"], ascending=[False, False, False]).head(int(radar_top_cycles))
+
+        title = (
+            f"{signal['Asset']} vs {signal['Comparison']} | {signal['Signal']} | "
+            f"{signal['Status']} | Osc {signal['Current Osc']:.1f}"
+        )
+        with st.expander(title, expanded=False):
+            st.dataframe(
+                signal_group[[
+                    "Cycle",
+                    "Trades",
+                    "Winrate",
+                    "Profit Factor",
+                    "Net Profit",
+                    "Max DD",
+                    "Expectancy R",
+                    "Max Loss Streak",
+                    "Avg Realized Win",
+                    "Avg Realized Loss",
+                ]],
+                use_container_width=True,
+            )
+
+    csv = radar_results.to_csv(index=False).encode("utf-8")
+    st.download_button("Radar Ergebnisse als CSV laden", data=csv, file_name="taco_radar.csv", mime="text/csv")
+    st.stop()
 
 if asset_df is None or comp_df is None:
     if test_mode == "Cycle Scanner" and not run_scan:
@@ -953,6 +1210,7 @@ if test_mode == "SL Scanner":
             exit_after_bars=settings.exit_after_bars,
             initial_capital=settings.initial_capital,
             commission_pct=settings.commission_pct,
+            slippage_pct=settings.slippage_pct,
         )
         sl_df = calculate_oscillator(asset_data, comp_data, sl_settings)
         sl_trades, _, sl_metrics = backtest(sl_df, sl_settings)
@@ -1038,6 +1296,7 @@ if test_mode == "SL Scanner":
         exit_after_bars=settings.exit_after_bars,
         initial_capital=settings.initial_capital,
         commission_pct=settings.commission_pct,
+        slippage_pct=settings.slippage_pct,
     )
     selected_df = calculate_oscillator(asset_data, comp_data, selected_settings)
     selected_trades, selected_equity, selected_metrics = backtest(selected_df, selected_settings)
@@ -1115,6 +1374,7 @@ if test_mode == "Cycle Scanner":
             exit_after_bars=settings.exit_after_bars,
             initial_capital=settings.initial_capital,
             commission_pct=settings.commission_pct,
+            slippage_pct=settings.slippage_pct,
         )
 
         scan_df = calculate_oscillator(asset_data, comp_data, scan_settings)
@@ -1239,6 +1499,7 @@ if test_mode == "Cycle Scanner":
                 exit_after_bars=settings.exit_after_bars,
                 initial_capital=settings.initial_capital,
                 commission_pct=settings.commission_pct,
+                slippage_pct=settings.slippage_pct,
             )
             curve_asset = data_cache[row["Asset Symbol"]]
             curve_comp = data_cache[row["Comparison Symbol"]]
@@ -1294,6 +1555,7 @@ if test_mode == "Cycle Scanner":
         exit_after_bars=settings.exit_after_bars,
         initial_capital=settings.initial_capital,
         commission_pct=settings.commission_pct,
+        slippage_pct=settings.slippage_pct,
     )
     selected_df = calculate_oscillator(selected_asset_data, selected_comp_data, selected_settings)
     selected_trades, selected_equity, selected_metrics = backtest(selected_df, selected_settings)
