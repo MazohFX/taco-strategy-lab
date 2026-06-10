@@ -147,25 +147,28 @@ def _valid_month_day(year: int, month: int, day: int) -> pd.Timestamp:
 
 def _seasonality_base_layout(title: str, height: int = 420) -> dict:
     return {
-        "title": title,
+        "title": {"text": title, "font": {"size": 13, "color": "#cbd5e1"}},
         "height": height,
-        "paper_bgcolor": "#0b1220",
-        "plot_bgcolor": "#0b1220",
-        "font": {"color": "#dbeafe"},
-        "margin": {"l": 35, "r": 20, "t": 55, "b": 35},
+        "paper_bgcolor": "#111923",
+        "plot_bgcolor": "#111923",
+        "font": {"color": "#cbd5e1", "size": 11},
+        "margin": {"l": 42, "r": 18, "t": 38, "b": 32},
         "xaxis": {
-            "gridcolor": "rgba(148,163,184,.16)",
-            "zerolinecolor": "rgba(148,163,184,.16)",
-            "showline": True,
-            "linecolor": "rgba(148,163,184,.30)",
+            "gridcolor": "rgba(148,163,184,.12)",
+            "zerolinecolor": "rgba(148,163,184,.12)",
+            "showline": False,
+            "linecolor": "rgba(148,163,184,.18)",
+            "tickfont": {"color": "#94a3b8", "size": 10},
         },
         "yaxis": {
-            "gridcolor": "rgba(148,163,184,.16)",
-            "zerolinecolor": "rgba(148,163,184,.16)",
-            "showline": True,
-            "linecolor": "rgba(148,163,184,.30)",
+            "gridcolor": "rgba(148,163,184,.12)",
+            "zerolinecolor": "rgba(148,163,184,.12)",
+            "showline": False,
+            "linecolor": "rgba(148,163,184,.18)",
+            "tickfont": {"color": "#94a3b8", "size": 10},
         },
         "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+        "hovermode": "x unified",
     }
 
 
@@ -327,6 +330,28 @@ def render_seasonality_lab() -> None:
         }
         .season-stat.negative strong { color: #e36d5c; }
         .season-stat.neutral strong { color: #d6e3f3; }
+        .season-year-caption {
+            color: #9fb0c7;
+            font-size: .76rem;
+            margin: 8px 0 2px 0;
+        }
+        .season-year-strip {
+            background: #141c28;
+            border: 1px solid rgba(148,163,184,.13);
+            border-radius: 6px;
+            padding: 8px 10px 2px 10px;
+            margin: 8px 0 10px 0;
+        }
+        .season-period-badge {
+            display: inline-block;
+            background: #62c8e8;
+            color: #0f172a;
+            border-radius: 4px;
+            padding: 5px 10px;
+            font-size: .78rem;
+            font-weight: 800;
+            margin-top: 2px;
+        }
         div[data-testid="stPlotlyChart"] {
             background: #141c28;
             border: 1px solid rgba(148,163,184,.13);
@@ -359,7 +384,7 @@ def render_seasonality_lab() -> None:
         unsafe_allow_html=True,
     )
 
-    control_cols = st.columns([1.3, 1.0, 1.1, 1.2])
+    control_cols = st.columns([1.35, 1.0, 1.15, 1.0])
     with control_cols[0]:
         asset_label = st.selectbox("Asset", list(ASSET_PRESETS.keys()), key="seasonality_asset")
         default_symbol = ASSET_PRESETS[asset_label]
@@ -383,15 +408,26 @@ def render_seasonality_lab() -> None:
             ],
         )
     with control_cols[3]:
-        month_names = list(calendar.month_name)[1:]
-        c1, c2 = st.columns(2)
-        start_month_name = c1.selectbox("Start Monat", month_names, index=5)
-        start_month = month_names.index(start_month_name) + 1
-        start_day = c2.number_input("Start Tag", 1, 31, 26)
-        c3, c4 = st.columns(2)
-        end_month_name = c3.selectbox("End Monat", month_names, index=6)
-        end_month = month_names.index(end_month_name) + 1
-        end_day = c4.number_input("End Tag", 1, 31, 29)
+        period_range = st.date_input(
+            "Zeitraum",
+            value=(date(2001, 6, 26), date(2001, 7, 29)),
+            min_value=date(2001, 1, 1),
+            max_value=date(2002, 12, 31),
+            format="DD.MM.YYYY",
+            key="seasonality_period",
+        )
+        if not isinstance(period_range, tuple) or len(period_range) != 2:
+            st.warning("Bitte Start und Ende des saisonalen Zeitraums auswaehlen.")
+            return
+        period_start, period_end = period_range
+        start_month = period_start.month
+        start_day = period_start.day
+        end_month = period_end.month
+        end_day = period_end.day
+        st.markdown(
+            f"<span class='season-period-badge'>{period_start.strftime('%d %b')} - {period_end.strftime('%d %b')}</span>",
+            unsafe_allow_html=True,
+        )
 
     if not symbol.strip():
         st.warning("Bitte ein Yahoo-Symbol eingeben.")
@@ -411,8 +447,28 @@ def render_seasonality_lab() -> None:
     if not selected_years:
         return
 
-    curve = build_seasonal_curve(df, selected_years)
-    trades = analyze_seasonal_window(df, int(start_month), int(start_day), int(end_month), int(end_day), selected_years)
+    st.markdown("<div class='season-year-strip'>", unsafe_allow_html=True)
+    cycle_label = cycle_filter.replace("US Presidential Cycle: ", "")
+    st.markdown(f"<div class='season-year-caption'>Select years to display: {cycle_label}</div>", unsafe_allow_html=True)
+    year_cols = st.columns(12)
+    active_years = []
+    year_key_seed = f"{symbol.strip()}_{lookback_label}_{cycle_filter}"
+    for idx, year in enumerate(selected_years):
+        checked = year_cols[idx % 12].checkbox(
+            str(year),
+            value=True,
+            key=f"seasonality_year_{year_key_seed}_{year}",
+        )
+        if checked:
+            active_years.append(year)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if len(active_years) < 1:
+        st.warning("Bitte mindestens ein Pattern-Jahr auswaehlen.")
+        return
+
+    curve = build_seasonal_curve(df, active_years)
+    trades = analyze_seasonal_window(df, int(start_month), int(start_day), int(end_month), int(end_day), active_years)
     if curve.empty:
         st.warning("Aus den ausgewaehlten Jahren konnte keine saisonale Kurve gebaut werden.")
         return
@@ -422,50 +478,98 @@ def render_seasonality_lab() -> None:
     end_marker = pd.Timestamp(year=2001, month=int(end_month), day=min(int(end_day), calendar.monthrange(2001, int(end_month))[1]))
 
     asset_short = asset_label.split(" proxy:")[0].replace(" proxy", "")
-    years_text = f"{len(selected_years)} Years"
+    years_text = f"{len(active_years)} Years"
     main_col, stat_col = st.columns([3.1, 1.1])
     with main_col:
+        chart_curve = curve.copy()
+        chart_curve["indexed_display"] = chart_curve["indexed"].rolling(7, center=True, min_periods=1).mean()
+        chart_floor = min(float(chart_curve["indexed_display"].min()), 100.0)
+        chart_ceiling = max(float(chart_curve["indexed_display"].max()), 100.0)
+        chart_padding = max((chart_ceiling - chart_floor) * 0.16, 1.5)
+        chart_label_y = chart_ceiling + chart_padding * 0.58
+
+        def marker_curve_value(marker: pd.Timestamp) -> float:
+            nearest_idx = (chart_curve["plot_date"] - marker).abs().idxmin()
+            return float(chart_curve.loc[nearest_idx, "indexed_display"])
+
+        start_marker_value = marker_curve_value(start_marker)
+        end_marker_value = marker_curve_value(end_marker)
         fig = go.Figure()
         fig.add_trace(
             go.Scatter(
-                x=curve["plot_date"],
-                y=curve["indexed"],
+                x=chart_curve["plot_date"],
+                y=chart_curve["indexed_display"],
                 mode="lines",
-                name="Average Seasonal Trend",
-                line={"color": "#22d3ee", "width": 3},
+                line={"color": "rgba(98,200,232,.18)", "width": 0},
+                fill="tozeroy",
+                fillcolor="rgba(98,200,232,.13)",
+                hoverinfo="skip",
+                showlegend=False,
             )
         )
-        fig.add_vline(x=today, line_color="#ef4444", line_width=2)
-        fig.add_vline(x=start_marker, line_color="#38bdf8", line_width=1, line_dash="dash")
-        fig.add_vline(x=end_marker, line_color="#38bdf8", line_width=1, line_dash="dash")
+        fig.add_trace(
+            go.Scatter(
+                x=chart_curve["plot_date"],
+                y=chart_curve["indexed_display"],
+                mode="lines",
+                name="Average Seasonal Trend",
+                line={"color": "#62c8e8", "width": 2.1, "shape": "spline", "smoothing": 0.55},
+                hovertemplate="%{x|%b %d}<br>Index %{y:.2f}<extra></extra>",
+            )
+        )
+        fig.add_vline(x=today, line_color="#c0267a", line_width=2)
+        fig.add_vline(x=start_marker, line_color="rgba(226,232,240,.82)", line_width=1.3)
+        fig.add_vline(x=end_marker, line_color="rgba(226,232,240,.82)", line_width=1.3)
         if end_marker >= start_marker:
-            fig.add_vrect(x0=start_marker, x1=end_marker, fillcolor="#38bdf8", opacity=0.14, line_width=0)
+            fig.add_vrect(x0=start_marker, x1=end_marker, fillcolor="#62c8e8", opacity=0.11, line_width=0)
         else:
-            fig.add_vrect(x0=start_marker, x1=pd.Timestamp("2001-12-31"), fillcolor="#38bdf8", opacity=0.14, line_width=0)
-            fig.add_vrect(x0=pd.Timestamp("2001-01-01"), x1=end_marker, fillcolor="#38bdf8", opacity=0.14, line_width=0)
-        fig.update_layout(**_seasonality_base_layout(f"Seasonal Trend of {asset_short} over {years_text}", 500))
+            fig.add_vrect(x0=start_marker, x1=pd.Timestamp("2001-12-31"), fillcolor="#62c8e8", opacity=0.11, line_width=0)
+            fig.add_vrect(x0=pd.Timestamp("2001-01-01"), x1=end_marker, fillcolor="#62c8e8", opacity=0.11, line_width=0)
+        fig.update_layout(**_seasonality_base_layout(f"Seasonal Trend of {asset_short} over {years_text}", 470))
         fig.add_annotation(
-            text="TACO",
+            text="seasonality",
             xref="paper",
             yref="paper",
             x=0.5,
             y=0.52,
             showarrow=False,
-            font={"size": 58, "color": "rgba(148,163,184,.12)"},
+            font={"size": 54, "color": "rgba(148,163,184,.105)"},
         )
-        fig.update_xaxes(tickformat="%b", dtick="M1")
-        fig.update_yaxes(title="Indexed Performance")
-        st.plotly_chart(fig, width="stretch")
+        for marker, marker_value in [(start_marker, start_marker_value), (end_marker, end_marker_value)]:
+            fig.add_annotation(
+                x=marker,
+                y=chart_label_y,
+                text=f"{marker.strftime('%d %b')}: {marker_value:.2f}",
+                showarrow=False,
+                bgcolor="rgba(31,41,55,.92)",
+                bordercolor="rgba(226,232,240,.22)",
+                borderpad=4,
+                font={"size": 10, "color": "#dbeafe"},
+            )
+        fig.update_xaxes(tickformat="%b", dtick="M1", showspikes=False)
+        fig.update_yaxes(title="", range=[chart_floor - chart_padding, chart_ceiling + chart_padding])
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     profit_pct = trades["Profit %"] if not trades.empty else pd.Series(dtype=float)
     profit_points = trades["Profit"] if not trades.empty else pd.Series(dtype=float)
     avg_return = profit_pct.mean() if not profit_pct.empty else np.nan
     std_return = profit_pct.std(ddof=1) if len(profit_pct) > 1 else np.nan
     sharpe = avg_return / std_return if std_return and not pd.isna(std_return) else np.nan
+    if not trades.empty:
+        holding_days = (
+            pd.to_datetime(trades["End Date"]) - pd.to_datetime(trades["Start Date"])
+        ).dt.days.clip(lower=1)
+        avg_holding_days = float(holding_days.mean())
+    else:
+        avg_holding_days = np.nan
+    if pd.isna(avg_return) or pd.isna(avg_holding_days) or avg_holding_days <= 0:
+        annualized_window_return = np.nan
+    else:
+        annualized_window_return = ((1 + avg_return / 100) ** (365.25 / avg_holding_days) - 1) * 100
     stats = {
-        "Pattern-Jahre": len(selected_years),
-        "Rest-Jahre": max(len(all_years) - len(selected_years), 0),
-        "Annualized Return": curve["indexed"].iloc[-1] - 100,
+        "Pattern-Jahre": len(active_years),
+        "Rest-Jahre": max(len(all_years) - len(active_years), 0),
+        "Annualized Return": annualized_window_return,
         "Average Return": avg_return,
         "Median Return": profit_pct.median() if not profit_pct.empty else np.nan,
         "Winning Trades %": (profit_pct.gt(0).mean() * 100) if not profit_pct.empty else np.nan,
@@ -486,7 +590,7 @@ def render_seasonality_lab() -> None:
             return f"{value:,.0f}{suffix}"
         return f"{value:,.{digits}f}{suffix}"
 
-    pattern_share = len(selected_years) / len(all_years) * 100 if all_years else 0
+    pattern_share = len(active_years) / len(all_years) * 100 if all_years else 0
     rest_share = max(100 - pattern_share, 0)
     with stat_col:
         donut = go.Figure(
@@ -535,8 +639,8 @@ def render_seasonality_lab() -> None:
             <div class="season-panel">
                 <div class="season-panel-title">Miscellaneous</div>
                 <div class="season-stat-grid">
-                    <div class="season-stat neutral"><strong>{len(selected_years)}</strong>Pattern years</div>
-                    <div class="season-stat neutral"><strong>{max(len(all_years) - len(selected_years), 0)}</strong>Rest years</div>
+                    <div class="season-stat neutral"><strong>{len(active_years)}</strong>Pattern years</div>
+                    <div class="season-stat neutral"><strong>{max(len(all_years) - len(active_years), 0)}</strong>Rest years</div>
                     <div class="season-stat neutral"><strong>{fmt_stat(stats["Standard Deviation"], "%")}</strong>Std. deviation</div>
                     <div class="season-stat neutral"><strong>{fmt_stat(stats["Sharpe Ratio"], "")}</strong>Sharpe ratio</div>
                 </div>
@@ -549,7 +653,7 @@ def render_seasonality_lab() -> None:
         st.warning("Der gewaehlte saisonale Zeitraum enthaelt keine vollstaendigen historischen Pattern-Trades.")
         return
 
-    selected_df = df[df.index.year.isin(selected_years)].copy()
+    selected_df = df[df.index.year.isin(active_years)].copy()
     selected_df = selected_df[~((selected_df.index.month == 2) & (selected_df.index.day == 29))]
     selected_df["daily_return_pct"] = selected_df["close"].pct_change() * 100
     selected_df["weekday"] = selected_df.index.day_name()
