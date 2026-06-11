@@ -148,12 +148,12 @@ def _valid_month_day(year: int, month: int, day: int) -> pd.Timestamp:
 
 def _seasonality_base_layout(title: str, height: int = 420) -> dict:
     return {
-        "title": {"text": title, "font": {"size": 16, "color": "#e2e8f0"}},
+        "title": {"text": title, "font": {"size": 17, "color": "#e2e8f0"}, "y": 0.98},
         "height": height,
         "paper_bgcolor": "#111923",
         "plot_bgcolor": "#111923",
         "font": {"color": "#cbd5e1", "size": 11},
-        "margin": {"l": 42, "r": 18, "t": 48, "b": 32},
+        "margin": {"l": 42, "r": 18, "t": 62, "b": 34},
         "xaxis": {
             "gridcolor": "rgba(148,163,184,.12)",
             "zerolinecolor": "rgba(148,163,184,.12)",
@@ -168,6 +168,7 @@ def _seasonality_base_layout(title: str, height: int = 420) -> dict:
             "linecolor": "rgba(148,163,184,.18)",
             "tickfont": {"color": "#94a3b8", "size": 10},
         },
+        "showlegend": False,
         "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
         "hovermode": "x unified",
     }
@@ -604,6 +605,7 @@ def render_seasonality_lab() -> None:
                 name="Average Seasonal Trend",
                 line={"color": "#62c8e8", "width": 2.1, "shape": "spline", "smoothing": 0.55},
                 hovertemplate="%{x|%b %d}<br>Index %{y:.2f}<extra></extra>",
+                showlegend=False,
             )
         )
         fig.add_vline(x=today, line_color="#c0267a", line_width=2)
@@ -615,7 +617,7 @@ def render_seasonality_lab() -> None:
             else:
                 fig.add_vrect(x0=display_start_marker, x1=pd.Timestamp("2001-12-31"), fillcolor="#62c8e8", opacity=0.11, line_width=0)
                 fig.add_vrect(x0=pd.Timestamp("2001-01-01"), x1=display_end_marker, fillcolor="#62c8e8", opacity=0.11, line_width=0)
-        fig.update_layout(**_seasonality_base_layout(f"Seasonal Trend of {asset_short} over {years_text}", 470))
+        fig.update_layout(**_seasonality_base_layout(f"Seasonal Trend of {asset_short} over {years_text}", 560))
         fig.update_layout(
             dragmode="select",
             uirevision=f"seasonality_full_year_{asset_short}",
