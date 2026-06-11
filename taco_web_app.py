@@ -526,6 +526,10 @@ def render_seasonality_lab() -> None:
             fig.add_vrect(x0=start_marker, x1=pd.Timestamp("2001-12-31"), fillcolor="#62c8e8", opacity=0.11, line_width=0)
             fig.add_vrect(x0=pd.Timestamp("2001-01-01"), x1=end_marker, fillcolor="#62c8e8", opacity=0.11, line_width=0)
         fig.update_layout(**_seasonality_base_layout(f"Seasonal Trend of {asset_short} over {years_text}", 470))
+        fig.update_layout(
+            dragmode=False,
+            uirevision=f"seasonality_full_year_{asset_short}",
+        )
         fig.add_annotation(
             text="seasonality",
             xref="paper",
@@ -546,9 +550,25 @@ def render_seasonality_lab() -> None:
                 borderpad=4,
                 font={"size": 10, "color": "#dbeafe"},
             )
-        fig.update_xaxes(tickformat="%b", dtick="M1", showspikes=False)
+        fig.update_xaxes(
+            tickformat="%b",
+            dtick="M1",
+            showspikes=False,
+            fixedrange=True,
+            range=[pd.Timestamp("2001-01-01"), pd.Timestamp("2001-12-31")],
+        )
         fig.update_yaxes(title="", range=[chart_floor - chart_padding, chart_ceiling + chart_padding])
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        st.plotly_chart(
+            fig,
+            width="stretch",
+            config={
+                "displayModeBar": False,
+                "scrollZoom": False,
+                "doubleClick": False,
+                "staticPlot": False,
+            },
+            key="seasonality_main_curve",
+        )
 
     profit_pct = trades["Profit %"] if not trades.empty else pd.Series(dtype=float)
     profit_points = trades["Profit"] if not trades.empty else pd.Series(dtype=float)
