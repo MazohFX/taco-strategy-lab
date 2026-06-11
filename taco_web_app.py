@@ -388,6 +388,26 @@ def render_seasonality_lab() -> None:
         unsafe_allow_html=True,
     )
 
+    def parse_period_text(raw_period: str) -> tuple[int, int, int, int] | None:
+        match = re.fullmatch(r"\s*(\d{1,2})[./](\d{1,2})\s*[-–]\s*(\d{1,2})[./](\d{1,2})\s*", raw_period or "")
+        if not match:
+            return None
+        start_day_raw, start_month_raw, end_day_raw, end_month_raw = [int(part) for part in match.groups()]
+        try:
+            _valid_month_day(2001, start_month_raw, start_day_raw)
+            _valid_month_day(2001, end_month_raw, end_day_raw)
+        except Exception:
+            return None
+        return start_month_raw, start_day_raw, end_month_raw, end_day_raw
+
+    def format_period_from_markers(start_marker_value: pd.Timestamp, end_marker_value: pd.Timestamp) -> str:
+        return f"{start_marker_value.day:02d}.{start_marker_value.month:02d} - {end_marker_value.day:02d}.{end_marker_value.month:02d}"
+
+    pending_period_text = st.session_state.pop("seasonality_pending_period_text", None)
+    if pending_period_text:
+        st.session_state["seasonality_period_text"] = pending_period_text
+        st.session_state["seasonality_period_from_selection"] = True
+
     control_cols = st.columns([1.35, 1.0, 1.15, 1.0])
     with control_cols[0]:
         asset_label = st.selectbox("Asset", list(ASSET_PRESETS.keys()), key="seasonality_asset")
@@ -412,18 +432,6 @@ def render_seasonality_lab() -> None:
             ],
         )
     with control_cols[3]:
-        def parse_period_text(raw_period: str) -> tuple[int, int, int, int] | None:
-            match = re.fullmatch(r"\s*(\d{1,2})[./](\d{1,2})\s*[-–]\s*(\d{1,2})[./](\d{1,2})\s*", raw_period or "")
-            if not match:
-                return None
-            start_day_raw, start_month_raw, end_day_raw, end_month_raw = [int(part) for part in match.groups()]
-            try:
-                _valid_month_day(2001, start_month_raw, start_day_raw)
-                _valid_month_day(2001, end_month_raw, end_day_raw)
-            except Exception:
-                return None
-            return start_month_raw, start_day_raw, end_month_raw, end_day_raw
-
         period_text = st.text_input(
             "Zeitraum",
             value="26.06 - 29.07",
@@ -438,7 +446,10 @@ def render_seasonality_lab() -> None:
         period_token = f"{start_day:02d}.{start_month:02d}_{end_day:02d}.{end_month:02d}"
         if st.session_state.get("seasonality_period_token") != period_token:
             st.session_state["seasonality_period_token"] = period_token
-            st.session_state.pop("seasonality_manual_period", None)
+            if st.session_state.pop("seasonality_period_from_selection", False):
+                pass
+            else:
+                st.session_state.pop("seasonality_manual_period", None)
         st.markdown(
             f"<span class='season-period-badge'>{_valid_month_day(2001, start_month, start_day).strftime('%d %b')} - {_valid_month_day(2001, end_month, end_day).strftime('%d %b')}</span>",
             unsafe_allow_html=True,
@@ -499,6 +510,32 @@ def render_seasonality_lab() -> None:
             selection = selection_state.get("selection")
         if not selection:
             return None
+        boxes = getattr(selection, "box", None)
+        if boxes is None and isinstance(selection, dict):
+            boxes = selection.get("box", [])
+        for box in boxes or []:
+            raw_range = getattr(box, "range", None)
+            if raw_range is None and isinstance(box, dict):
+                raw_range = box.get("range")
+            raw_x = None
+            if raw_range is not None:
+                raw_x = getattr(raw_range, "x", None)
+                if raw_x is None and isinstance(raw_range, dict):
+                    raw_x = raw_range.get("x")
+            if raw_x is None:
+                raw_x = getattr(box, "x", None)
+                if raw_x is None and isinstance(box, dict):
+                    raw_x = box.get("x")
+            if raw_x is None or len(raw_x) < 2:
+                continue
+            start = pd.Timestamp(raw_x[0])
+            end = pd.Timestamp(raw_x[1])
+            if end < start:
+                start, end = end, start
+            return (
+                pd.Timestamp(year=2001, month=int(start.month), day=int(start.day)),
+                pd.Timestamp(year=2001, month=int(end.month), day=int(end.day)),
+            )
         points = getattr(selection, "points", None)
         if points is None and isinstance(selection, dict):
             points = selection.get("points", [])
@@ -631,6 +668,10 @@ def render_seasonality_lab() -> None:
         selected_token = tuple(marker.isoformat() for marker in selected_chart_period)
         if selected_token != tuple(st.session_state.get("seasonality_manual_period", ())):
             st.session_state["seasonality_manual_period"] = selected_token
+            st.session_state["seasonality_pending_period_text"] = format_period_from_markers(
+                selected_chart_period[0],
+                selected_chart_period[1],
+            )
             st.rerun()
 
     manual_period = st.session_state.get("seasonality_manual_period")
