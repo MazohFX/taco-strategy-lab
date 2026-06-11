@@ -1,5 +1,6 @@
 import math
 import calendar
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -411,28 +412,35 @@ def render_seasonality_lab() -> None:
             ],
         )
     with control_cols[3]:
-        period_range = st.date_input(
+        def parse_period_text(raw_period: str) -> tuple[int, int, int, int] | None:
+            match = re.fullmatch(r"\s*(\d{1,2})[./](\d{1,2})\s*[-–]\s*(\d{1,2})[./](\d{1,2})\s*", raw_period or "")
+            if not match:
+                return None
+            start_day_raw, start_month_raw, end_day_raw, end_month_raw = [int(part) for part in match.groups()]
+            try:
+                _valid_month_day(2001, start_month_raw, start_day_raw)
+                _valid_month_day(2001, end_month_raw, end_day_raw)
+            except Exception:
+                return None
+            return start_month_raw, start_day_raw, end_month_raw, end_day_raw
+
+        period_text = st.text_input(
             "Zeitraum",
-            value=(date(2001, 6, 26), date(2001, 7, 29)),
-            min_value=date(2001, 1, 1),
-            max_value=date(2002, 12, 31),
-            format="DD.MM.YYYY",
-            key="seasonality_period",
+            value="26.06 - 29.07",
+            key="seasonality_period_text",
+            help="Format: TT.MM - TT.MM, z.B. 26.06 - 29.07",
         )
-        if not isinstance(period_range, tuple) or len(period_range) != 2:
-            st.warning("Bitte Start und Ende des saisonalen Zeitraums auswaehlen.")
+        parsed_period = parse_period_text(period_text)
+        if parsed_period is None:
+            st.warning("Bitte Zeitraum im Format TT.MM - TT.MM eingeben, z.B. 26.06 - 29.07.")
             return
-        period_start, period_end = period_range
-        start_month = period_start.month
-        start_day = period_start.day
-        end_month = period_end.month
-        end_day = period_end.day
-        period_token = f"{period_start.isoformat()}_{period_end.isoformat()}"
+        start_month, start_day, end_month, end_day = parsed_period
+        period_token = f"{start_day:02d}.{start_month:02d}_{end_day:02d}.{end_month:02d}"
         if st.session_state.get("seasonality_period_token") != period_token:
             st.session_state["seasonality_period_token"] = period_token
             st.session_state.pop("seasonality_manual_period", None)
         st.markdown(
-            f"<span class='season-period-badge'>{period_start.strftime('%d %b')} - {period_end.strftime('%d %b')}</span>",
+            f"<span class='season-period-badge'>{_valid_month_day(2001, start_month, start_day).strftime('%d %b')} - {_valid_month_day(2001, end_month, end_day).strftime('%d %b')}</span>",
             unsafe_allow_html=True,
         )
 
@@ -717,26 +725,64 @@ def render_seasonality_lab() -> None:
             return f"{value:,.0f}{suffix}"
         return f"{value:,.{digits}f}{suffix}"
 
-    pattern_share = len(active_years) / len(all_years) * 100 if all_years else 0
-    rest_share = max(100 - pattern_share, 0)
+    if len(trades) > 0:
+        rise_probability = gains_count / len(trades) * 100
+        fall_probability = losses_count / len(trades) * 100
+        flat_count = max(len(trades) - gains_count - losses_count, 0)
+        flat_probability = flat_count / len(trades) * 100
+    else:
+        rise_probability = fall_probability = flat_probability = np.nan
+        flat_count = 0
+    if pd.isna(rise_probability) or pd.isna(fall_probability):
+        dominant_probability = np.nan
+        dominant_label = "n/a"
+    else:
+        dominant_probability = rise_probability if rise_probability >= fall_probability else fall_probability
+        dominant_label = "Rise" if rise_probability >= fall_probability else "Fall"
+    dominant_color = "#62c8e8" if dominant_label == "Rise" else "#c25f50"
     streak_label = f"{current_streak} {current_side}" if current_streak else "0"
     with stat_col:
+        donut_values = [gains_count, losses_count, flat_count]
+        if sum(donut_values) == 0:
+            donut_values = [1, 0, 0]
         donut = go.Figure(
             go.Pie(
-                labels=["Pattern", "Rest"],
-                values=[pattern_share, rest_share],
+                labels=["Rise", "Fall", "Flat"],
+                values=donut_values,
                 hole=0.62,
-                marker={"colors": ["#62c8e8", "#334155"]},
+                marker={"colors": ["#62c8e8", "#c25f50", "#334155"]},
                 textinfo="none",
                 sort=False,
             )
         )
         donut.update_layout(**_seasonality_base_layout("", 172))
         donut.update_layout(showlegend=False, margin={"l": 12, "r": 12, "t": 8, "b": 8})
-        donut.add_annotation(text=f"{pattern_share:.0f}%", x=0.5, y=0.5, showarrow=False, font={"color": "#dbeafe", "size": 18})
+        donut.add_annotation(
+            text="n/a" if pd.isna(dominant_probability) else f"{dominant_probability:.0f}%",
+            x=0.5,
+            y=0.55,
+            showarrow=False,
+            font={"color": dominant_color, "size": 20},
+        )
+        donut.add_annotation(
+            text=dominant_label,
+            x=0.5,
+            y=0.40,
+            showarrow=False,
+            font={"color": "#cbd5e1", "size": 10},
+        )
         st.plotly_chart(donut, width="stretch", config={"displayModeBar": False})
         st.markdown(
             f"""
+            <div class="season-panel">
+                <div class="season-panel-title">Probability</div>
+                <div class="season-stat-grid">
+                    <div class="season-stat"><strong>{fmt_stat(rise_probability, "%")}</strong>Rise odds</div>
+                    <div class="season-stat negative"><strong>{fmt_stat(fall_probability, "%")}</strong>Fall odds</div>
+                    <div class="season-stat neutral"><strong>{stats["Gains"]}</strong>Rise years</div>
+                    <div class="season-stat neutral"><strong>{stats["Losses"]}</strong>Fall years</div>
+                </div>
+            </div>
             <div class="season-panel">
                 <div class="season-panel-title">Return</div>
                 <div class="season-stat-grid">
