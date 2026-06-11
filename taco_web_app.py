@@ -413,12 +413,39 @@ def render_seasonality_lab() -> None:
     with control_cols[0]:
         asset_label = st.selectbox("Asset", list(ASSET_PRESETS.keys()), key="seasonality_asset")
         default_symbol = ASSET_PRESETS[asset_label]
-        symbol = st.text_input("Yahoo Symbol", value=default_symbol, key="seasonality_symbol")
+        if "seasonality_symbol" not in st.session_state:
+            st.session_state["seasonality_symbol"] = default_symbol
+        if st.session_state.get("seasonality_last_asset_label") != asset_label:
+            st.session_state["seasonality_last_asset_label"] = asset_label
+            st.session_state["seasonality_symbol"] = default_symbol
+            st.session_state.pop("seasonality_manual_period", None)
+            st.session_state.pop("seasonality_pending_period_text", None)
+            for state_key in list(st.session_state.keys()):
+                if state_key.startswith("seasonality_year_"):
+                    del st.session_state[state_key]
+        symbol = st.text_input("Yahoo Symbol", key="seasonality_symbol")
     with control_cols[1]:
         lookback_label = st.selectbox(
             "Lookback",
-            ["5 Jahre", "10 Jahre", "15 Jahre", "20 Jahre", "25 Jahre", "30 Jahre", "35 Jahre", "40 Jahre", "45 Jahre", "Max verfuegbare Jahre"],
-            index=9,
+            [
+                "5 Jahre",
+                "10 Jahre",
+                "15 Jahre",
+                "20 Jahre",
+                "25 Jahre",
+                "30 Jahre",
+                "35 Jahre",
+                "40 Jahre",
+                "45 Jahre",
+                "50 Jahre",
+                "60 Jahre",
+                "70 Jahre",
+                "80 Jahre",
+                "90 Jahre",
+                "100 Jahre",
+                "Max verfuegbare Jahre",
+            ],
+            index=15,
         )
         lookback_years = None if lookback_label.startswith("Max") else int(lookback_label.split()[0])
     with control_cols[2]:
@@ -468,6 +495,12 @@ def render_seasonality_lab() -> None:
         return
 
     all_years = sorted(pd.Index(df.index.year).unique().astype(int).tolist())
+    if all_years:
+        st.caption(
+            f"Yahoo-Datenabdeckung fuer {symbol.strip()}: "
+            f"{df.index.min().date()} bis {df.index.max().date()} "
+            f"({len(all_years)} Kalenderjahre mit Daten)."
+        )
     selected_years = filter_years_by_lookback_and_cycle(df, lookback_years, cycle_filter)
     if len(selected_years) < 3:
         st.warning("Fuer diese Auswahl sind weniger als drei Pattern-Jahre verfuegbar. Bitte Lookback oder Filter erweitern.")
@@ -903,30 +936,44 @@ def render_seasonality_lab() -> None:
         st.plotly_chart(month_fig, width="stretch")
 
     lower_cols = st.columns(2)
-    trades_sorted = trades.sort_values("Year").copy()
-    trades_sorted["Cumulative Profit"] = trades_sorted["Profit"].cumsum()
-    trades_sorted["Cumulative Profit %"] = trades_sorted["Profit %"].cumsum()
+    trades_chronological = trades.sort_values("Year").copy()
+    trades_chronological["Cumulative Profit"] = trades_chronological["Profit"].cumsum()
+    trades_chronological["Cumulative Profit %"] = trades_chronological["Profit %"].cumsum()
     with lower_cols[0]:
         cum_fig = go.Figure()
-        cum_fig.add_trace(go.Scatter(x=trades_sorted["Year"], y=trades_sorted["Cumulative Profit"], mode="lines+markers", name="Points", line={"color": "#22d3ee"}))
-        cum_fig.add_trace(go.Scatter(x=trades_sorted["Year"], y=trades_sorted["Cumulative Profit %"], mode="lines+markers", name="Percent", line={"color": "#a78bfa"}))
+        cum_fig.add_trace(go.Scatter(x=trades_chronological["Year"], y=trades_chronological["Cumulative Profit"], mode="lines+markers", name="Points", line={"color": "#22d3ee"}))
+        cum_fig.add_trace(go.Scatter(x=trades_chronological["Year"], y=trades_chronological["Cumulative Profit %"], mode="lines+markers", name="Percent", line={"color": "#a78bfa"}))
         cum_fig.update_layout(**_seasonality_base_layout("Cumulative Profit fuer den Zeitraum", 340))
         cum_fig.add_annotation(text="TACO", xref="paper", yref="paper", x=0.5, y=0.52, showarrow=False, font={"size": 42, "color": "rgba(148,163,184,.12)"})
         st.plotly_chart(cum_fig, width="stretch")
     with lower_cols[1]:
-        colors = np.where(trades_sorted["Profit %"] >= 0, "#62c8e8", "#c25f50")
-        pattern_fig = go.Figure(go.Bar(x=trades_sorted["Year"], y=trades_sorted["Profit %"], marker_color=colors))
+        colors = np.where(trades_chronological["Profit %"] >= 0, "#62c8e8", "#c25f50")
+        pattern_fig = go.Figure(go.Bar(x=trades_chronological["Year"], y=trades_chronological["Profit %"], marker_color=colors))
         pattern_fig.update_layout(**_seasonality_base_layout("Pattern Returns", 340))
         pattern_fig.add_annotation(text="TACO", xref="paper", yref="paper", x=0.5, y=0.52, showarrow=False, font={"size": 42, "color": "rgba(148,163,184,.12)"})
         st.plotly_chart(pattern_fig, width="stretch")
 
+    trades_display = trades.sort_values("Year", ascending=False).reset_index(drop=True)
+
+    def color_profit_cells(value: float | int | str) -> str:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return ""
+        if numeric > 0:
+            return "color: #22c55e; font-weight: 700;"
+        if numeric < 0:
+            return "color: #ef4444; font-weight: 700;"
+        return ""
+
     st.subheader("Pattern Trades")
-    st.dataframe(trades_sorted, width="stretch")
+    styled_trades = trades_display.style.map(color_profit_cells, subset=["Profit", "Profit %"])
+    st.dataframe(styled_trades, width="stretch")
 
     downloads = st.columns(3)
     downloads[0].download_button(
         "Seasonality Trades CSV",
-        trades_sorted.to_csv(index=False).encode("utf-8"),
+        trades_display.to_csv(index=False).encode("utf-8"),
         "seasonality_trades.csv",
         "text/csv",
     )
