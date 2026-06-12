@@ -155,15 +155,15 @@ def _seasonality_base_layout(title: str, height: int = 420) -> dict:
         "font": {"color": "#cbd5e1", "size": 11},
         "margin": {"l": 42, "r": 18, "t": 62, "b": 34},
         "xaxis": {
-            "gridcolor": "rgba(148,163,184,.16)",
-            "zerolinecolor": "rgba(148,163,184,.14)",
+            "gridcolor": "rgba(148,163,184,.12)",
+            "zerolinecolor": "rgba(148,163,184,.12)",
             "showline": False,
             "linecolor": "rgba(148,163,184,.18)",
             "tickfont": {"color": "#94a3b8", "size": 10},
         },
         "yaxis": {
-            "gridcolor": "rgba(148,163,184,.16)",
-            "zerolinecolor": "rgba(148,163,184,.14)",
+            "gridcolor": "rgba(148,163,184,.12)",
+            "zerolinecolor": "rgba(148,163,184,.12)",
             "showline": False,
             "linecolor": "rgba(148,163,184,.18)",
             "tickfont": {"color": "#94a3b8", "size": 10},
@@ -620,10 +620,9 @@ def render_seasonality_lab() -> None:
     main_col, stat_col = st.columns([4.35, 1.2])
     with main_col:
         chart_curve = curve.copy()
-        chart_curve["indexed_raw"] = chart_curve["indexed"]
-        chart_curve["indexed_display"] = chart_curve["indexed_raw"].rolling(3, center=True, min_periods=1).mean()
-        chart_floor = min(float(chart_curve[["indexed_raw", "indexed_display"]].min().min()), 100.0)
-        chart_ceiling = max(float(chart_curve[["indexed_raw", "indexed_display"]].max().max()), 100.0)
+        chart_curve["indexed_display"] = chart_curve["indexed"].rolling(7, center=True, min_periods=1).mean()
+        chart_floor = min(float(chart_curve["indexed_display"].min()), 100.0)
+        chart_ceiling = max(float(chart_curve["indexed_display"].max()), 100.0)
         chart_padding = max((chart_ceiling - chart_floor) * 0.16, 1.5)
         chart_label_y = chart_ceiling + chart_padding * 0.58
 
@@ -652,21 +651,10 @@ def render_seasonality_lab() -> None:
         fig.add_trace(
             go.Scatter(
                 x=chart_curve["plot_date"],
-                y=chart_curve["indexed_raw"],
-                mode="lines",
-                name="Daily Seasonal Moves",
-                line={"color": "rgba(125,211,252,.38)", "width": 1.0},
-                hoverinfo="skip",
-                showlegend=False,
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=chart_curve["plot_date"],
                 y=chart_curve["indexed_display"],
                 mode="lines",
                 name="Average Seasonal Trend",
-                line={"color": "#7dd3fc", "width": 2.6, "shape": "linear"},
+                line={"color": "#62c8e8", "width": 2.1, "shape": "spline", "smoothing": 0.55},
                 hovertemplate="%{x|%b %d}<br>Index %{y:.2f}<extra></extra>",
                 showlegend=False,
             )
