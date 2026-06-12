@@ -1044,6 +1044,9 @@ ASSET_PRESETS = {
     "AUDUSD (AUDUSD=X)": "AUDUSD=X",
     "USDJPY (JPY=X)": "JPY=X",
     "NZDJPY (NZDJPY=X)": "NZDJPY=X",
+    "DXY proxy: US Dollar Index (DX-Y.NYB)": "DX-Y.NYB",
+    "Gold futures (GC=F)": "GC=F",
+    "Silver futures (SI=F)": "SI=F",
 }
 
 
