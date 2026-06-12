@@ -272,7 +272,10 @@ def render_seasonality_lab() -> None:
         """
         <style>
         .stApp { background: #070b13; }
-        .block-container { padding-top: 1.2rem; }
+        .block-container {
+            padding-top: 1.2rem;
+            max-width: min(96vw, 118rem);
+        }
         .season-toolbar {
             background: #141c28;
             border: 1px solid rgba(148,163,184,.16);
@@ -424,28 +427,38 @@ def render_seasonality_lab() -> None:
                 if state_key.startswith("seasonality_year_"):
                     del st.session_state[state_key]
         symbol = st.text_input("Yahoo Symbol", key="seasonality_symbol")
+
+    if not symbol.strip():
+        st.warning("Bitte ein Yahoo-Symbol eingeben.")
+        return
+
+    with st.spinner(f"Lade maximale Yahoo-Historie fuer {symbol}..."):
+        df = load_seasonality_data(symbol.strip())
+
+    if df is None or df.empty:
+        st.warning("Yahoo hat fuer dieses Symbol keine verwertbaren Tagesdaten geliefert.")
+        return
+
+    all_years = sorted(pd.Index(df.index.year).unique().astype(int).tolist())
+    available_year_count = len(all_years)
+
+    def build_lookback_options(available_years: int) -> list[str]:
+        standard_steps = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100]
+        options = [f"{years} Jahre" for years in standard_steps if years <= available_years]
+        if available_years > 0 and available_years not in standard_steps:
+            options.append(f"{available_years} Jahre")
+        options.append(f"Max verfuegbare Jahre ({available_years} Jahre)")
+        return options
+
     with control_cols[1]:
+        lookback_options = build_lookback_options(available_year_count)
+        previous_lookback = st.session_state.get("seasonality_lookback")
+        if previous_lookback not in lookback_options:
+            st.session_state["seasonality_lookback"] = lookback_options[-1]
         lookback_label = st.selectbox(
             "Lookback",
-            [
-                "5 Jahre",
-                "10 Jahre",
-                "15 Jahre",
-                "20 Jahre",
-                "25 Jahre",
-                "30 Jahre",
-                "35 Jahre",
-                "40 Jahre",
-                "45 Jahre",
-                "50 Jahre",
-                "60 Jahre",
-                "70 Jahre",
-                "80 Jahre",
-                "90 Jahre",
-                "100 Jahre",
-                "Max verfuegbare Jahre",
-            ],
-            index=15,
+            lookback_options,
+            key="seasonality_lookback",
         )
         lookback_years = None if lookback_label.startswith("Max") else int(lookback_label.split()[0])
     with control_cols[2]:
@@ -483,18 +496,6 @@ def render_seasonality_lab() -> None:
             unsafe_allow_html=True,
         )
 
-    if not symbol.strip():
-        st.warning("Bitte ein Yahoo-Symbol eingeben.")
-        return
-
-    with st.spinner(f"Lade maximale Yahoo-Historie fuer {symbol}..."):
-        df = load_seasonality_data(symbol.strip())
-
-    if df is None or df.empty:
-        st.warning("Yahoo hat fuer dieses Symbol keine verwertbaren Tagesdaten geliefert.")
-        return
-
-    all_years = sorted(pd.Index(df.index.year).unique().astype(int).tolist())
     if all_years:
         st.caption(
             f"Yahoo-Datenabdeckung fuer {symbol.strip()}: "
@@ -599,7 +600,7 @@ def render_seasonality_lab() -> None:
 
     asset_short = asset_label.split(" proxy:")[0].replace(" proxy", "")
     years_text = f"{len(active_years)} Years"
-    main_col, stat_col = st.columns([3.1, 1.1])
+    main_col, stat_col = st.columns([4.35, 1.2])
     with main_col:
         chart_curve = curve.copy()
         chart_curve["indexed_display"] = chart_curve["indexed"].rolling(7, center=True, min_periods=1).mean()
@@ -650,7 +651,7 @@ def render_seasonality_lab() -> None:
             else:
                 fig.add_vrect(x0=display_start_marker, x1=pd.Timestamp("2001-12-31"), fillcolor="#62c8e8", opacity=0.11, line_width=0)
                 fig.add_vrect(x0=pd.Timestamp("2001-01-01"), x1=display_end_marker, fillcolor="#62c8e8", opacity=0.11, line_width=0)
-        fig.update_layout(**_seasonality_base_layout(f"Seasonal Trend of {asset_short} over {years_text}", 560))
+        fig.update_layout(**_seasonality_base_layout(f"Seasonal Trend of {asset_short} over {years_text}", 700))
         fig.update_layout(
             dragmode="select",
             uirevision=f"seasonality_full_year_{asset_short}",
