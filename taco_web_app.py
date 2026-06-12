@@ -2054,6 +2054,10 @@ with st.sidebar:
         scan_cycle_from = st.number_input("Cycle From", 2, 100, 5)
         scan_cycle_to = st.number_input("Cycle To", 2, 100, 30)
         scan_cycle_step = st.number_input("Cycle Step", 1, 20, 1)
+        scan_sl_range = st.checkbox("Scan Stop Loss Range", True)
+        scan_sl_from = st.number_input("Cycle Scanner SL From %", 0.05, 20.0, 0.25, step=0.05)
+        scan_sl_to = st.number_input("Cycle Scanner SL To %", 0.05, 20.0, 2.00, step=0.05)
+        scan_sl_step = st.number_input("Cycle Scanner SL Step %", 0.05, 5.0, 0.05, step=0.05)
         top_curve_min_trades = st.number_input("Top Curves Min Trades", 1, 1000, 50)
         top_curve_max_loss_streak = st.number_input("Top Curves Max Loss Streak", 0, 100, 5)
         run_scan = st.button("Run Cycle Scan", type="primary")
@@ -2592,6 +2596,17 @@ if test_mode == "Cycle Scanner":
     if scan_cycle_to < scan_cycle_from:
         st.error("Cycle To muss groesser oder gleich Cycle From sein.")
         st.stop()
+    if scan_sl_range and scan_sl_to < scan_sl_from:
+        st.error("Cycle Scanner SL To muss groesser oder gleich SL From sein.")
+        st.stop()
+
+    if scan_sl_range:
+        scan_sl_values = np.round(
+            np.arange(float(scan_sl_from), float(scan_sl_to) + float(scan_sl_step) / 2, float(scan_sl_step)),
+            4,
+        ).tolist()
+    else:
+        scan_sl_values = [float(settings.stop_pct)]
 
     rows = []
     progress = st.progress(0)
@@ -2600,14 +2615,15 @@ if test_mode == "Cycle Scanner":
         for comp_name in scan_comps:
             for direction in scan_directions:
                 for cycle in range(int(scan_cycle_from), int(scan_cycle_to) + 1, int(scan_cycle_step)):
-                    combos.append((asset_name, comp_name, direction, cycle))
+                    for scan_sl in scan_sl_values:
+                        combos.append((asset_name, comp_name, direction, cycle, scan_sl))
 
     if not combos:
         st.warning("Bitte mindestens ein Asset, ein Comparison Asset und eine Direction auswaehlen.")
         st.stop()
 
     data_cache = {}
-    for idx, (asset_name, comp_name, direction, cycle) in enumerate(combos, start=1):
+    for idx, (asset_name, comp_name, direction, cycle, scan_sl) in enumerate(combos, start=1):
         asset_symbol = ASSET_PRESETS[asset_name]
         comp_symbol = COMPARISON_PRESETS[comp_name]
 
@@ -2633,7 +2649,7 @@ if test_mode == "Cycle Scanner":
             upper=settings.upper,
             lower=settings.lower,
             risk_pct=settings.risk_pct,
-            stop_pct=settings.stop_pct,
+            stop_pct=float(scan_sl),
             tp_mode=settings.tp_mode,
             rr=settings.rr,
             fixed_tp_pct=settings.fixed_tp_pct,
@@ -2654,6 +2670,7 @@ if test_mode == "Cycle Scanner":
             "Comparison Symbol": comp_symbol,
             "Direction": direction,
             "Cycle": cycle,
+            "SL %": float(scan_sl),
             "Trades": scan_metrics["Trades"],
             "Winrate": scan_metrics["Winrate"],
             "Profit Factor": scan_metrics["Profit Factor"],
@@ -2679,12 +2696,16 @@ if test_mode == "Cycle Scanner":
     results = results.sort_values(["Profit Factor", "Net Profit"], ascending=[False, False])
     results = results.reset_index(drop=True)
     st.subheader("Cycle Scanner Ergebnisse")
-    st.caption("Sortiere nicht nur nach dem besten Einzelwert. Suche stabile Cluster ueber mehrere benachbarte Cycles.")
+    st.caption(
+        "Der Scanner testet Cycle Lengths und Stop-Loss-Szenarien gemeinsam. "
+        "`SL %` zeigt exakt, welcher Stop fuer diese Ergebniszeile verwendet wurde. "
+        "Sortiere nicht nur nach dem besten Einzelwert, sondern suche stabile Cluster ueber benachbarte Cycles und Stopps."
+    )
     st.dataframe(results, use_container_width=True)
 
     st.subheader("Top robuste Bereiche")
     robust_rows = []
-    grouped = results.dropna(subset=["Profit Factor"]).groupby(["Asset", "Comparison", "Direction"])
+    grouped = results.dropna(subset=["Profit Factor"]).groupby(["Asset", "Comparison", "Direction", "SL %"])
     for keys, group in grouped:
         group = group.sort_values("Cycle")
         for _, row in group.iterrows():
@@ -2695,6 +2716,7 @@ if test_mode == "Cycle Scanner":
                     "Asset": keys[0],
                     "Comparison": keys[1],
                     "Direction": keys[2],
+                    "SL %": keys[3],
                     "Center Cycle": cycle,
                     "Neighbor Count": len(neighbors),
                     "Avg Profit Factor": neighbors["Profit Factor"].mean(),
@@ -2734,6 +2756,7 @@ if test_mode == "Cycle Scanner":
                 "Comparison",
                 "Direction",
                 "Cycle",
+                "SL %",
                 "Trades",
                 "Winrate",
                 "Profit Factor",
@@ -2758,7 +2781,7 @@ if test_mode == "Cycle Scanner":
                 upper=settings.upper,
                 lower=settings.lower,
                 risk_pct=settings.risk_pct,
-                stop_pct=settings.stop_pct,
+                stop_pct=float(row["SL %"]),
                 tp_mode=settings.tp_mode,
                 rr=settings.rr,
                 fixed_tp_pct=settings.fixed_tp_pct,
@@ -2780,7 +2803,10 @@ if test_mode == "Cycle Scanner":
                     x=curve_equity.index,
                     y=curve_equity["equity"],
                     mode="lines",
-                    name=f"{row['Asset']} / {row['Comparison']} / {row['Direction']} / Cycle {int(row['Cycle'])}",
+                    name=(
+                        f"{row['Asset']} / {row['Comparison']} / {row['Direction']} / "
+                        f"Cycle {int(row['Cycle'])} / SL {float(row['SL %']):.2f}%"
+                    ),
                 )
             )
         equity_fig.update_layout(
@@ -2794,7 +2820,7 @@ if test_mode == "Cycle Scanner":
     st.subheader("Ausgewaehltes Scanner-Setup visualisieren")
     st.caption("Waehle ein Ergebnis aus der Scanner-Tabelle aus. Danach wird es wie ein manueller Backtest mit Chart, Oszillator, Equity und Trades angezeigt.")
     labels = [
-        f"#{idx} | {row.Asset} | {row.Comparison} | {row.Direction} | Cycle {int(row.Cycle)} | PF {row['Profit Factor']:.2f} | Net {row['Net Profit']:.0f}"
+        f"#{idx} | {row.Asset} | {row.Comparison} | {row.Direction} | Cycle {int(row.Cycle)} | SL {row['SL %']:.2f}% | PF {row['Profit Factor']:.2f} | Net {row['Net Profit']:.0f}"
         for idx, row in results.head(100).iterrows()
     ]
     selected_label = st.selectbox("Scanner-Ergebnis anzeigen", labels)
@@ -2814,7 +2840,7 @@ if test_mode == "Cycle Scanner":
         upper=settings.upper,
         lower=settings.lower,
         risk_pct=settings.risk_pct,
-        stop_pct=settings.stop_pct,
+        stop_pct=float(selected["SL %"]),
         tp_mode=settings.tp_mode,
         rr=settings.rr,
         fixed_tp_pct=settings.fixed_tp_pct,
