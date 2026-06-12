@@ -590,6 +590,23 @@ def render_seasonality_lab() -> None:
             pd.Timestamp(year=2001, month=int(end.month), day=int(end.day)),
         )
 
+    def chart_selection_is_empty(selection_state) -> bool:
+        if not selection_state:
+            return False
+        selection = getattr(selection_state, "selection", None)
+        if selection is None and isinstance(selection_state, dict):
+            selection = selection_state.get("selection")
+        if selection is None:
+            return False
+        boxes = getattr(selection, "box", None)
+        points = getattr(selection, "points", None)
+        lasso = getattr(selection, "lasso", None)
+        if isinstance(selection, dict):
+            boxes = selection.get("box", boxes)
+            points = selection.get("points", points)
+            lasso = selection.get("lasso", lasso)
+        return not (boxes or points or lasso)
+
     manual_period = st.session_state.get("seasonality_manual_period")
     if manual_period:
         display_start_marker = pd.Timestamp(manual_period[0])
@@ -691,7 +708,7 @@ def render_seasonality_lab() -> None:
             config={
                 "displayModeBar": False,
                 "scrollZoom": False,
-                "doubleClick": False,
+                "doubleClick": "reset",
                 "staticPlot": False,
             },
             key="seasonality_main_curve",
@@ -704,10 +721,24 @@ def render_seasonality_lab() -> None:
         selected_token = tuple(marker.isoformat() for marker in selected_chart_period)
         if selected_token != tuple(st.session_state.get("seasonality_manual_period", ())):
             st.session_state["seasonality_manual_period"] = selected_token
+            st.session_state["seasonality_chart_selection_active"] = True
+            st.session_state["seasonality_just_set_manual_period"] = selected_token
             st.session_state["seasonality_pending_period_text"] = format_period_from_markers(
                 selected_chart_period[0],
                 selected_chart_period[1],
             )
+            st.rerun()
+        else:
+            st.session_state.pop("seasonality_just_set_manual_period", None)
+    elif (
+        st.session_state.get("seasonality_chart_selection_active")
+        and st.session_state.get("seasonality_manual_period")
+        and chart_selection_is_empty(chart_selection)
+    ):
+        just_set_period = st.session_state.pop("seasonality_just_set_manual_period", None)
+        if just_set_period != tuple(st.session_state.get("seasonality_manual_period", ())):
+            st.session_state.pop("seasonality_manual_period", None)
+            st.session_state["seasonality_chart_selection_active"] = False
             st.rerun()
 
     manual_period = st.session_state.get("seasonality_manual_period")
