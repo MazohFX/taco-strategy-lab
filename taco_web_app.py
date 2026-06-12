@@ -2663,6 +2663,12 @@ if test_mode == "Cycle Scanner":
 
         scan_df = calculate_oscillator(asset_data, comp_data, scan_settings)
         scan_trades, _, scan_metrics = backtest(scan_df, scan_settings)
+        if settings.tp_mode == "Risk Reward":
+            scan_tp_pct = float(scan_sl) * float(settings.rr)
+        elif settings.tp_mode == "Fixed %":
+            scan_tp_pct = float(settings.fixed_tp_pct)
+        else:
+            scan_tp_pct = np.nan
         rows.append({
             "Asset": asset_name.split(" proxy:")[0].replace(" proxy", ""),
             "Comparison": comp_name.split(" proxy:")[0].replace(" futures", ""),
@@ -2671,6 +2677,7 @@ if test_mode == "Cycle Scanner":
             "Direction": direction,
             "Cycle": cycle,
             "SL %": float(scan_sl),
+            "TP %": scan_tp_pct,
             "Trades": scan_metrics["Trades"],
             "Winrate": scan_metrics["Winrate"],
             "Profit Factor": scan_metrics["Profit Factor"],
@@ -2699,13 +2706,15 @@ if test_mode == "Cycle Scanner":
     st.caption(
         "Der Scanner testet Cycle Lengths und Stop-Loss-Szenarien gemeinsam. "
         "`SL %` zeigt exakt, welcher Stop fuer diese Ergebniszeile verwendet wurde. "
+        "`TP %` zeigt das jeweils daraus berechnete Ziel. Bei Risk Reward ist TP = SL x R-Multiple; "
+        "bei Fixed % bleibt TP immer gleich. "
         "Sortiere nicht nur nach dem besten Einzelwert, sondern suche stabile Cluster ueber benachbarte Cycles und Stopps."
     )
     st.dataframe(results, use_container_width=True)
 
     st.subheader("Top robuste Bereiche")
     robust_rows = []
-    grouped = results.dropna(subset=["Profit Factor"]).groupby(["Asset", "Comparison", "Direction", "SL %"])
+    grouped = results.dropna(subset=["Profit Factor"]).groupby(["Asset", "Comparison", "Direction", "SL %", "TP %"], dropna=False)
     for keys, group in grouped:
         group = group.sort_values("Cycle")
         for _, row in group.iterrows():
@@ -2717,8 +2726,11 @@ if test_mode == "Cycle Scanner":
                     "Comparison": keys[1],
                     "Direction": keys[2],
                     "SL %": keys[3],
+                    "TP %": keys[4],
                     "Center Cycle": cycle,
+                    "Center Trades": row["Trades"],
                     "Neighbor Count": len(neighbors),
+                    "Min Trades": neighbors["Trades"].min(),
                     "Avg Profit Factor": neighbors["Profit Factor"].mean(),
                     "Avg Net Profit": neighbors["Net Profit"].mean(),
                     "Worst Max DD": neighbors["Max DD"].min(),
@@ -2757,6 +2769,7 @@ if test_mode == "Cycle Scanner":
                 "Direction",
                 "Cycle",
                 "SL %",
+                "TP %",
                 "Trades",
                 "Winrate",
                 "Profit Factor",
@@ -2805,7 +2818,7 @@ if test_mode == "Cycle Scanner":
                     mode="lines",
                     name=(
                         f"{row['Asset']} / {row['Comparison']} / {row['Direction']} / "
-                        f"Cycle {int(row['Cycle'])} / SL {float(row['SL %']):.2f}%"
+                        f"Cycle {int(row['Cycle'])} / SL {float(row['SL %']):.2f}% / TP {float(row['TP %']):.2f}%"
                     ),
                 )
             )
@@ -2820,7 +2833,7 @@ if test_mode == "Cycle Scanner":
     st.subheader("Ausgewaehltes Scanner-Setup visualisieren")
     st.caption("Waehle ein Ergebnis aus der Scanner-Tabelle aus. Danach wird es wie ein manueller Backtest mit Chart, Oszillator, Equity und Trades angezeigt.")
     labels = [
-        f"#{idx} | {row.Asset} | {row.Comparison} | {row.Direction} | Cycle {int(row.Cycle)} | SL {row['SL %']:.2f}% | PF {row['Profit Factor']:.2f} | Net {row['Net Profit']:.0f}"
+        f"#{idx} | {row.Asset} | {row.Comparison} | {row.Direction} | Cycle {int(row.Cycle)} | SL {row['SL %']:.2f}% | TP {row['TP %']:.2f}% | PF {row['Profit Factor']:.2f} | Net {row['Net Profit']:.0f}"
         for idx, row in results.head(100).iterrows()
     ]
     selected_label = st.selectbox("Scanner-Ergebnis anzeigen", labels)
