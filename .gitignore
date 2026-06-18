@@ -1,0 +1,9 @@
+# Screenshots & Dokumente die nicht ins Repo gehören
+*.png
+*.pdf
+*.xlsx
+__pycache__/
+*.pyc
+taco_mt5_update/
+taco_web_app_UPLOAD.py
+.DS_Store
