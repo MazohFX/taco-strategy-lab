@@ -1105,7 +1105,7 @@ def _scan_patterns_cached(
 
         # Entry/Exit Label aus DOY
         try:
-            _ref = pd.Timestamp(year=2001, month=1, day=1)
+            _ref = pd.Timestamp(year=2000, month=1, day=1)  # Schaltjahr → DOY stimmt mit Kalender überein
             entry_label = (_ref + pd.Timedelta(days=entry_doy - 1)).strftime("%d. %b")
             exit_label  = (_ref + pd.Timedelta(days=exit_doy  - 1)).strftime("%d. %b")
         except Exception:
@@ -1340,29 +1340,42 @@ def _render_muster_detail() -> None:
         "Jun": 6, "Jul": 7, "Aug": 8, "Sep": 9, "Okt": 10, "Oct": 10,
         "Nov": 11, "Dez": 12, "Dec": 12,
     }
-    hold_days = int(row["Haltedauer (TD)"])
     dir_str = richtung.lower()
-    entry_mon = _month_map_d.get(str(row["Entry"]).strip().split(".")[-1].strip()[:3], 0)
-    entry_day_num = int(str(row["Entry"]).strip().split(".")[0])
-    # Letztes vollständiges Jahr (nicht das laufende 2026)
+    # DOY-basiert — exakt gleiche Logik wie der Scanner
+    _entry_doy = int(row.get("_entry_doy", 0))
+    _exit_doy  = int(row.get("_exit_doy",  0))
     _max_yr = int(df_sym.index.year.max())
     end_y = _max_yr - 1 if _max_yr >= pd.Timestamp.now().year else _max_yr
     start_y = end_y - 20 + 1
 
+    # year_data für DOY-Lookup aufbauen
+    _det_year_data: dict = {}
+    for _yr, _grp in df_sym.groupby(df_sym.index.year):
+        _yr_doys = _grp.index.dayofyear.values.astype(int)
+        _sidx = np.argsort(_yr_doys)
+        _det_year_data[int(_yr)] = {
+            "doys":   _yr_doys[_sidx],
+            "closes": _grp["close"].values.astype(float)[_sidx],
+            "highs":  _grp["high"].values.astype(float)[_sidx],
+            "lows":   _grp["low"].values.astype(float)[_sidx],
+            "dates":  _grp.index[_sidx],
+        }
+
     trade_rows = []
     for yr in range(start_y, end_y + 1):
-        yr_df = df_sym[df_sym.index.year == yr]
+        _yd = _det_year_data.get(yr)
+        if _yd is None:
+            continue
         try:
-            cands = yr_df[(yr_df.index.month == entry_mon) & (yr_df.index.day >= entry_day_num)]
-            if cands.empty:
+            _yr_doys = _yd["doys"]
+            ei = int(np.searchsorted(_yr_doys, _entry_doy))
+            xi = int(np.searchsorted(_yr_doys, _exit_doy))
+            if ei >= len(_yr_doys) or xi >= len(_yr_doys) or xi <= ei:
                 continue
-            entry_date = cands.index[0]
-            future = df_sym[df_sym.index > entry_date]
-            if len(future) < hold_days:
-                continue
-            exit_date = future.index[hold_days - 1]
-            ep = float(df_sym.loc[entry_date, "close"])
-            xp = float(df_sym.loc[exit_date, "close"])
+            entry_date = _yd["dates"][ei]
+            exit_date  = _yd["dates"][xi]
+            ep = _yd["closes"][ei]
+            xp = _yd["closes"][xi]
             # Für DD/MFE: ab dem Tag NACH Entry-Close (Entry-Wick vor Close zählt nicht)
             period_dd = df_sym[(df_sym.index > entry_date) & (df_sym.index <= exit_date)]
             if dir_str == "long":
@@ -1381,6 +1394,8 @@ def _render_muster_detail() -> None:
                 "Max DD %": round(dd_pct, 2),
                 "Max MFE %": round(mfe_pct, 2),
                 "W/L": "✅ Win" if ret_pct > 0 else "❌ Loss",
+                "_entry_ts": entry_date,
+                "_entry_price": ep,
             })
         except Exception:
             continue
@@ -1390,7 +1405,9 @@ def _render_muster_detail() -> None:
         return
 
     tdf = pd.DataFrame(trade_rows).sort_values("Jahr").reset_index(drop=True)
+    tdf_5  = tdf[tdf["Jahr"] >= end_y -  5 + 1]
     tdf_10 = tdf[tdf["Jahr"] >= end_y - 10 + 1]
+    tdf_15 = tdf[tdf["Jahr"] >= end_y - 15 + 1]
     tdf_20 = tdf
 
     wins_10 = (tdf_10["Return %"] > 0).sum()
@@ -1427,6 +1444,109 @@ def _render_muster_detail() -> None:
         unsafe_allow_html=True,
     )
 
+    # ── Echtheits-Check ──────────────────────────────────────────────────────
+    st.markdown("### 🔍 Echtheits-Check: Netto-Edge nach Kosten")
+
+    _ec_c1, _ec_c2, _ec_c3, _ec_c4 = st.columns(4)
+    with _ec_c1:
+        _ec_comm = st.number_input("Commission %", 0.0, 2.0, 0.05, step=0.01, key=f"ec_comm_{symbol_str}_{row['Entry']}")
+    with _ec_c2:
+        _ec_slip = st.number_input("Slippage %", 0.0, 2.0, 0.02, step=0.01, key=f"ec_slip_{symbol_str}_{row['Entry']}")
+    with _ec_c3:
+        _perc_pct = st.slider("Perzentil-Stop %", 70, 95, 85, step=5, key=f"ec_perc_{symbol_str}_{row['Entry']}")
+    with _ec_c4:
+        _stddev_k = st.slider("StdDev-Faktor k", 1.0, 3.0, 1.75, step=0.25, key=f"ec_k_{symbol_str}_{row['Entry']}")
+    _atr_mult = st.slider("ATR-Multiplikator", 1.0, 3.0, 1.75, step=0.25, key=f"ec_atr_{symbol_str}_{row['Entry']}")
+
+    _kostenpuffer = 2.0 * (_ec_slip + _ec_comm)
+    tdf["Netto Return %"] = (tdf["Return %"] - _kostenpuffer).round(2)
+
+    def _fenster_data(sub):
+        if len(sub) < 2:
+            return None
+        avg_net = sub["Netto Return %"].mean()
+        avg_dd  = abs(sub["Max DD %"].mean())
+        ratio   = avg_net / avg_dd if avg_dd > 0 else float("inf")
+        return {"avg_net": avg_net, "ratio": ratio, "wins": (sub["Return %"] > 0).sum(), "n": len(sub)}
+
+    def _ampel_html(label, d):
+        if d is None:
+            return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);'                    f'border-radius:8px;padding:14px 18px;">'                    f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;'                    f'letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'                    f'<div style="color:#475569;">—</div></div>')
+        if d["ratio"] >= 1.5 and d["avg_net"] > 0:
+            sym, farbe, txt = "🟢", "#4ade80", "Robust positiv"
+        elif d["ratio"] >= 0.8 and d["avg_net"] > 0:
+            sym, farbe, txt = "🟡", "#f0c040", "Knapp / Break-even"
+        else:
+            sym, farbe, txt = "🔴", "#f87171", "Verlierer nach Kosten"
+        return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);'                f'border-radius:8px;padding:14px 18px;">'                f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;'                f'letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'                f'<div style="color:{farbe};font-size:1.05rem;font-weight:700;margin-bottom:3px;">'                f'{sym} {txt}</div>'                f'<div style="color:#9fb0c7;font-size:.8rem;">Ø netto {d["avg_net"]:+.2f}% &nbsp;·&nbsp; '                f'Ratio {d["ratio"]:.2f} &nbsp;·&nbsp; {d["wins"]}W/{d["n"]-d["wins"]}L</div></div>')
+
+    _badges = "".join([
+        _ampel_html("5J",  _fenster_data(tdf_5)),
+        _ampel_html("10J", _fenster_data(tdf_10)),
+        _ampel_html("15J", _fenster_data(tdf_15)),
+        _ampel_html("20J", _fenster_data(tdf_20)),
+    ])
+    st.markdown(
+        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;">'        f'{_badges}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Stop-Loss-Empfehlung ─────────────────────────────────────────────────
+    st.markdown("### 🛡️ Stop-Loss-Empfehlung")
+
+    _dd_abs = tdf["Max DD %"].abs()
+    _sl_perc = float(np.percentile(_dd_abs, _perc_pct)) + _kostenpuffer
+    _sl_std  = float(_dd_abs.mean() + _stddev_k * _dd_abs.std(ddof=1)) + _kostenpuffer
+
+    _atr_pct_vals = []
+    try:
+        _h = df_sym["high"].to_numpy(); _l = df_sym["low"].to_numpy(); _c = df_sym["close"].to_numpy()
+        _n = len(_c); _tr = np.zeros(_n); _tr[0] = _h[0] - _l[0]
+        for _i in range(1, _n):
+            _tr[_i] = max(_h[_i]-_l[_i], abs(_h[_i]-_c[_i-1]), abs(_l[_i]-_c[_i-1]))
+        _atr_w = np.full(_n, np.nan)
+        if _n >= 14:
+            _atr_w[13] = _tr[:14].mean()
+            for _i in range(14, _n): _atr_w[_i] = (_atr_w[_i-1] * 13 + _tr[_i]) / 14
+        _atr_s = pd.Series(_atr_w, index=df_sym.index)
+        for _, _r in tdf.iterrows():
+            _ets = _r["_entry_ts"]; _ep = _r["_entry_price"]
+            if _ets in _atr_s.index and not np.isnan(_atr_s[_ets]) and _ep > 0:
+                _atr_pct_vals.append(_atr_s[_ets] / _ep * 100)
+    except Exception:
+        pass
+
+    _atr_ok = len(_atr_pct_vals) > 0
+    _sl_atr  = float(np.mean(_atr_pct_vals)) * _atr_mult + _kostenpuffer if _atr_ok else 0.0
+    _methoden = {"Perzentil": _sl_perc, "Avg+StdDev": _sl_std}
+    if _atr_ok: _methoden["ATR"] = _sl_atr
+    _empf = max(_methoden, key=_methoden.get)
+
+    if _empf == "ATR":
+        _begr = f"ATR-Stop am größten (Ø {float(np.mean(_atr_pct_vals)):.2f}% × {_atr_mult}×) — aktuelle Volatilität übersteigt die historischen DD-Quantile."
+    elif _empf == "Avg+StdDev":
+        _begr = f"Avg+StdDev-Stop am größten — Ausreißer-DD {_dd_abs.max():.2f}% hebt σ={_dd_abs.std(ddof=1):.2f}% stark an."
+    else:
+        _begr = f"Perzentil-Stop am größten — {_perc_pct}. Perzentil des hist. DD ({float(np.percentile(_dd_abs, _perc_pct)):.2f}%) übertrifft andere Methoden."
+
+    def _sl_card(name, val, empf):
+        border = "border:2px solid #4ade80;" if empf else "border:1px solid rgba(148,163,184,.15);"
+        tag = ('<div style="display:inline-block;background:#14532d;color:#4ade80;font-size:.7rem;'               'font-weight:700;border-radius:4px;padding:2px 8px;margin-bottom:6px;">✅ Empfohlen</div>' if empf else "")
+        farbe = "#4ade80" if empf else "#9fb0c7"
+        return (f'<div style="background:#0a1220;{border}border-radius:8px;padding:16px 20px;">'                f'{tag}<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;'                f'letter-spacing:.06em;margin-bottom:4px;">{name}</div>'                f'<div style="color:{farbe};font-size:1.2rem;font-weight:700;">{val:.2f}%</div>'                f'<div style="color:#475569;font-size:.75rem;margin-top:3px;">'                f'inkl. Kostenpuffer {_kostenpuffer:.2f}%</div></div>')
+
+    _cards = [_sl_card("Perzentil", _sl_perc, _empf == "Perzentil"),
+              _sl_card("Avg + StdDev", _sl_std, _empf == "Avg+StdDev")]
+    if _atr_ok:
+        _cards.append(_sl_card("ATR", _sl_atr, _empf == "ATR"))
+    else:
+        _cards.append('<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);'                      'border-radius:8px;padding:16px 20px;">'                      '<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;'                      'letter-spacing:.06em;margin-bottom:4px;">ATR</div>'                      '<div style="color:#475569;">keine ATR-Daten verfügbar</div></div>')
+
+    st.markdown(
+        f'<div style="display:grid;grid-template-columns:repeat({len(_cards)},1fr);'        f'gap:14px;margin-bottom:10px;">{"".join(_cards)}</div>'        f'<div style="color:#6b7fa3;font-size:.82rem;margin-bottom:22px;">💡 {_begr}</div>',
+        unsafe_allow_html=True,
+    )
+
     # Tabelle — full width
     st.markdown("### 📋 Per-Jahr Ergebnisse")
 
@@ -1435,11 +1555,13 @@ def _render_muster_detail() -> None:
     def _color_dd(v):
         return "color:#f87171" if v < 0 else "color:#9fb0c7"
 
+    _tdf_show = tdf.drop(columns=["_entry_ts", "_entry_price"], errors="ignore")
     st.dataframe(
-        tdf.style
-        .map(_color_ret, subset=["Return %", "Max MFE %"])
+        _tdf_show.style
+        .map(_color_ret, subset=["Return %", "Netto Return %", "Max MFE %"])
         .map(_color_dd, subset=["Max DD %"])
-        .format({"Return %": "{:+.2f}%", "Max DD %": "{:+.2f}%", "Max MFE %": "{:+.2f}%"}),
+        .format({"Return %": "{:+.2f}%", "Netto Return %": "{:+.2f}%",
+                 "Max DD %": "{:+.2f}%", "Max MFE %": "{:+.2f}%"}),
         use_container_width=True,
         height=min(40 * len(tdf) + 42, 700),
     )
@@ -1609,6 +1731,108 @@ def _render_muster_detail() -> None:
         )
         st.plotly_chart(fig_atr, use_container_width=True)
 
+        # ── ATR-Bewertung ─────────────────────────────────────────────────────
+        _avg_ret_abs = abs(tdf["Return %"].mean())
+        _ratio_atr   = _atr_avg / _avg_ret_abs if _avg_ret_abs > 0 else float("inf")
+
+        # Trend: letzte 3 Jahre vs. Gesamtdurchschnitt
+        _recent_3 = _atr_df.tail(3)["ATR %"].mean() if len(_atr_df) >= 3 else _atr_avg
+        _trend_up  = _recent_3 > _atr_avg * 1.25  # letzten 3J deutlich über Ø
+
+        # Basisrating nach ATR/Profit-Ratio
+        if _ratio_atr < 0.5:
+            _sterne = 5
+            _rating_txt = "Exzellent — ATR sehr gering im Verhältnis zum Profit"
+            _rating_farbe = "#4ade80"
+        elif _ratio_atr < 1.0:
+            _sterne = 4
+            _rating_txt = "Gut — ATR kontrollierbar, Pattern klar dominant"
+            _rating_farbe = "#86efac"
+        elif _ratio_atr < 1.5:
+            _sterne = 3
+            _rating_txt = "Mittel — ATR in Höhe des Profits, Stop-Loss kritisch"
+            _rating_farbe = "#f0c040"
+        elif _ratio_atr < 2.5:
+            _sterne = 2
+            _rating_txt = "Schwach — ATR dominiert Profit, Stop-Loss Risiko hoch"
+            _rating_farbe = "#fb923c"
+        else:
+            _sterne = 1
+            _rating_txt = "Kritisch — ATR zu groß, Pattern kaum handelbar ohne weiten Stop"
+            _rating_farbe = "#f87171"
+
+        # Trend-Malus: steigende Volatilität in den letzten 3 Jahren
+        if _trend_up and _sterne > 1:
+            _sterne -= 1
+            _trend_hinweis = (f" ⚠️ Volatilität zuletzt gestiegen (Ø letzte 3J: {_recent_3:.3f}% "
+                              f"vs. Ø gesamt: {_atr_avg:.3f}%) — ein Stern Abzug.")
+        else:
+            _trend_hinweis = ""
+
+        _sterne_str = "★" * _sterne + "☆" * (5 - _sterne)
+
+        _atr_erklaerung = f"""
+<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:10px;
+padding:20px 24px;margin-top:16px;">
+
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+    <div style="color:#60a5fa;font-size:1.05rem;font-weight:700;">📖 ATR — Was bedeutet das für dieses Muster?</div>
+    <div style="color:{_rating_farbe};font-size:1.4rem;letter-spacing:2px;">{_sterne_str}</div>
+    <div style="color:{_rating_farbe};font-size:.9rem;font-weight:700;">{_sterne}/5 — {_rating_txt}{_trend_hinweis}</div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+    <div>
+      <div style="color:#94a3b8;font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Was ist ATR?</div>
+      <div style="color:#cbd5e1;font-size:.88rem;line-height:1.6;">
+        Der <b>Average True Range (ATR-14)</b> misst die durchschnittliche Tages­volatilität
+        über 14 Handelstage vor dem Entry. Er zeigt, wie viel sich der Kurs typischerweise
+        <i>innerhalb eines Tages</i> bewegt (High minus Low, bereinigt um Over­night-Gaps).
+        Je höher der ATR, desto mehr Spielraum braucht ein Stop-Loss — und desto
+        schwieriger ist es, das Pattern ohne vorzeitigen Stop-Out zu handeln.
+      </div>
+    </div>
+    <div>
+      <div style="color:#94a3b8;font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Bewertungslogik</div>
+      <div style="color:#cbd5e1;font-size:.88rem;line-height:1.6;">
+        Entscheidend ist das <b>ATR-zu-Profit-Verhältnis</b>: Wie groß ist die tägliche
+        Schwankung im Vergleich zum erwarteten Muster­gewinn?<br><br>
+        <span style="color:#4ade80;">✅ ATR/Profit &lt; 0.5×</span> → Pattern dominiert klar über Rauschen (5★)<br>
+        <span style="color:#86efac;">✅ ATR/Profit 0.5–1.0×</span> → kontrollierbar, guter Edge (4★)<br>
+        <span style="color:#f0c040;">⚠️ ATR/Profit 1.0–1.5×</span> → Stop-Loss Sizing kritisch (3★)<br>
+        <span style="color:#fb923c;">⛔ ATR/Profit 1.5–2.5×</span> → Rauschen dominiert (2★)<br>
+        <span style="color:#f87171;">🚫 ATR/Profit &gt; 2.5×</span> → kaum handelbar (1★)
+      </div>
+    </div>
+  </div>
+
+  <div style="background:#060c16;border-radius:7px;padding:12px 16px;display:flex;gap:24px;flex-wrap:wrap;">
+    <div>
+      <div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;">Ø ATR (20J)</div>
+      <div style="color:#60a5fa;font-size:1rem;font-weight:700;">{_atr_avg:.3f}%</div>
+    </div>
+    <div>
+      <div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;">Ø Return (brutto)</div>
+      <div style="color:#4ade80;font-size:1rem;font-weight:700;">{_avg_ret_abs:.2f}%</div>
+    </div>
+    <div>
+      <div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;">ATR / Profit-Ratio</div>
+      <div style="color:{_rating_farbe};font-size:1rem;font-weight:700;">{_ratio_atr:.2f}×</div>
+    </div>
+    <div>
+      <div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;">Volatilitäts-Trend</div>
+      <div style="color:{"#f87171" if _trend_up else "#4ade80"};font-size:1rem;font-weight:700;">{"↑ steigend" if _trend_up else "→ stabil"}</div>
+    </div>
+    <div>
+      <div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;">Ø ATR letzte 3J</div>
+      <div style="color:#60a5fa;font-size:1rem;font-weight:700;">{_recent_3:.3f}%</div>
+    </div>
+  </div>
+
+</div>
+"""
+        st.markdown(_atr_erklaerung, unsafe_allow_html=True)
+
 
 def render_seasonality_muster() -> None:
     # Detail-Page wenn aktiv
@@ -1630,9 +1854,31 @@ def render_seasonality_muster() -> None:
 
     col_ctrl, col_main = st.columns([1, 3], gap="medium")
 
-    # Permanent CSV folder in the repo
+    # Permanent CSV folder — auto-download from data branch if missing
     from pathlib import Path as _Path
+    import requests as _requests
     _MT5_DIR = _Path(__file__).parent / "data" / "mt5"
+    _GITHUB_RAW = "https://raw.githubusercontent.com/MazohFX/taco-strategy-lab/data"
+    _ALL_SYMBOLS = [
+        "AUDCAD","AUDCHF","AUDJPY","AUDNZD","AUDUSD","AUS200","CADJPY","CHFJPY",
+        "EURAUD","EURCAD","EURGBP","EURJPY","EURNZD","EURUSD","GBPAUD","GBPCAD",
+        "GBPJPY","GBPNZD","GBPUSD","GER40","JPN225","NZDCAD","NZDCHF","NZDJPY",
+        "NZDUSD","UK100","US30","US500","USDCAD","USDCHF","USDJPY","XAGUSD","XAUUSD",
+    ]
+    if not _MT5_DIR.exists() or len(list(_MT5_DIR.glob("*.csv"))) < len(_ALL_SYMBOLS):
+        _MT5_DIR.mkdir(parents=True, exist_ok=True)
+        _dl_bar = st.progress(0, text="Lade CSV-Daten vom Server…")
+        for _i, _sym in enumerate(_ALL_SYMBOLS):
+            _fpath = _MT5_DIR / f"{_sym}.csv"
+            if not _fpath.exists():
+                try:
+                    _r = _requests.get(f"{_GITHUB_RAW}/{_sym}.csv", timeout=15)
+                    if _r.status_code == 200:
+                        _fpath.write_bytes(_r.content)
+                except Exception:
+                    pass
+            _dl_bar.progress((_i + 1) / len(_ALL_SYMBOLS), text=f"Lade {_sym}…")
+        _dl_bar.empty()
     _available_symbols = sorted([f.stem.upper() for f in _MT5_DIR.glob("*.csv")]) if _MT5_DIR.exists() else []
 
     with col_ctrl:
