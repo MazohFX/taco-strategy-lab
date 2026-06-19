@@ -1070,10 +1070,15 @@ def _scan_patterns_cached(
         wr_10j = round(wr_10j * 100, 1) if has_10j and not np.isnan(wr_10j) else np.nan
         wr_15j = round(wr_15j * 100, 1) if has_15j and not np.isnan(wr_15j) else np.nan
 
-        # Robustheit: benachbarte Entry-DOYs +3..+7 testen
+        # Robustheit: bidirektional ±3..±7 Tage + ATR-Effizienz
+        avg_atr_pct_pre = float(np.mean([t["atr"] / t["ep"] for t in primary_trades if t["ep"] > 0]) * 100)
+        avg_ret_abs = abs(avg_ret)
+        atr_efficient = avg_atr_pct_pre > 0 and (avg_ret_abs / (avg_atr_pct_pre / 100)) >= 0.4
+
         robust_wins = robust_total = 0
-        for offset in range(3, 8):
+        for offset in list(range(-7, -2)) + list(range(3, 8)):  # ±3..±7 bidirektional
             alt_entry = entry_doy + offset
+            if alt_entry < 1 or alt_entry > 365: continue
             alt_trades_primary = []
             for yr in sorted_years:
                 if yr < year_start_primary or yr > end_year: continue
@@ -1096,10 +1101,12 @@ def _scan_patterns_cached(
             robustheit = "—"
         else:
             _rob_ratio = robust_wins / robust_total
-            if _rob_ratio >= 0.80:   robustheit = "🟢 Stark"
-            elif _rob_ratio >= 0.60: robustheit = "✅ Robust"
-            elif _rob_ratio >= 0.40: robustheit = "⚠️ Sensitiv"
-            else:                    robustheit = "❌ Fragil"
+            # ATR-Effizienz senkt Robustheit um eine Stufe wenn Profit < 0.4× ATR
+            if _rob_ratio >= 0.80 and atr_efficient:   robustheit = "🟢 Stark"
+            elif _rob_ratio >= 0.80:                   robustheit = "✅ Robust"   # gute WR aber ATR-schwach
+            elif _rob_ratio >= 0.60:                   robustheit = "✅ Robust"
+            elif _rob_ratio >= 0.40:                   robustheit = "⚠️ Sensitiv"
+            else:                                      robustheit = "❌ Fragil"
 
         avg_atr_pct = float(np.mean([t["atr"] / t["ep"] for t in primary_trades if t["ep"] > 0]) * 100)
 
@@ -1237,8 +1244,12 @@ def _render_muster_detail() -> None:
     symbol_str = detail.get("symbol", "—")
     lookback = detail.get("lookback", 10)
 
-    if st.button("← Zurück zum Scanner"):
+    _from_analyse = detail.get("from_analyse", False)
+    _back_label = "← Neue Analyse" if _from_analyse else "← Zurück zum Scanner"
+    if st.button(_back_label):
         st.session_state.pop("muster_detail", None)
+        if _from_analyse:
+            st.session_state.pop("muster_analyse_detail", None)
         st.rerun()
 
     richtung = row["Richtung"]
@@ -1446,7 +1457,6 @@ def _render_muster_detail() -> None:
 
     # ── Echtheits-Check ──────────────────────────────────────────────────────
     st.markdown("### 🔍 Echtheits-Check: Netto-Edge nach Kosten")
-
     _ec_c1, _ec_c2, _ec_c3, _ec_c4 = st.columns(4)
     with _ec_c1:
         _ec_comm = st.number_input("Commission %", 0.0, 2.0, 0.05, step=0.01, key=f"ec_comm_{symbol_str}_{row['Entry']}")
@@ -1457,113 +1467,93 @@ def _render_muster_detail() -> None:
     with _ec_c4:
         _stddev_k = st.slider("StdDev-Faktor k", 1.0, 3.0, 1.75, step=0.25, key=f"ec_k_{symbol_str}_{row['Entry']}")
     _atr_mult = st.slider("ATR-Multiplikator", 1.0, 3.0, 1.75, step=0.25, key=f"ec_atr_{symbol_str}_{row['Entry']}")
-
     _kostenpuffer = 2.0 * (_ec_slip + _ec_comm)
     tdf["Netto Return %"] = (tdf["Return %"] - _kostenpuffer).round(2)
 
     def _fenster_data(sub):
-        if len(sub) < 2:
-            return None
-        avg_net = sub["Netto Return %"].mean()
+        if len(sub) < 2: return None
+        avg_net = (sub["Return %"] - _kostenpuffer).mean()
         avg_dd  = abs(sub["Max DD %"].mean())
         ratio   = avg_net / avg_dd if avg_dd > 0 else float("inf")
         return {"avg_net": avg_net, "ratio": ratio, "wins": (sub["Return %"] > 0).sum(), "n": len(sub)}
 
     def _ampel_html(label, d):
         if d is None:
-            return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);'                    f'border-radius:8px;padding:14px 18px;">'                    f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;'                    f'letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'                    f'<div style="color:#475569;">—</div></div>')
-        if d["ratio"] >= 1.5 and d["avg_net"] > 0:
-            sym, farbe, txt = "🟢", "#4ade80", "Robust positiv"
-        elif d["ratio"] >= 0.8 and d["avg_net"] > 0:
-            sym, farbe, txt = "🟡", "#f0c040", "Knapp / Break-even"
-        else:
-            sym, farbe, txt = "🔴", "#f87171", "Verlierer nach Kosten"
-        return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);'                f'border-radius:8px;padding:14px 18px;">'                f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;'                f'letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'                f'<div style="color:{farbe};font-size:1.05rem;font-weight:700;margin-bottom:3px;">'                f'{sym} {txt}</div>'                f'<div style="color:#9fb0c7;font-size:.8rem;">Ø netto {d["avg_net"]:+.2f}% &nbsp;·&nbsp; '                f'Ratio {d["ratio"]:.2f} &nbsp;·&nbsp; {d["wins"]}W/{d["n"]-d["wins"]}L</div></div>')
+            return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:14px 18px;">'
+                    f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'
+                    f'<div style="color:#475569;">—</div></div>')
+        if d["ratio"] >= 1.5 and d["avg_net"] > 0:   sym,farbe,txt="🟢","#4ade80","Robust positiv"
+        elif d["ratio"] >= 0.8 and d["avg_net"] > 0: sym,farbe,txt="🟡","#f0c040","Knapp / Break-even"
+        else:                                          sym,farbe,txt="🔴","#f87171","Verlierer nach Kosten"
+        return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:14px 18px;">'
+                f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'
+                f'<div style="color:{farbe};font-size:1.05rem;font-weight:700;margin-bottom:3px;">{sym} {txt}</div>'
+                f'<div style="color:#9fb0c7;font-size:.8rem;">Ø netto {d["avg_net"]:+.2f}% · Ratio {d["ratio"]:.2f} · {d["wins"]}W/{d["n"]-d["wins"]}L</div></div>')
 
-    _badges = "".join([
-        _ampel_html("5J",  _fenster_data(tdf_5)),
-        _ampel_html("10J", _fenster_data(tdf_10)),
-        _ampel_html("15J", _fenster_data(tdf_15)),
-        _ampel_html("20J", _fenster_data(tdf_20)),
-    ])
     st.markdown(
-        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;">'        f'{_badges}</div>',
-        unsafe_allow_html=True,
-    )
+        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;">'
+        + "".join([_ampel_html("5J",_fenster_data(tdf_5)),_ampel_html("10J",_fenster_data(tdf_10)),
+                   _ampel_html("15J",_fenster_data(tdf_15)),_ampel_html("20J",_fenster_data(tdf_20))])
+        + '</div>', unsafe_allow_html=True)
 
     # ── Stop-Loss-Empfehlung ─────────────────────────────────────────────────
     st.markdown("### 🛡️ Stop-Loss-Empfehlung")
-
-    _dd_abs = tdf["Max DD %"].abs()
+    _dd_abs  = tdf["Max DD %"].abs()
     _sl_perc = float(np.percentile(_dd_abs, _perc_pct)) + _kostenpuffer
     _sl_std  = float(_dd_abs.mean() + _stddev_k * _dd_abs.std(ddof=1)) + _kostenpuffer
-
     _atr_pct_vals = []
     try:
-        _h = df_sym["high"].to_numpy(); _l = df_sym["low"].to_numpy(); _c = df_sym["close"].to_numpy()
-        _n = len(_c); _tr = np.zeros(_n); _tr[0] = _h[0] - _l[0]
-        for _i in range(1, _n):
-            _tr[_i] = max(_h[_i]-_l[_i], abs(_h[_i]-_c[_i-1]), abs(_l[_i]-_c[_i-1]))
-        _atr_w = np.full(_n, np.nan)
-        if _n >= 14:
-            _atr_w[13] = _tr[:14].mean()
-            for _i in range(14, _n): _atr_w[_i] = (_atr_w[_i-1] * 13 + _tr[_i]) / 14
-        _atr_s = pd.Series(_atr_w, index=df_sym.index)
-        for _, _r in tdf.iterrows():
-            _ets = _r["_entry_ts"]; _ep = _r["_entry_price"]
-            if _ets in _atr_s.index and not np.isnan(_atr_s[_ets]) and _ep > 0:
-                _atr_pct_vals.append(_atr_s[_ets] / _ep * 100)
-    except Exception:
-        pass
+        _h=df_sym["high"].to_numpy();_l=df_sym["low"].to_numpy();_c=df_sym["close"].to_numpy()
+        _n=len(_c);_tr=np.zeros(_n);_tr[0]=_h[0]-_l[0]
+        for _i in range(1,_n): _tr[_i]=max(_h[_i]-_l[_i],abs(_h[_i]-_c[_i-1]),abs(_l[_i]-_c[_i-1]))
+        _aw=np.full(_n,np.nan)
+        if _n>=14:
+            _aw[13]=_tr[:14].mean()
+            for _i in range(14,_n): _aw[_i]=(_aw[_i-1]*13+_tr[_i])/14
+        _as=pd.Series(_aw,index=df_sym.index)
+        for _,_r in tdf.iterrows():
+            _ets=_r["_entry_ts"];_ep=_r["_entry_price"]
+            if _ets in _as.index and not np.isnan(_as[_ets]) and _ep>0:
+                _atr_pct_vals.append(_as[_ets]/_ep*100)
+    except Exception: pass
+    _atr_ok=len(_atr_pct_vals)>0
+    _sl_atr=float(np.mean(_atr_pct_vals))*_atr_mult+_kostenpuffer if _atr_ok else 0.0
+    _methoden={"Perzentil":_sl_perc,"Avg+StdDev":_sl_std}
+    if _atr_ok: _methoden["ATR"]=_sl_atr
+    _empf=max(_methoden,key=_methoden.get)
+    if _empf=="ATR": _begr=f"ATR-Stop am größten (Ø {float(np.mean(_atr_pct_vals)):.2f}% × {_atr_mult}×) — Volatilität übersteigt die hist. DD-Quantile."
+    elif _empf=="Avg+StdDev": _begr=f"Avg+StdDev-Stop am größten — Ausreißer-DD {_dd_abs.max():.2f}% hebt σ={_dd_abs.std(ddof=1):.2f}% stark an."
+    else: _begr=f"Perzentil-Stop am größten — {_perc_pct}. Perzentil ({float(np.percentile(_dd_abs,_perc_pct)):.2f}%) übertrifft andere Methoden."
 
-    _atr_ok = len(_atr_pct_vals) > 0
-    _sl_atr  = float(np.mean(_atr_pct_vals)) * _atr_mult + _kostenpuffer if _atr_ok else 0.0
-    _methoden = {"Perzentil": _sl_perc, "Avg+StdDev": _sl_std}
-    if _atr_ok: _methoden["ATR"] = _sl_atr
-    _empf = max(_methoden, key=_methoden.get)
+    def _sl_card(name,val,empf):
+        b="border:2px solid #4ade80;" if empf else "border:1px solid rgba(148,163,184,.15);"
+        tag=('<div style="display:inline-block;background:#14532d;color:#4ade80;font-size:.7rem;font-weight:700;border-radius:4px;padding:2px 8px;margin-bottom:6px;">✅ Empfohlen</div>' if empf else "")
+        fc="#4ade80" if empf else "#9fb0c7"
+        return (f'<div style="background:#0a1220;{b}border-radius:8px;padding:16px 20px;">{tag}'
+                f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">{name}</div>'
+                f'<div style="color:{fc};font-size:1.2rem;font-weight:700;">{val:.2f}%</div>'
+                f'<div style="color:#475569;font-size:.75rem;margin-top:3px;">inkl. Kostenpuffer {_kostenpuffer:.2f}%</div></div>')
 
-    if _empf == "ATR":
-        _begr = f"ATR-Stop am größten (Ø {float(np.mean(_atr_pct_vals)):.2f}% × {_atr_mult}×) — aktuelle Volatilität übersteigt die historischen DD-Quantile."
-    elif _empf == "Avg+StdDev":
-        _begr = f"Avg+StdDev-Stop am größten — Ausreißer-DD {_dd_abs.max():.2f}% hebt σ={_dd_abs.std(ddof=1):.2f}% stark an."
-    else:
-        _begr = f"Perzentil-Stop am größten — {_perc_pct}. Perzentil des hist. DD ({float(np.percentile(_dd_abs, _perc_pct)):.2f}%) übertrifft andere Methoden."
-
-    def _sl_card(name, val, empf):
-        border = "border:2px solid #4ade80;" if empf else "border:1px solid rgba(148,163,184,.15);"
-        tag = ('<div style="display:inline-block;background:#14532d;color:#4ade80;font-size:.7rem;'               'font-weight:700;border-radius:4px;padding:2px 8px;margin-bottom:6px;">✅ Empfohlen</div>' if empf else "")
-        farbe = "#4ade80" if empf else "#9fb0c7"
-        return (f'<div style="background:#0a1220;{border}border-radius:8px;padding:16px 20px;">'                f'{tag}<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;'                f'letter-spacing:.06em;margin-bottom:4px;">{name}</div>'                f'<div style="color:{farbe};font-size:1.2rem;font-weight:700;">{val:.2f}%</div>'                f'<div style="color:#475569;font-size:.75rem;margin-top:3px;">'                f'inkl. Kostenpuffer {_kostenpuffer:.2f}%</div></div>')
-
-    _cards = [_sl_card("Perzentil", _sl_perc, _empf == "Perzentil"),
-              _sl_card("Avg + StdDev", _sl_std, _empf == "Avg+StdDev")]
-    if _atr_ok:
-        _cards.append(_sl_card("ATR", _sl_atr, _empf == "ATR"))
-    else:
-        _cards.append('<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);'                      'border-radius:8px;padding:16px 20px;">'                      '<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;'                      'letter-spacing:.06em;margin-bottom:4px;">ATR</div>'                      '<div style="color:#475569;">keine ATR-Daten verfügbar</div></div>')
-
-    st.markdown(
-        f'<div style="display:grid;grid-template-columns:repeat({len(_cards)},1fr);'        f'gap:14px;margin-bottom:10px;">{"".join(_cards)}</div>'        f'<div style="color:#6b7fa3;font-size:.82rem;margin-bottom:22px;">💡 {_begr}</div>',
-        unsafe_allow_html=True,
-    )
+    _cards=[_sl_card("Perzentil",_sl_perc,_empf=="Perzentil"),_sl_card("Avg + StdDev",_sl_std,_empf=="Avg+StdDev")]
+    if _atr_ok: _cards.append(_sl_card("ATR",_sl_atr,_empf=="ATR"))
+    else: _cards.append('<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:16px 20px;"><div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">ATR</div><div style="color:#475569;">keine ATR-Daten verfügbar</div></div>')
+    st.markdown(f'<div style="display:grid;grid-template-columns:repeat({len(_cards)},1fr);gap:14px;margin-bottom:10px;">{"".join(_cards)}</div>'
+                f'<div style="color:#6b7fa3;font-size:.82rem;margin-bottom:22px;">💡 {_begr}</div>',unsafe_allow_html=True)
 
     # Tabelle — full width
     st.markdown("### 📋 Per-Jahr Ergebnisse")
-
     def _color_ret(v):
         return "color:#4ade80;font-weight:600" if v > 0 else "color:#f87171;font-weight:600"
     def _color_dd(v):
         return "color:#f87171" if v < 0 else "color:#9fb0c7"
-
-    _tdf_show = tdf.drop(columns=["_entry_ts", "_entry_price"], errors="ignore")
+    _tdf_show = tdf.drop(columns=["_entry_ts","_entry_price"],errors="ignore")
     st.dataframe(
         _tdf_show.style
-        .map(_color_ret, subset=["Return %", "Netto Return %", "Max MFE %"])
-        .map(_color_dd, subset=["Max DD %"])
-        .format({"Return %": "{:+.2f}%", "Netto Return %": "{:+.2f}%",
-                 "Max DD %": "{:+.2f}%", "Max MFE %": "{:+.2f}%"}),
+        .map(_color_ret, subset=["Return %","Netto Return %","Max MFE %"])
+        .map(_color_dd,  subset=["Max DD %"])
+        .format({"Return %":"{:+.2f}%","Netto Return %":"{:+.2f}%","Max DD %":"{:+.2f}%","Max MFE %":"{:+.2f}%"}),
         use_container_width=True,
-        height=min(40 * len(tdf) + 42, 700),
+        height=min(40*len(tdf)+42,700),
     )
 
     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
@@ -1731,107 +1721,71 @@ def _render_muster_detail() -> None:
         )
         st.plotly_chart(fig_atr, use_container_width=True)
 
-        # ── ATR-Bewertung ─────────────────────────────────────────────────────
-        _avg_ret_abs = abs(tdf["Return %"].mean())
-        _ratio_atr   = _atr_avg / _avg_ret_abs if _avg_ret_abs > 0 else float("inf")
-
-        # Trend: letzte 3 Jahre vs. Gesamtdurchschnitt
-        _recent_3 = _atr_df.tail(3)["ATR %"].mean() if len(_atr_df) >= 3 else _atr_avg
-        _trend_up  = _recent_3 > _atr_avg * 1.25  # letzten 3J deutlich über Ø
-
-        # Basisrating nach ATR/Profit-Ratio
-        if _ratio_atr < 0.5:
-            _sterne = 5
-            _rating_txt = "Exzellent — ATR sehr gering im Verhältnis zum Profit"
-            _rating_farbe = "#4ade80"
-        elif _ratio_atr < 1.0:
-            _sterne = 4
-            _rating_txt = "Gut — ATR kontrollierbar, Pattern klar dominant"
-            _rating_farbe = "#86efac"
-        elif _ratio_atr < 1.5:
-            _sterne = 3
-            _rating_txt = "Mittel — ATR in Höhe des Profits, Stop-Loss kritisch"
-            _rating_farbe = "#f0c040"
-        elif _ratio_atr < 2.5:
-            _sterne = 2
-            _rating_txt = "Schwach — ATR dominiert Profit, Stop-Loss Risiko hoch"
-            _rating_farbe = "#fb923c"
+    # ATR-Erklärung
+    _atr_disp = row.get("Ø ATR %", np.nan)
+    _atr_num  = float(_atr_disp) if pd.notna(_atr_disp) else None
+    if _atr_num is not None:
+        if _atr_num < 0.4:
+            _atr_lvl = "niedrig"; _atr_clr = "#60a5fa"; _atr_emoji = "🔵"
+            _atr_meaning = "Das Instrument bewegt sich täglich wenig. Saisonale Muster liefern hier oft saubere, ruhige Verläufe — aber die absoluten Gewinne je Trade sind begrenzt."
+        elif _atr_num < 0.8:
+            _atr_lvl = "moderat"; _atr_clr = "#4ade80"; _atr_emoji = "🟢"
+            _atr_meaning = "Gute Balance zwischen Beweglichkeit und Kontrolle. Saisonale Muster entfalten hier ihr volles Potenzial — ausreichend Profit-Spielraum bei überschaubarem Rauschen."
+        elif _atr_num < 1.4:
+            _atr_lvl = "hoch"; _atr_clr = "#fbbf24"; _atr_emoji = "🟡"
+            _atr_meaning = "Das Instrument schwankt stark. Gewinne können größer sein, aber auch Fehlsignale und Intraday-Rauschen nehmen zu. Stop-Loss muss entsprechend weiter gesetzt werden."
         else:
-            _sterne = 1
-            _rating_txt = "Kritisch — ATR zu groß, Pattern kaum handelbar ohne weiten Stop"
-            _rating_farbe = "#f87171"
+            _atr_lvl = "sehr hoch"; _atr_clr = "#f87171"; _atr_emoji = "🔴"
+            _atr_meaning = "Extrem volatile Bewegungen — jede Kerze kann mehrere Prozent betragen. Saisonale Muster sind hier schwerer handelbar, da breite Stops und hohes Kapitalrisiko nötig sind."
 
-        # Trend-Malus: steigende Volatilität in den letzten 3 Jahren
-        if _trend_up and _sterne > 1:
-            _sterne -= 1
-            _trend_hinweis = (f" ⚠️ Volatilität zuletzt gestiegen (Ø letzte 3J: {_recent_3:.3f}% "
-                              f"vs. Ø gesamt: {_atr_avg:.3f}%) — ein Stern Abzug.")
+        _atr_profit_ratio = abs(float(row.get("Ø Profit %", 0) or 0)) / _atr_num if _atr_num > 0 else 0
+        if _atr_profit_ratio >= 0.6:
+            _ratio_text = f"✅ Der Ø-Profit ({row.get('Ø Profit %', '—')}%) beträgt <strong>{_atr_profit_ratio:.1f}×</strong> des ATR — das Muster verdient seinen Volatilitätseinsatz."
+            _ratio_clr  = "#4ade80"
+        elif _atr_profit_ratio >= 0.4:
+            _ratio_text = f"⚠️ Der Ø-Profit ({row.get('Ø Profit %', '—')}%) beträgt <strong>{_atr_profit_ratio:.1f}×</strong> des ATR — akzeptabel, aber Vorsicht bei Slippage."
+            _ratio_clr  = "#fbbf24"
         else:
-            _trend_hinweis = ""
+            _ratio_text = f"❌ Der Ø-Profit ({row.get('Ø Profit %', '—')}%) beträgt nur <strong>{_atr_profit_ratio:.1f}×</strong> des ATR — das Muster verdient kaum mehr als eine typische Tageskerze."
+            _ratio_clr  = "#f87171"
 
-        _sterne_str = "★" * _sterne + "☆" * (5 - _sterne)
-
-        _atr_erklaerung = f"""
-<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:10px;
-padding:20px 24px;margin-top:16px;">
-
-  <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
-    <div style="color:#60a5fa;font-size:1.05rem;font-weight:700;">📖 ATR — Was bedeutet das für dieses Muster?</div>
-    <div style="color:{_rating_farbe};font-size:1.4rem;letter-spacing:2px;">{_sterne_str}</div>
-    <div style="color:{_rating_farbe};font-size:.9rem;font-weight:700;">{_sterne}/5 — {_rating_txt}{_trend_hinweis}</div>
-  </div>
-
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+        st.markdown(f"""
+<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:20px 24px;margin-top:8px;">
+  <div style="color:#94a3b8;font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px;">ATR(14) — Einordnung & Bewertung</div>
+  <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px;">
+    <div style="font-size:1.6rem;line-height:1;">{_atr_emoji}</div>
     <div>
-      <div style="color:#94a3b8;font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Was ist ATR?</div>
-      <div style="color:#cbd5e1;font-size:.88rem;line-height:1.6;">
-        Der <b>Average True Range (ATR-14)</b> misst die durchschnittliche Tages­volatilität
-        über 14 Handelstage vor dem Entry. Er zeigt, wie viel sich der Kurs typischerweise
-        <i>innerhalb eines Tages</i> bewegt (High minus Low, bereinigt um Over­night-Gaps).
-        Je höher der ATR, desto mehr Spielraum braucht ein Stop-Loss — und desto
-        schwieriger ist es, das Pattern ohne vorzeitigen Stop-Out zu handeln.
+      <div style="color:{_atr_clr};font-size:.95rem;font-weight:700;margin-bottom:4px;">
+        Ø ATR(14) = {_atr_num:.3f}% — Volatilität <span style="text-transform:uppercase;">{_atr_lvl}</span>
       </div>
+      <div style="color:#6b7fa3;font-size:.85rem;line-height:1.55;">{_atr_meaning}</div>
     </div>
-    <div>
-      <div style="color:#94a3b8;font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Bewertungslogik</div>
-      <div style="color:#cbd5e1;font-size:.88rem;line-height:1.6;">
-        Entscheidend ist das <b>ATR-zu-Profit-Verhältnis</b>: Wie groß ist die tägliche
-        Schwankung im Vergleich zum erwarteten Muster­gewinn?<br><br>
-        <span style="color:#4ade80;">✅ ATR/Profit &lt; 0.5×</span> → Pattern dominiert klar über Rauschen (5★)<br>
-        <span style="color:#86efac;">✅ ATR/Profit 0.5–1.0×</span> → kontrollierbar, guter Edge (4★)<br>
-        <span style="color:#f0c040;">⚠️ ATR/Profit 1.0–1.5×</span> → Stop-Loss Sizing kritisch (3★)<br>
-        <span style="color:#fb923c;">⛔ ATR/Profit 1.5–2.5×</span> → Rauschen dominiert (2★)<br>
-        <span style="color:#f87171;">🚫 ATR/Profit &gt; 2.5×</span> → kaum handelbar (1★)
+  </div>
+  <div style="background:#0d1828;border-radius:7px;padding:12px 16px;margin-bottom:14px;">
+    <div style="color:{_ratio_clr};font-size:.88rem;line-height:1.5;">{_ratio_text}</div>
+  </div>
+  <div style="border-top:1px solid rgba(148,163,184,.08);padding-top:14px;">
+    <div style="color:#475569;font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">Allgemeine Richtwerte für saisonale Muster</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+      <div style="background:#0d1828;border:1px solid #60a5fa22;border-radius:6px;padding:10px 12px;">
+        <div style="color:#60a5fa;font-size:.75rem;font-weight:700;">🔵 &lt; 0.4%</div>
+        <div style="color:#475569;font-size:.72rem;margin-top:3px;">Niedrig — ruhige, planbare Bewegungen</div>
+      </div>
+      <div style="background:#0d1828;border:1px solid #4ade8022;border-radius:6px;padding:10px 12px;">
+        <div style="color:#4ade80;font-size:.75rem;font-weight:700;">🟢 0.4 – 0.8%</div>
+        <div style="color:#475569;font-size:.72rem;margin-top:3px;">Ideal — bestes Verhältnis Profit/Risiko</div>
+      </div>
+      <div style="background:#0d1828;border:1px solid #fbbf2422;border-radius:6px;padding:10px 12px;">
+        <div style="color:#fbbf24;font-size:.75rem;font-weight:700;">🟡 0.8 – 1.4%</div>
+        <div style="color:#475569;font-size:.72rem;margin-top:3px;">Hoch — weite Stops nötig, mehr Rauschen</div>
+      </div>
+      <div style="background:#0d1828;border:1px solid #f8717122;border-radius:6px;padding:10px 12px;">
+        <div style="color:#f87171;font-size:.75rem;font-weight:700;">🔴 &gt; 1.4%</div>
+        <div style="color:#475569;font-size:.72rem;margin-top:3px;">Sehr hoch — schwer handelbar, hohes Risiko</div>
       </div>
     </div>
   </div>
-
-  <div style="background:#060c16;border-radius:7px;padding:12px 16px;display:flex;gap:24px;flex-wrap:wrap;">
-    <div>
-      <div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;">Ø ATR (20J)</div>
-      <div style="color:#60a5fa;font-size:1rem;font-weight:700;">{_atr_avg:.3f}%</div>
-    </div>
-    <div>
-      <div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;">Ø Return (brutto)</div>
-      <div style="color:#4ade80;font-size:1rem;font-weight:700;">{_avg_ret_abs:.2f}%</div>
-    </div>
-    <div>
-      <div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;">ATR / Profit-Ratio</div>
-      <div style="color:{_rating_farbe};font-size:1rem;font-weight:700;">{_ratio_atr:.2f}×</div>
-    </div>
-    <div>
-      <div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;">Volatilitäts-Trend</div>
-      <div style="color:{"#f87171" if _trend_up else "#4ade80"};font-size:1rem;font-weight:700;">{"↑ steigend" if _trend_up else "→ stabil"}</div>
-    </div>
-    <div>
-      <div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;">Ø ATR letzte 3J</div>
-      <div style="color:#60a5fa;font-size:1rem;font-weight:700;">{_recent_3:.3f}%</div>
-    </div>
-  </div>
-
-</div>
-"""
-        st.markdown(_atr_erklaerung, unsafe_allow_html=True)
+</div>""", unsafe_allow_html=True)
 
 
 def render_seasonality_muster() -> None:
@@ -2140,19 +2094,55 @@ def render_seasonality_muster() -> None:
         ][current_month]
 
         result_clean = result.drop(columns=["_sort_key"], errors="ignore")
-        month_mask = result_clean["Entry"].apply(
-            lambda e: _month_map.get(str(e).strip().split(".")[-1].strip()[:3], 0) == current_month
-        )
+        _today_day = _dt.date.today().day
+        _today_month = current_month
+
+        def _entry_day_key(entry_str: str) -> int:
+            try:
+                return int(str(entry_str).strip().split(".")[0])
+            except Exception:
+                return 99
+
+        # Nur Muster im aktuellen Monat UND Entry >= heute
+        def _is_relevant(entry_str: str) -> bool:
+            parts = str(entry_str).strip().split(".")
+            try:
+                mon = _month_map.get(parts[1].strip()[:3], 0)
+                day = int(parts[0].strip())
+                return mon == _today_month and day >= _today_day
+            except Exception:
+                return False
+
+        month_mask = result_clean["Entry"].apply(_is_relevant)
         _sort_top = _wr_primary_col if _wr_primary_col and _wr_primary_col in result_clean.columns else result_clean.columns[0]
-        _top_raw = (
-            result_clean[month_mask]
-            .sort_values(_sort_top, ascending=False)
-            .head(15)
+
+        _top_raw = result_clean[month_mask].copy()
+        _top_raw["_day_key"] = _top_raw["Entry"].apply(_entry_day_key)
+        _top_raw["_stars"]   = pd.to_numeric(_top_raw.get("⭐ Rating", 3), errors="coerce").fillna(3)
+        _top_raw["_sharpe"]  = pd.to_numeric(_top_raw.get("Sharpe", 0),    errors="coerce").fillna(0)
+
+        # Nur mindestens 4 Sterne
+        _top_raw = _top_raw[_top_raw["_stars"] >= 4]
+
+        # Pro Symbol: Cluster-Dedup — Entries innerhalb von 3 Tagen = gleiche Opportunity
+        # Sortiere nach Symbol + Entry-Tag, dann beste Sterne/Sharpe nach vorne
+        _top_raw = _top_raw.sort_values(
+            ["Symbol", "_day_key", "_stars", "_sharpe"],
+            ascending=[True, True, False, False]
         )
-        # Nach Symbol gruppieren — alle Einträge desselben Symbols zusammen
+        deduped_rows = []
+        for _sym, _grp in _top_raw.groupby("Symbol", sort=False):
+            _last_day = -99
+            for _, _r in _grp.iterrows():
+                if _r["_day_key"] - _last_day > 3:  # neuer Cluster
+                    deduped_rows.append(_r)
+                    _last_day = _r["_day_key"]
+        _top_raw = pd.DataFrame(deduped_rows) if deduped_rows else _top_raw.head(0)
+
         top_month = (
             _top_raw
-            .sort_values(["Symbol", _sort_top], ascending=[True, False])
+            .sort_values(["Symbol", "_day_key"], ascending=[True, True])
+            .drop(columns=["_day_key", "_stars", "_sharpe"], errors="ignore")
             .reset_index(drop=True)
         )
 
@@ -4252,7 +4242,191 @@ st.sidebar.markdown(
     """,
     unsafe_allow_html=True,
 )
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster"], horizontal=False, label_visibility="collapsed")
+def render_muster_analyse() -> None:
+    import datetime as _dt2
+    from pathlib import Path as _Path
+
+    _MT5_DIR2 = _Path(__file__).parent / "data" / "mt5"
+    _syms2 = sorted([f.stem.upper() for f in _MT5_DIR2.glob("*.csv")]) if _MT5_DIR2.exists() else []
+
+    # Wenn Analyse bereits berechnet → Detailansicht zeigen
+    if "muster_analyse_detail" in st.session_state:
+        _det = st.session_state["muster_analyse_detail"]
+        st.session_state["muster_detail"]     = _det["detail"]
+        st.session_state["muster_dataframes"] = _det["dfs"]
+        _render_muster_detail()
+        return
+
+    st.markdown("## 🔍 Muster Analyse — Manuelle Eingabe")
+
+    col1, col2, col3 = st.columns([2, 2, 2])
+    with col1:
+        symbol    = st.selectbox("Symbol", _syms2) if _syms2 else st.text_input("Symbol")
+        direction = st.radio("Richtung", ["Long", "Short"], horizontal=True)
+    with col2:
+        entry_day   = st.number_input("Entry Tag",   1, 31, 23)
+        entry_month = st.number_input("Entry Monat", 1, 12, 6)
+    with col3:
+        exit_day   = st.number_input("Exit Tag",   1, 31, 4)
+        exit_month = st.number_input("Exit Monat", 1, 12, 7)
+
+    if not st.button("Analysieren", type="primary"):
+        st.info("Symbol und Datum eingeben, dann 'Analysieren' klicken.")
+        return
+
+    csv_path = _MT5_DIR2 / f"{symbol.upper()}.csv"
+    if not csv_path.exists():
+        st.error(f"Keine Daten für {symbol}."); return
+
+    df_m = normalize_ohlc(pd.read_csv(csv_path))
+    if df_m.empty:
+        st.error("Keine gültigen OHLC-Daten."); return
+
+    try:
+        entry_doy_m = _dt2.date(2000, int(entry_month), int(entry_day)).timetuple().tm_yday
+        exit_doy_m  = _dt2.date(2000, int(exit_month),  int(exit_day)).timetuple().tm_yday
+    except ValueError as e:
+        st.error(f"Ungültiges Datum: {e}"); return
+
+    # ATR berechnen
+    df_m["_atr"] = (df_m["high"] - df_m["low"]).ewm(span=14).mean()
+
+    # year_data aufbauen
+    _yd_map: dict = {}
+    for _yr, _g in df_m.groupby(df_m.index.year):
+        _doys = _g.index.dayofyear.values.astype(int)
+        _si   = np.argsort(_doys)
+        _yd_map[int(_yr)] = {
+            "doys":   _doys[_si],
+            "closes": _g["close"].values.astype(float)[_si],
+            "highs":  _g["high"].values.astype(float)[_si],
+            "lows":   _g["low"].values.astype(float)[_si],
+            "atrs":   _g["_atr"].values.astype(float)[_si],
+            "dates":  _g.index[_si],
+        }
+
+    _max_yr   = df_m.index.year.max()
+    _end_yr   = _max_yr - 1 if _max_yr >= pd.Timestamp.now().year else _max_yr
+    _data_start = df_m.index.year.min()
+    _y20 = _end_yr - 20 + 1; _y15 = _end_yr - 15 + 1
+    _y10 = _end_yr - 10 + 1; _y5  = _end_yr - 5  + 1
+    _has_20j = _data_start <= _y20; _has_15j = _data_start <= _y15
+    _has_10j = _data_start <= _y10; _has_5j  = _data_start <= _y5
+    _dir_str = direction.lower()
+
+    # Alle Trades sammeln (alle verfügbaren Jahre)
+    _trades: list = []
+    for _yr in sorted(_yd_map.keys()):
+        if _yr > _end_yr: continue
+        _yd = _yd_map[_yr]
+        _ei = int(np.searchsorted(_yd["doys"], entry_doy_m))
+        _xi = int(np.searchsorted(_yd["doys"], exit_doy_m))
+        if _ei >= len(_yd["doys"]) or _xi >= len(_yd["doys"]) or _xi <= _ei: continue
+        _ep = _yd["closes"][_ei]; _xp = _yd["closes"][_xi]
+        _sl = _yd["lows"][_ei+1:_xi+1].min()  if _xi > _ei else _ep
+        _sh = _yd["highs"][_ei+1:_xi+1].max() if _xi > _ei else _ep
+        _trades.append({
+            "yr": _yr, "ep": _ep,
+            "long_ret":  (_xp - _ep) / _ep,
+            "short_ret": (_ep - _xp) / _ep,
+            "long_dd":   (_sl - _ep) / _ep,
+            "short_dd":  (_ep - _sh) / _ep,
+            "atr": _yd["atrs"][_ei],
+            "td": _xi - _ei,
+        })
+
+    def _ma_stats(yr_start: int) -> dict | None:
+        _sub = [t for t in _trades if t["yr"] >= yr_start]
+        if len(_sub) < 3: return None
+        _rets = np.array([t[f"{_dir_str}_ret"] for t in _sub])
+        _dds  = np.array([t[f"{_dir_str}_dd"]  for t in _sub])
+        _nt = len(_rets); _wr = float((_rets > 0).sum() / _nt)
+        _ar = _rets.mean(); _sr = _rets.std(ddof=1) if _nt > 1 else 0.0
+        return {"wr": _wr, "nt": _nt, "avg_ret": _ar, "std_ret": _sr,
+                "avg_dd": _dds.mean(), "max_dd": _dds.min()}
+
+    _s10 = _ma_stats(_y10) or {}
+    _wr5  = round((_ma_stats(_y5)  or {}).get("wr", np.nan) * 100, 1) if _has_5j  else np.nan
+    _wr10 = round((_ma_stats(_y10) or {}).get("wr", np.nan) * 100, 1) if _has_10j else np.nan
+    _wr15 = round((_ma_stats(_y15) or {}).get("wr", np.nan) * 100, 1) if _has_15j else np.nan
+    _wr20_raw = (_ma_stats(_y20) or {}).get("wr", np.nan) if _has_20j else np.nan
+    if np.isnan(_wr20_raw): _wr20_raw = (_ma_stats(_data_start) or {}).get("wr", np.nan)
+    _wr20 = round(_wr20_raw * 100, 1) if not np.isnan(_wr20_raw) else np.nan
+
+    _avg_ret  = _s10.get("avg_ret", np.nan)
+    _std_ret  = _s10.get("std_ret", 0.0)
+    _nt10     = _s10.get("nt", 0)
+    _avg_td   = float(np.mean([t["td"] for t in _trades if t["yr"] >= _y10])) if _nt10 else 10
+    _sharpe   = round(_avg_ret / _std_ret * np.sqrt(252 / max(_avg_td, 1)), 2) if _std_ret > 1e-10 else np.nan
+    _sqn      = round(_avg_ret / _std_ret * np.sqrt(_nt10) * 100, 2) if _std_ret > 1e-10 else np.nan
+    _avg_atr  = float(np.mean([t["atr"] / t["ep"] for t in _trades if t["yr"] >= _y10 and t["ep"] > 0]) * 100) if _nt10 else 0.0
+
+    # Robustheit
+    _prim_trades = [t for t in _trades if t["yr"] >= _y10]
+    _atr_eff = _avg_atr > 0 and (abs(_avg_ret) / (_avg_atr / 100)) >= 0.4
+    _rob_wins = _rob_total = 0
+    for _off in list(range(-7, -2)) + list(range(3, 8)):
+        _alt_e = entry_doy_m + _off
+        if _alt_e < 1 or _alt_e > 365: continue
+        _alt_rets = []
+        for _yr, _yd in _yd_map.items():
+            if _yr < _y10 or _yr > _end_yr: continue
+            _ei2 = int(np.searchsorted(_yd["doys"], _alt_e))
+            _xi2 = int(np.searchsorted(_yd["doys"], exit_doy_m))
+            if _ei2 >= len(_yd["doys"]) or _xi2 >= len(_yd["doys"]) or _xi2 <= _ei2: continue
+            _ep2, _xp2 = _yd["closes"][_ei2], _yd["closes"][_xi2]
+            _alt_rets.append((_xp2 - _ep2)/_ep2 if _dir_str == "long" else (_ep2 - _xp2)/_ep2)
+        if len(_alt_rets) >= 3:
+            _rob_total += 1
+            if (np.array(_alt_rets) > 0).mean() >= 0.6: _rob_wins += 1
+    if _rob_total == 0:
+        _robustheit = "—"
+    else:
+        _rr = _rob_wins / _rob_total
+        if _rr >= 0.80 and _atr_eff:  _robustheit = "🟢 Stark"
+        elif _rr >= 0.80:              _robustheit = "✅ Robust"
+        elif _rr >= 0.60:              _robustheit = "✅ Robust"
+        elif _rr >= 0.40:              _robustheit = "⚠️ Sensitiv"
+        else:                          _robustheit = "❌ Fragil"
+
+    # Stern-Rating (1–5)
+    _wr10_f = (_s10.get("wr", 0) or 0) * 100
+    _score = 0
+    if _wr10_f >= 80: _score += 2
+    elif _wr10_f >= 70: _score += 1
+    if not np.isnan(_sharpe) and _sharpe >= 1.5: _score += 1
+    if _avg_atr > 0 and abs(_avg_ret) / (_avg_atr / 100) >= 0.6: _score += 1
+    if _robustheit in ("🟢 Stark",): _score += 1
+    _stars = max(1, min(5, _score + 1))
+
+    _mon_names = ['','Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez']
+    _row = {
+        "Symbol":          symbol.upper(),
+        "Richtung":        direction,
+        "Entry":           f"{int(entry_day):02d}. {_mon_names[int(entry_month)]}",
+        "Exit":            f"{int(exit_day):02d}. {_mon_names[int(exit_month)]}",
+        "Haltedauer (TD)": int(_avg_td),
+        "_entry_doy":      entry_doy_m,
+        "_exit_doy":       exit_doy_m,
+        "WR 5J %":  _wr5,
+        "WR 10J %": _wr10,
+        "WR 15J %": _wr15,
+        "WR 20J %": _wr20,
+        "Ø Profit %": round(_avg_ret * 100, 2) if not np.isnan(_avg_ret) else np.nan,
+        "Sharpe":    round(_sharpe, 2) if not np.isnan(_sharpe) else np.nan,
+        "SQN":       round(_sqn, 2)    if not np.isnan(_sqn)    else np.nan,
+        "Ø ATR %":  round(_avg_atr, 3),
+        "Robustheit": _robustheit,
+        "⭐ Rating":  _stars,
+    }
+    st.session_state["muster_analyse_detail"] = {
+        "detail": {"row": _row, "symbol": symbol.upper(), "lookback": 10, "from_analyse": True},
+        "dfs":    {symbol.upper(): df_m},
+    }
+    st.rerun()
+
+
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse"], horizontal=False, label_visibility="collapsed")
 
 if test_mode == "Seasonality Lab":
     render_seasonality_lab()
@@ -4260,6 +4434,10 @@ if test_mode == "Seasonality Lab":
 
 if test_mode == "Seasonality Muster":
     render_seasonality_muster()
+    st.stop()
+
+if test_mode == "Muster Analyse":
+    render_muster_analyse()
     st.stop()
 
 with st.sidebar:
