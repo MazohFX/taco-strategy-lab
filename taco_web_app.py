@@ -1346,26 +1346,27 @@ def _render_muster_detail() -> None:
     _cur_exit_doy  = int(row.get("_exit_doy",  0))
     _cur_dir       = row.get("Richtung", "")
     _opp_dir       = "Short" if _cur_dir == "Long" else "Long"
-    _all_results   = st.session_state.get("muster_scan_result", [])
+    _all_results   = st.session_state.get("muster_scan_result", pd.DataFrame())
     _conflicts     = []
-    for _r in _all_results:
-        if _r.get("Symbol") != symbol_str: continue
-        if _r.get("Richtung") != _opp_dir: continue
-        _wr10 = _r.get("WR 10J %", 0) or 0
-        if _wr10 < 70: continue
-        _re = int(_r.get("_entry_doy", 0)); _rx = int(_r.get("_exit_doy", 0))
-        if _re == 0 or _rx == 0: continue
-        # Überschneidung: Fenster überlappen sich
-        if _re < _cur_exit_doy and _rx > _cur_entry_doy:
-            _conflicts.append(_r)
+    if isinstance(_all_results, pd.DataFrame) and not _all_results.empty:
+        for _, _r in _all_results.iterrows():
+            if _r.get("Symbol") != symbol_str: continue
+            if _r.get("Richtung") != _opp_dir: continue
+            _wr10 = _r.get("WR 10J %", 0) or 0
+            if pd.isna(_wr10) or float(_wr10) < 70: continue
+            _re = int(_r.get("_entry_doy", 0)); _rx = int(_r.get("_exit_doy", 0))
+            if _re == 0 or _rx == 0: continue
+            if _re < _cur_exit_doy and _rx > _cur_entry_doy:
+                _conflicts.append(_r)
 
     if _conflicts:
         _warn_rows = ""
         for _c in _conflicts:
-            _c_wr   = _c.get("WR 10J %", "—")
-            _c_rob  = _c.get("Robustheit", "—")
-            _c_stars = "⭐" * int(_c.get("⭐ Rating", 1))
-            _c_entry = _c.get("Entry", "—"); _c_exit = _c.get("Exit", "—")
+            _c_wr   = _c["WR 10J %"] if "WR 10J %" in _c.index else "—"
+            _c_rob  = _c["Robustheit"] if "Robustheit" in _c.index else "—"
+            _c_stars = "⭐" * int(_c["⭐ Rating"]) if "⭐ Rating" in _c.index else "⭐"
+            _c_entry = _c["Entry"] if "Entry" in _c.index else "—"
+            _c_exit  = _c["Exit"]  if "Exit"  in _c.index else "—"
             _warn_rows += (
                 f"<tr style='border-top:1px solid rgba(248,113,113,.12);'>"
                 f"<td style='padding:8px 14px 8px 0;color:#f87171;font-weight:700;font-size:.88rem;'>▼ {_opp_dir}</td>"
