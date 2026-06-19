@@ -9,7 +9,34 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.data_loader import load_ohlc_data
+def load_ohlc_data(symbol: str, source: str = "mt5", fallback_to_yahoo: bool = False):
+    from pathlib import Path as _Path
+    _mt5_dir = _Path(__file__).parent / "data" / "mt5"
+    _path = _mt5_dir / f"{symbol.upper()}.csv"
+    if not _path.exists():
+        _path = _mt5_dir / f"{symbol.lower()}.csv"
+    if not _path.exists():
+        return None
+    try:
+        _df = pd.read_csv(_path)
+        _df.columns = [str(c).strip().lower() for c in _df.columns]
+        _date_col = next((c for c in _df.columns if c in ("date","time","datetime","timestamp")), None)
+        if _date_col is None:
+            return None
+        _df[_date_col] = pd.to_datetime(_df[_date_col], errors="coerce")
+        _df = _df.dropna(subset=[_date_col]).rename(columns={
+            _date_col: "Date",
+            next((c for c in _df.columns if c in ("open","o")), "open"): "Open",
+            next((c for c in _df.columns if c in ("high","h")), "high"): "High",
+            next((c for c in _df.columns if c in ("low","l")),  "low"):  "Low",
+            next((c for c in _df.columns if c in ("close","c","adj close")), "close"): "Close",
+        })
+        for _col in ["Open","High","Low","Close"]:
+            _df[_col] = pd.to_numeric(_df[_col], errors="coerce")
+        _df = _df.dropna(subset=["Open","High","Low","Close"]).sort_values("Date").drop_duplicates("Date")
+        return _df[["Date","Open","High","Low","Close"]]
+    except Exception:
+        return None
 
 
 APP_NAME = "Quant Taco Swing Strategie"
@@ -933,174 +960,210 @@ def _wr_stats_for_mask(
 
 
 def _scan_patterns_cached(
-    closes: np.ndarray,
-    highs: np.ndarray,
-    lows: np.ndarray,
-    atrs: np.ndarray,
-    doys: np.ndarray,
-    years: np.ndarray,
-    hold: int,
+    year_data: dict,          # {year: {doys, closes, highs, lows, atrs}}
+    sorted_years: np.ndarray,
+    end_year: int,
+    lookback_years: int,
+    entry_doy: int,
+    exit_doy: int,
     directions: tuple[str, ...],
     min_winrate: float,
     min_trades: int,
-    lookback_years: int,
 ) -> list[dict]:
-    n = len(closes)
-    if hold >= n:
-        return []
-
-    # DD = tiefster Low-Wick NACH Entry-Close (Entry-Kerze selbst ausgeschlossen,
-    # da wir erst zum Close einsteigen — Rolling ab i+1 bis i+hold)
-    roll_min_low  = pd.Series(lows).rolling(hold).min().values
-    roll_max_high = pd.Series(highs).rolling(hold).max().values
-
-    long_ret = closes[hold:] / closes[:n - hold] - 1
-    short_ret = closes[:n - hold] / closes[hold:] - 1
-    min_low_entry  = roll_min_low[hold:]
-    max_high_entry = roll_max_high[hold:]
-    entry_prices = closes[:n - hold]
-    long_dd  = (min_low_entry  - entry_prices) / entry_prices
-    short_dd = (entry_prices - max_high_entry) / entry_prices
-
-    entry_doys  = doys[:n - hold]
-    entry_years = years[:n - hold]
-    entry_atrs  = atrs[:n - hold]
-    # end_year: letztes vollständiges Jahr (wird bereits aus scan_seasonality_patterns korrekt übergeben)
-    _raw_end = int(years.max())
-    end_year = _raw_end - 1 if _raw_end >= pd.Timestamp.now().year else _raw_end
-
-    # Fixed year boundaries
+    """Kalenderbasierter Scanner: Entry und Exit sind feste DOY-Punkte."""
+    _raw_end = end_year
     y5  = end_year - 5  + 1
     y10 = end_year - 10 + 1
     y15 = end_year - 15 + 1
     y20 = end_year - 20 + 1
     year_start_primary = end_year - lookback_years + 1
-    data_start_year = int(years.min())
-    # Periode nur anzeigen wenn Daten weit genug zurückreichen
+    all_years_start = end_year - 20 + 1
+    data_start_year = int(sorted_years.min())
     has_5j  = data_start_year <= y5
     has_10j = data_start_year <= y10
     has_15j = data_start_year <= y15
     has_20j = data_start_year <= y20
 
-    def _doy_mask(target_doy: int, yr_filter: np.ndarray) -> np.ndarray:
-        # Roll-Forward: wenn target_doy kein Handelstag (Wochenende/Feiertag),
-        # nimm den nächsten verfügbaren Tag (max +2 Tage). np.unique dedupl. pro Jahr.
-        return (
-            (entry_doys >= target_doy) & (entry_doys <= target_doy + 2) & yr_filter
-        )
+    # Für jedes Jahr: Entry- und Exit-Close sowie DD-Daten sammeln
+    trades: list[dict] = []
+    for yr in sorted_years:
+        if yr < all_years_start or yr > end_year:
+            continue
+        yd = year_data.get(int(yr))
+        if yd is None:
+            continue
+        yr_doys = yd["doys"]
+        # Erster Handelstag >= entry_doy
+        ei = int(np.searchsorted(yr_doys, entry_doy))
+        if ei >= len(yr_doys):
+            continue
+        # Erster Handelstag >= exit_doy
+        xi = int(np.searchsorted(yr_doys, exit_doy))
+        if xi >= len(yr_doys) or xi <= ei:
+            continue
+        ep = yd["closes"][ei]
+        xp = yd["closes"][xi]
+        # DD: Low-Wicks NACH Entry-Close bis Exit (inkl.)
+        dd_slice = slice(ei + 1, xi + 1)
+        min_low  = yd["lows"][dd_slice].min()  if xi > ei else ep
+        max_high = yd["highs"][dd_slice].max() if xi > ei else ep
+        long_ret  = (xp - ep) / ep
+        short_ret = (ep - xp) / ep
+        long_dd   = (min_low  - ep) / ep
+        short_dd  = (ep - max_high) / ep
+        trades.append({
+            "yr": int(yr), "ep": ep,
+            "long_ret": long_ret, "short_ret": short_ret,
+            "long_dd": long_dd, "short_dd": short_dd,
+            "atr": yd["atrs"][ei],
+            "td": xi - ei,  # tatsächliche Handelstage
+            "entry_actual_doy": int(yr_doys[ei]),
+            "exit_actual_doy":  int(yr_doys[xi]),
+        })
+
+    if len(trades) < min_trades:
+        return []
+
+    def _stats_for_years(yr_start: int, dir_: str) -> dict | None:
+        sub = [t for t in trades if t["yr"] >= yr_start]
+        if len(sub) < min_trades:
+            return None
+        rets = np.array([t["long_ret"] if dir_ == "long" else t["short_ret"] for t in sub])
+        dds  = np.array([t["long_dd"]  if dir_ == "long" else t["short_dd"]  for t in sub])
+        nt = len(rets)
+        wr = float((rets > 0).sum() / nt)
+        avg_ret = rets.mean()
+        std_ret = rets.std(ddof=1) if nt > 1 else 0.0
+        return {"wr": wr, "nt": nt, "avg_ret": avg_ret, "std_ret": std_ret,
+                "avg_dd": dds.mean(), "max_dd": dds.min()}
 
     rows = []
-    for doy in range(1, 364):  # bis 363 damit doy+2 max 365 bleibt
-        yr_filter_primary = entry_years >= year_start_primary
-        mask_primary = _doy_mask(doy, yr_filter_primary)
-        if mask_primary.sum() < min_trades:
+    primary_trades = [t for t in trades if t["yr"] >= year_start_primary]
+    if len(primary_trades) < min_trades:
+        return []
+
+    for dir_ in directions:
+        stats = _stats_for_years(year_start_primary, dir_)
+        if stats is None or stats["wr"] < min_winrate:
             continue
 
-        for dir_ in directions:
-            stats = _wr_stats_for_mask(long_ret, short_ret, long_dd, short_dd,
-                                        entry_years, mask_primary, dir_, min_trades)
-            if stats is None or stats["wr"] < min_winrate:
-                continue
+        wr        = stats["wr"]
+        avg_ret   = stats["avg_ret"]
+        std_ret   = stats["std_ret"]
+        nt        = stats["nt"]
+        avg_dd    = stats["avg_dd"]
+        max_dd_val = stats["max_dd"]
+        avg_td    = np.mean([t["td"] for t in primary_trades])
 
-            wr = stats["wr"]
-            avg_ret = stats["avg_ret"]
-            std_ret = stats["std_ret"]
-            nt = stats["nt"]
-            avg_dd = stats["avg_dd"]
-            max_dd_val = stats["max_dd"]
+        sharpe = avg_ret / std_ret * np.sqrt(252 / max(avg_td, 1)) if std_ret > 1e-10 else np.nan
+        sqn    = avg_ret / std_ret * np.sqrt(nt) * 100 if std_ret > 1e-10 else np.nan
 
-            sharpe = avg_ret / std_ret * np.sqrt(252 / hold) if std_ret > 1e-10 else np.nan
-            sqn = avg_ret / std_ret * np.sqrt(nt) * 100 if std_ret > 1e-10 else np.nan
+        wr_5j  = (_stats_for_years(y5,  dir_) or {}).get("wr", np.nan)
+        wr_10j = (_stats_for_years(y10, dir_) or {}).get("wr", np.nan)
+        wr_15j = (_stats_for_years(y15, dir_) or {}).get("wr", np.nan)
+        # Für 20J: wenn nicht genug Daten, alle verfügbaren Jahre nehmen
+        wr_20j_raw = (_stats_for_years(y20, dir_) or {}).get("wr", np.nan)
+        if not has_20j or np.isnan(wr_20j_raw):
+            wr_20j_raw = (_stats_for_years(data_start_year, dir_) or {}).get("wr", np.nan)
+        wr_20j = round(wr_20j_raw * 100, 1) if not np.isnan(wr_20j_raw) else np.nan
+        wr_5j  = round(wr_5j  * 100, 1) if has_5j  and not np.isnan(wr_5j)  else np.nan
+        wr_10j = round(wr_10j * 100, 1) if has_10j and not np.isnan(wr_10j) else np.nan
+        wr_15j = round(wr_15j * 100, 1) if has_15j and not np.isnan(wr_15j) else np.nan
 
-            # WR für alle 3 Perioden — immer anzeigen wenn >= 3 Trades vorhanden
-            def _wr_pct(y_start: int, _doy: int = doy) -> float:
-                m = _doy_mask(_doy, entry_years >= y_start)
-                s = _wr_stats_for_mask(long_ret, short_ret, long_dd, short_dd,
-                                        entry_years, m, dir_, 3)
-                return round(s["wr"] * 100, 1) if s else np.nan
+        # Robustheit: benachbarte Entry-DOYs +3..+7 testen
+        robust_wins = robust_total = 0
+        for offset in range(3, 8):
+            alt_entry = entry_doy + offset
+            alt_trades_primary = []
+            for yr in sorted_years:
+                if yr < year_start_primary or yr > end_year: continue
+                yd = year_data.get(int(yr))
+                if yd is None: continue
+                yr_doys = yd["doys"]
+                ei2 = int(np.searchsorted(yr_doys, alt_entry))
+                xi2 = int(np.searchsorted(yr_doys, exit_doy))
+                if ei2 >= len(yr_doys) or xi2 >= len(yr_doys) or xi2 <= ei2: continue
+                ep2, xp2 = yd["closes"][ei2], yd["closes"][xi2]
+                ret2 = (xp2 - ep2)/ep2 if dir_ == "long" else (ep2 - xp2)/ep2
+                alt_trades_primary.append(ret2)
+            if len(alt_trades_primary) >= min_trades:
+                alt_wr = (np.array(alt_trades_primary) > 0).mean()
+                robust_total += 1
+                if alt_wr >= min_winrate:
+                    robust_wins += 1
 
-            wr_5j  = _wr_pct(y5)  if has_5j  else np.nan
-            wr_10j = _wr_pct(y10) if has_10j else np.nan
-            wr_15j = _wr_pct(y15) if has_15j else np.nan
-            wr_20j = _wr_pct(y20) if has_20j else np.nan
+        if robust_total == 0:
+            robustheit = "—"
+        else:
+            _rob_ratio = robust_wins / robust_total
+            if _rob_ratio >= 0.80:   robustheit = "🟢 Stark"
+            elif _rob_ratio >= 0.60: robustheit = "✅ Robust"
+            elif _rob_ratio >= 0.40: robustheit = "⚠️ Sensitiv"
+            else:                    robustheit = "❌ Fragil"
 
-            # Robustheit: prüfe DOY+3..+7 (DOY+1/+2 sind bereits im Roll-Forward-Fenster)
-            robust_wins = 0
-            robust_total = 0
-            best_late_wr: float | None = None
-            best_late_label = None
-            for offset in range(3, 8):
-                alt_doy = doy + offset
-                if alt_doy > 365:
-                    break
-                m_alt = _doy_mask(alt_doy, entry_years >= year_start_primary)
-                s_alt = _wr_stats_for_mask(long_ret, short_ret, long_dd, short_dd,
-                                            entry_years, m_alt, dir_, 2)
-                if s_alt:
-                    robust_total += 1
-                    alt_wr_val = s_alt["wr"] * 100
-                    if alt_wr_val >= min_winrate * 100:
-                        robust_wins += 1
-                    if best_late_wr is None or alt_wr_val > best_late_wr:
-                        best_late_wr = alt_wr_val
-                        try:
-                            alt_dt = pd.Timestamp(year=2001, month=1, day=1) + pd.Timedelta(days=alt_doy - 1)
-                            best_late_label = alt_dt.strftime("%d. %b")
-                        except Exception:
-                            best_late_label = f"DOY {alt_doy}"
+        avg_atr_pct = float(np.mean([t["atr"] / t["ep"] for t in primary_trades if t["ep"] > 0]) * 100)
 
-            if robust_total == 0:
-                robustheit = "—"
-            else:
-                _rob_ratio = robust_wins / robust_total
-                if _rob_ratio >= 0.80:
-                    robustheit = "🟢 Stark"
-                elif _rob_ratio >= 0.60:
-                    robustheit = "✅ Robust"
-                elif _rob_ratio >= 0.40:
-                    robustheit = "⚠️ Sensitiv"
-                else:
-                    robustheit = "❌ Fragil"
+        # Entry/Exit Label aus DOY
+        try:
+            _ref = pd.Timestamp(year=2001, month=1, day=1)
+            entry_label = (_ref + pd.Timedelta(days=entry_doy - 1)).strftime("%d. %b")
+            exit_label  = (_ref + pd.Timedelta(days=exit_doy  - 1)).strftime("%d. %b")
+        except Exception:
+            entry_label = f"DOY {entry_doy}"
+            exit_label  = f"DOY {exit_doy}"
 
-            # Ø ATR über alle Entry-Punkte dieses Musters (primary window)
-            _atr_mask = mask_primary
-            _atr_vals = entry_atrs[_atr_mask]
-            _entry_px  = entry_prices[_atr_mask]
-            avg_atr_pct = float(np.mean(_atr_vals / _entry_px) * 100) if len(_atr_vals) > 0 else np.nan
+        hold = int(round(avg_td))  # Ø Handelstage für Anzeige
 
-            try:
-                entry_dt = pd.Timestamp(year=2001, month=1, day=1) + pd.Timedelta(days=int(doy) - 1)
-                entry_label = entry_dt.strftime("%d. %b")
-                # hold is in trading days; ~5 TD = 7 calendar days
-                cal_days = int(round(hold * 7 / 5))
-                exit_dt = entry_dt + pd.Timedelta(days=cal_days)
-                exit_label = exit_dt.strftime("%d. %b")
-            except Exception:
-                entry_label = f"DOY {doy}"
-                exit_label = f"DOY {doy + hold}"
+        # Bester Späteinstieg (Entry DOY +3..+7)
+        best_late_wr   = None
+        best_late_label = None
+        for offset in range(3, 8):
+            alt_entry = entry_doy + offset
+            alt_t = []
+            for yr in sorted_years:
+                if yr < year_start_primary or yr > end_year: continue
+                yd = year_data.get(int(yr))
+                if yd is None: continue
+                yr_doys = yd["doys"]
+                ei2 = int(np.searchsorted(yr_doys, alt_entry))
+                xi2 = int(np.searchsorted(yr_doys, exit_doy))
+                if ei2 >= len(yr_doys) or xi2 >= len(yr_doys) or xi2 <= ei2: continue
+                ep2, xp2 = yd["closes"][ei2], yd["closes"][xi2]
+                ret2 = (xp2 - ep2)/ep2 if dir_ == "long" else (ep2 - xp2)/ep2
+                alt_t.append(ret2)
+            if len(alt_t) >= min_trades:
+                alt_wr2 = float((np.array(alt_t) > 0).mean() * 100)
+                if best_late_wr is None or alt_wr2 > best_late_wr:
+                    best_late_wr = alt_wr2
+                    try:
+                        best_late_label = (_ref + pd.Timedelta(days=alt_entry - 1)).strftime("%d. %b")
+                    except Exception:
+                        best_late_label = f"DOY {alt_entry}"
 
-            row = {
-                "Richtung": "Long" if dir_ == "long" else "Short",
-                "Entry": entry_label,
-                "Exit": exit_label,
-                "Haltedauer (TD)": hold,
-                "n (Jahre)": nt,
-                "WR 5J %":  wr_5j,
-                "WR 10J %": wr_10j,
-                "WR 15J %": wr_15j,
-                "WR 20J %": wr_20j,
-                "Ø Profit %": round(avg_ret * 100, 2),
-                "Ø DD %": round(avg_dd * 100, 2),
-                "Max DD %": round(max_dd_val * 100, 2),
-                "Sharpe": round(sharpe, 2) if not np.isnan(sharpe) else np.nan,
-                "SQN": round(sqn, 2) if not np.isnan(sqn) else np.nan,
-                "Ø ATR %": round(avg_atr_pct, 3) if not np.isnan(avg_atr_pct) else np.nan,
-                "Robustheit": robustheit,
-                "⭐ Rating": _compute_stars(wr, avg_ret, avg_dd, max_dd_val, sharpe, robustheit, avg_atr_pct),
-                "Bester Späteinstieg": best_late_label or "—",
-                "WR Späteinstieg %": round(best_late_wr, 1) if best_late_wr is not None else np.nan,
-            }
-            rows.append(row)
+        row = {
+            "Richtung": "Long" if dir_ == "long" else "Short",
+            "Entry": entry_label,
+            "Exit": exit_label,
+            "Haltedauer (TD)": hold,
+            "n (Jahre)": nt,
+            "WR 5J %":  wr_5j,
+            "WR 10J %": wr_10j,
+            "WR 15J %": wr_15j,
+            "WR 20J %": wr_20j,
+            "Ø Profit %": round(avg_ret * 100, 2),
+            "Ø DD %": round(avg_dd * 100, 2),
+            "Max DD %": round(max_dd_val * 100, 2),
+            "Sharpe": round(sharpe, 2) if not np.isnan(sharpe) else np.nan,
+            "SQN": round(sqn, 2) if not np.isnan(sqn) else np.nan,
+            "Ø ATR %": round(avg_atr_pct, 3) if not np.isnan(avg_atr_pct) else np.nan,
+            "Robustheit": robustheit,
+            "⭐ Rating": _compute_stars(wr, avg_ret, avg_dd, max_dd_val, sharpe, robustheit, avg_atr_pct),
+            "Bester Späteinstieg": best_late_label or "—",
+            "WR Späteinstieg %": round(best_late_wr, 1) if best_late_wr is not None else np.nan,
+            "_entry_doy": entry_doy,
+            "_exit_doy":  exit_doy,
+        }
+        rows.append(row)
     return rows
 
 
@@ -1108,38 +1171,54 @@ def scan_seasonality_patterns(
     df: pd.DataFrame,
     lookback_years: int,
     min_winrate: float,
-    holding_periods: list[int],
+    holding_periods: list[int],   # jetzt: Kalendertage (cal days)
     directions: list[str],
 ) -> pd.DataFrame:
     _raw_end = int(df.index.year.max())
     end_year = _raw_end - 1 if _raw_end >= pd.Timestamp.now().year else _raw_end
-    # Sub immer ab 20J-Grenze laden damit has_20j korrekt berechnet wird
     start_year = end_year - 20 + 1
     sub = df[df.index.year >= start_year].copy()
 
-    closes = sub["close"].values.astype(float)
-    highs  = sub["high"].values.astype(float)
-    lows   = sub["low"].values.astype(float)
-    doys   = sub.index.dayofyear.values.astype(int)
-    years  = sub.index.year.values.astype(int)
-    # ATR(14) als Prozent des Close
+    # ATR(14) berechnen
     _tr = pd.DataFrame({
         "hl": sub["high"] - sub["low"],
         "hc": (sub["high"] - sub["close"].shift(1)).abs(),
         "lc": (sub["low"]  - sub["close"].shift(1)).abs(),
     }).max(axis=1)
-    atrs = _tr.ewm(span=14, adjust=False).mean().values.astype(float)
-    # Roll-Forward deckt Wochenenden ab — trotzdem strenge Mindestanzahl: 80% der Jahre
+    sub = sub.copy()
+    sub["atr"] = _tr.ewm(span=14, adjust=False).mean()
+
+    # year_data aufbauen: {year -> {doys, closes, highs, lows, atrs}} — sortiert nach DOY
+    year_data: dict = {}
+    for yr, grp in sub.groupby(sub.index.year):
+        grp_sorted = grp.sort_values(by=grp.index.name if grp.index.name else "index")
+        yr_doys = grp_sorted.index.dayofyear.values.astype(int)
+        sort_idx = np.argsort(yr_doys)
+        year_data[int(yr)] = {
+            "doys":   yr_doys[sort_idx],
+            "closes": grp_sorted["close"].values.astype(float)[sort_idx],
+            "highs":  grp_sorted["high"].values.astype(float)[sort_idx],
+            "lows":   grp_sorted["low"].values.astype(float)[sort_idx],
+            "atrs":   grp_sorted["atr"].values.astype(float)[sort_idx],
+        }
+
+    sorted_years = np.array(sorted(year_data.keys()))
     min_trades = max(int(lookback_years * 0.8), 3)
 
     all_rows: list[dict] = []
-    for hold in holding_periods:
-        all_rows.extend(
-            _scan_patterns_cached(
-                closes, highs, lows, atrs, doys, years,
-                hold, tuple(directions), min_winrate, min_trades, lookback_years,
+    # Scan: alle Entry-DOYs × alle Kalender-Haltedauern
+    for entry_doy in range(1, 363):
+        for cal_hold in holding_periods:
+            exit_doy = entry_doy + cal_hold
+            if exit_doy > 366:
+                continue
+            all_rows.extend(
+                _scan_patterns_cached(
+                    year_data, sorted_years, end_year, lookback_years,
+                    entry_doy, exit_doy,
+                    tuple(directions), min_winrate, min_trades,
+                )
             )
-        )
 
     if not all_rows:
         return pd.DataFrame()
@@ -1585,8 +1664,8 @@ def render_seasonality_muster() -> None:
         lookback = st.radio("Analysezeitraum (Filter gilt für)", [5, 10, 15, 20], format_func=lambda x: f"{x}J ({_end_yr-x+1}–{_end_yr})", horizontal=True, index=1)
         dir_choice = st.multiselect("Richtung", ["Long", "Short"], default=["Long", "Short"])
         min_wr = st.slider("Min. Winrate %", 60, 100, 70, step=5)
-        hold_min = st.number_input("Halteperiode min (Tage)", 1, 60, 3)
-        hold_max = st.number_input("Halteperiode max (Tage)", 1, 120, 20)
+        hold_min = st.number_input("Musterlänge min (Kalendertage)", 1, 60, 5)
+        hold_max = st.number_input("Musterlänge max (Kalendertage)", 1, 120, 28)
         hold_step = st.number_input("Schritt", 1, 10, 1)
         holding_periods = list(range(int(hold_min), int(hold_max) + 1, int(hold_step)))
         run_scan = st.button("🔍 Scanner starten", type="primary", use_container_width=True)
@@ -1742,7 +1821,7 @@ def render_seasonality_muster() -> None:
             display = display[display["Entry"].apply(
                 lambda e: _month_map.get(str(e).strip().split(".")[-1].strip()[:3], 0) == monat_nr
             )].copy()
-        if sort_by == "Datum (Jan–Dez)":
+        if sort_by == "Datum":
             display = display.sort_values("_sort_key").reset_index(drop=True)
         display = display.drop(columns=["_sort_key"], errors="ignore")
         # Sterne als lesbare Darstellung
@@ -1792,8 +1871,11 @@ def render_seasonality_muster() -> None:
             "Sharpe": "{:.2f}",
             "SQN": "{:.2f}",
         })
-        styled = style_obj.format({k: v for k, v in fmt.items() if k in display.columns}, na_rep="—")
-        st.dataframe(styled, use_container_width=True, height=420)
+        styled = style_obj.format({k: v for k, v in fmt.items() if k in display.columns}, na_rep="-")
+        try:
+            st.dataframe(styled, use_container_width=True, height=420)
+        except Exception:
+            st.dataframe(display, use_container_width=True, height=420)
 
         csv_export = display.to_csv(index=False).encode("utf-8")
         st.download_button(
@@ -1868,6 +1950,12 @@ def render_seasonality_muster() -> None:
                 profit_val = float(row.get("Ø Profit %", 0))
                 profit_clr = "#4ade80" if profit_val >= 0 else "#f87171"
                 wr_primary = row.get(_wr_primary_col, float("nan"))
+                wr_5_val   = row.get("WR 5J %",  float("nan"))
+                wr_5_str   = f"{wr_5_val:.0f}%"  if pd.notna(wr_5_val)  else "—"
+                wr_5_clr   = "#4ade80" if pd.notna(wr_5_val)  and float(wr_5_val)  >= 70 else "#f87171"
+                wr_10_val  = row.get("WR 10J %", float("nan"))
+                wr_10_str  = f"{wr_10_val:.0f}%" if pd.notna(wr_10_val) else "—"
+                wr_10_clr  = "#4ade80" if pd.notna(wr_10_val) and float(wr_10_val) >= 70 else "#f87171"
                 wr_15_val  = row.get("WR 15J %", float("nan"))
                 wr_15_str  = f"{wr_15_val:.0f}%" if pd.notna(wr_15_val) else "—"
                 wr_15_clr  = "#4ade80" if pd.notna(wr_15_val) and float(wr_15_val) >= 70 else "#f87171"
@@ -1877,6 +1965,12 @@ def render_seasonality_muster() -> None:
                 wr_prim_str = f"{wr_primary:.0f}%" if pd.notna(wr_primary) else "—"
                 sharpe_str = f"{row.get('Sharpe','—')}"
                 hold_td    = row.get("Haltedauer (TD)", "—")
+                # Sterne + Robustheit für Karte
+                _stars_raw  = row.get("⭐ Rating", 3)
+                _stars_int  = int(_stars_raw) if pd.notna(_stars_raw) else 3
+                _star_str   = "⭐" * _stars_int + "☆" * (5 - _stars_int)
+                _rob_val    = str(row.get("Robustheit", "—"))
+                _rob_clr    = {"🟢 Stark": "#4ade80", "✅ Robust": "#a3e635", "⚠️ Sensitiv": "#facc15", "❌ Fragil": "#f87171"}.get(_rob_val, "#6b7fa3")
 
                 col_info, col_btn = st.columns([6, 1])
                 with col_info:
@@ -1893,8 +1987,11 @@ def render_seasonality_muster() -> None:
                               📅 <b>{row['Entry']}</b> → <b>{row['Exit']}</b>
                             </span>
                             <span style="color:#6b7fa3;font-size:.85rem;">⏱ {hold_td} TD</span>
-                            <span style="color:#f0c040;font-weight:800;font-size:.95rem;">
-                              WR {lookback}J: {wr_prim_str}
+                            <span style="color:{wr_5_clr};font-weight:700;font-size:.9rem;">
+                              WR 5J: {wr_5_str}
+                            </span>
+                            <span style="color:{wr_10_clr};font-weight:700;font-size:.9rem;">
+                              WR 10J: {wr_10_str}
                             </span>
                             <span style="color:{wr_15_clr};font-weight:700;font-size:.9rem;">
                               WR 15J: {wr_15_str}
@@ -1904,6 +2001,8 @@ def render_seasonality_muster() -> None:
                             </span>
                             <span style="color:{profit_clr};font-size:.85rem;">Ø {profit_val:+.2f}%</span>
                             <span style="color:#475569;font-size:.8rem;">Sharpe {sharpe_str}</span>
+                            <span style="font-size:.95rem;letter-spacing:.02em;">{_star_str}</span>
+                            <span style="color:{_rob_clr};font-size:.8rem;font-weight:600;">{_rob_val}</span>
                           </div>
                         </div>""",
                         unsafe_allow_html=True,
