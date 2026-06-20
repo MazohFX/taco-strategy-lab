@@ -2132,10 +2132,11 @@ def render_seasonality_muster() -> None:
             "SQN": "{:.2f}",
         })
         styled = style_obj.format({k: v for k, v in fmt.items() if k in display.columns}, na_rep="-")
-        try:
-            st.dataframe(styled, use_container_width=True, height=420)
-        except Exception:
-            st.dataframe(display, use_container_width=True, height=420)
+        with st.expander("📋 Alle Muster anzeigen", expanded=False):
+            try:
+                st.dataframe(styled, use_container_width=True, height=420)
+            except Exception:
+                st.dataframe(display, use_container_width=True, height=420)
 
         csv_export = display.to_csv(index=False).encode("utf-8")
         st.download_button(
