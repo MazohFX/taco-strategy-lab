@@ -1341,29 +1341,32 @@ def _render_muster_detail() -> None:
     )
     st.markdown(_rob_legend, unsafe_allow_html=True)
 
-    # Gegenläufige Muster-Warnung
+    # ── Gegenmuster-Check ─────────────────────────────────────────────────────
     _cur_entry_doy = int(row.get("_entry_doy", 0))
     _cur_exit_doy  = int(row.get("_exit_doy",  0))
-    _cur_dir       = row.get("Richtung", "")
-    _opp_dir       = "Short" if _cur_dir == "Long" else "Long"
+    _opp_dir       = "Short" if richtung == "Long" else "Long"
     _all_results   = st.session_state.get("muster_scan_result", pd.DataFrame())
     _conflicts     = []
-    if isinstance(_all_results, pd.DataFrame) and not _all_results.empty:
+    if isinstance(_all_results, pd.DataFrame) and not _all_results.empty and "_entry_doy" in _all_results.columns:
         for _, _r in _all_results.iterrows():
-            if _r.get("Symbol") != symbol_str: continue
-            if _r.get("Richtung") != _opp_dir: continue
+            if _r.get("Symbol") != symbol_str:
+                continue
+            if _r.get("Richtung") != _opp_dir:
+                continue
             _wr10 = _r.get("WR 10J %", 0) or 0
-            if pd.isna(_wr10) or float(_wr10) < 70: continue
-            _re = int(_r.get("_entry_doy", 0)); _rx = int(_r.get("_exit_doy", 0))
-            if _re == 0 or _rx == 0: continue
+            if pd.isna(_wr10) or float(_wr10) < 70:
+                continue
+            _re = int(_r.get("_entry_doy", 0))
+            _rx = int(_r.get("_exit_doy",  0))
+            if _re == 0 or _rx == 0:
+                continue
             if _re < _cur_exit_doy and _rx > _cur_entry_doy:
                 _conflicts.append(_r)
-
     if _conflicts:
         _warn_rows = ""
         for _c in _conflicts:
-            _c_wr   = _c["WR 10J %"] if "WR 10J %" in _c.index else "—"
-            _c_rob  = _c["Robustheit"] if "Robustheit" in _c.index else "—"
+            _c_wr    = _c["WR 10J %"] if "WR 10J %" in _c.index else "—"
+            _c_rob   = _c["Robustheit"] if "Robustheit" in _c.index else "—"
             _c_stars = "⭐" * int(_c["⭐ Rating"]) if "⭐ Rating" in _c.index else "⭐"
             _c_entry = _c["Entry"] if "Entry" in _c.index else "—"
             _c_exit  = _c["Exit"]  if "Exit"  in _c.index else "—"
@@ -1462,6 +1465,8 @@ def _render_muster_detail() -> None:
                 "Max DD %": round(dd_pct, 2),
                 "Max MFE %": round(mfe_pct, 2),
                 "W/L": "✅ Win" if ret_pct > 0 else "❌ Loss",
+                "_entry_ts": entry_date,
+                "_entry_price": ep,
             })
         except Exception:
             continue
@@ -1471,7 +1476,9 @@ def _render_muster_detail() -> None:
         return
 
     tdf = pd.DataFrame(trade_rows).sort_values("Jahr").reset_index(drop=True)
+    tdf_5  = tdf[tdf["Jahr"] >= end_y -  5 + 1]
     tdf_10 = tdf[tdf["Jahr"] >= end_y - 10 + 1]
+    tdf_15 = tdf[tdf["Jahr"] >= end_y - 15 + 1]
     tdf_20 = tdf
 
     wins_10 = (tdf_10["Return %"] > 0).sum()
@@ -1508,21 +1515,105 @@ def _render_muster_detail() -> None:
         unsafe_allow_html=True,
     )
 
+    # ── Echtheits-Check ──────────────────────────────────────────────────────
+    st.markdown("### 🔍 Echtheits-Check: Netto-Edge nach Kosten")
+    _ec_c1, _ec_c2, _ec_c3, _ec_c4 = st.columns(4)
+    with _ec_c1:
+        _ec_comm = st.number_input("Commission %", 0.0, 2.0, 0.05, step=0.01, key=f"ec_comm_{symbol_str}_{row['Entry']}")
+    with _ec_c2:
+        _ec_slip = st.number_input("Slippage %", 0.0, 2.0, 0.02, step=0.01, key=f"ec_slip_{symbol_str}_{row['Entry']}")
+    with _ec_c3:
+        _perc_pct = st.slider("Perzentil-Stop %", 70, 95, 85, step=5, key=f"ec_perc_{symbol_str}_{row['Entry']}")
+    with _ec_c4:
+        _stddev_k = st.slider("StdDev-Faktor k", 1.0, 3.0, 1.75, step=0.25, key=f"ec_k_{symbol_str}_{row['Entry']}")
+    _atr_mult = st.slider("ATR-Multiplikator", 1.0, 3.0, 1.75, step=0.25, key=f"ec_atr_{symbol_str}_{row['Entry']}")
+    _kostenpuffer = 2.0 * (_ec_slip + _ec_comm)
+    tdf["Netto Return %"] = (tdf["Return %"] - _kostenpuffer).round(2)
+
+    def _fenster_data(sub):
+        if len(sub) < 2: return None
+        avg_net = (sub["Return %"] - _kostenpuffer).mean()
+        avg_dd  = abs(sub["Max DD %"].mean())
+        ratio   = avg_net / avg_dd if avg_dd > 0 else float("inf")
+        return {"avg_net": avg_net, "ratio": ratio, "wins": (sub["Return %"] > 0).sum(), "n": len(sub)}
+
+    def _ampel_html(label, d):
+        if d is None:
+            return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:14px 18px;">'
+                    f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'
+                    f'<div style="color:#475569;">—</div></div>')
+        if d["ratio"] >= 1.5 and d["avg_net"] > 0:   sym,farbe,txt="🟢","#4ade80","Robust positiv"
+        elif d["ratio"] >= 0.8 and d["avg_net"] > 0: sym,farbe,txt="🟡","#f0c040","Knapp / Break-even"
+        else:                                          sym,farbe,txt="🔴","#f87171","Verlierer nach Kosten"
+        return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:14px 18px;">'
+                f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'
+                f'<div style="color:{farbe};font-size:1.05rem;font-weight:700;margin-bottom:3px;">{sym} {txt}</div>'
+                f'<div style="color:#9fb0c7;font-size:.8rem;">Ø netto {d["avg_net"]:+.2f}% · Ratio {d["ratio"]:.2f} · {d["wins"]}W/{d["n"]-d["wins"]}L</div></div>')
+
+    st.markdown(
+        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;">'
+        + "".join([_ampel_html("5J",_fenster_data(tdf_5)),_ampel_html("10J",_fenster_data(tdf_10)),
+                   _ampel_html("15J",_fenster_data(tdf_15)),_ampel_html("20J",_fenster_data(tdf_20))])
+        + '</div>', unsafe_allow_html=True)
+
+    # ── Stop-Loss-Empfehlung ─────────────────────────────────────────────────
+    st.markdown("### 🛡️ Stop-Loss-Empfehlung")
+    _dd_abs  = tdf["Max DD %"].abs()
+    _sl_perc = float(np.percentile(_dd_abs, _perc_pct)) + _kostenpuffer
+    _sl_std  = float(_dd_abs.mean() + _stddev_k * _dd_abs.std(ddof=1)) + _kostenpuffer
+    _atr_pct_vals = []
+    try:
+        _h=df_sym["high"].to_numpy();_l=df_sym["low"].to_numpy();_c=df_sym["close"].to_numpy()
+        _n=len(_c);_tr=np.zeros(_n);_tr[0]=_h[0]-_l[0]
+        for _i in range(1,_n): _tr[_i]=max(_h[_i]-_l[_i],abs(_h[_i]-_c[_i-1]),abs(_l[_i]-_c[_i-1]))
+        _aw=np.full(_n,np.nan)
+        if _n>=14:
+            _aw[13]=_tr[:14].mean()
+            for _i in range(14,_n): _aw[_i]=(_aw[_i-1]*13+_tr[_i])/14
+        _as=pd.Series(_aw,index=df_sym.index)
+        for _,_r in tdf.iterrows():
+            _ets=_r["_entry_ts"];_ep=_r["_entry_price"]
+            if _ets in _as.index and not np.isnan(_as[_ets]) and _ep>0:
+                _atr_pct_vals.append(_as[_ets]/_ep*100)
+    except Exception: pass
+    _atr_ok=len(_atr_pct_vals)>0
+    _sl_atr=float(np.mean(_atr_pct_vals))*_atr_mult+_kostenpuffer if _atr_ok else 0.0
+    _methoden={"Perzentil":_sl_perc,"Avg+StdDev":_sl_std}
+    if _atr_ok: _methoden["ATR"]=_sl_atr
+    _empf=max(_methoden,key=_methoden.get)
+    if _empf=="ATR": _begr=f"ATR-Stop am größten (Ø {float(np.mean(_atr_pct_vals)):.2f}% × {_atr_mult}×) — Volatilität übersteigt die hist. DD-Quantile."
+    elif _empf=="Avg+StdDev": _begr=f"Avg+StdDev-Stop am größten — Ausreißer-DD {_dd_abs.max():.2f}% hebt σ={_dd_abs.std(ddof=1):.2f}% stark an."
+    else: _begr=f"Perzentil-Stop am größten — {_perc_pct}. Perzentil ({float(np.percentile(_dd_abs,_perc_pct)):.2f}%) übertrifft andere Methoden."
+
+    def _sl_card(name,val,empf):
+        b="border:2px solid #4ade80;" if empf else "border:1px solid rgba(148,163,184,.15);"
+        tag=('<div style="display:inline-block;background:#14532d;color:#4ade80;font-size:.7rem;font-weight:700;border-radius:4px;padding:2px 8px;margin-bottom:6px;">✅ Empfohlen</div>' if empf else "")
+        fc="#4ade80" if empf else "#9fb0c7"
+        return (f'<div style="background:#0a1220;{b}border-radius:8px;padding:16px 20px;">{tag}'
+                f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">{name}</div>'
+                f'<div style="color:{fc};font-size:1.2rem;font-weight:700;">{val:.2f}%</div>'
+                f'<div style="color:#475569;font-size:.75rem;margin-top:3px;">inkl. Kostenpuffer {_kostenpuffer:.2f}%</div></div>')
+
+    _cards=[_sl_card("Perzentil",_sl_perc,_empf=="Perzentil"),_sl_card("Avg + StdDev",_sl_std,_empf=="Avg+StdDev")]
+    if _atr_ok: _cards.append(_sl_card("ATR",_sl_atr,_empf=="ATR"))
+    else: _cards.append('<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:16px 20px;"><div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">ATR</div><div style="color:#475569;">keine ATR-Daten verfügbar</div></div>')
+    st.markdown(f'<div style="display:grid;grid-template-columns:repeat({len(_cards)},1fr);gap:14px;margin-bottom:10px;">{"".join(_cards)}</div>'
+                f'<div style="color:#6b7fa3;font-size:.82rem;margin-bottom:22px;">💡 {_begr}</div>',unsafe_allow_html=True)
+
     # Tabelle — full width
     st.markdown("### 📋 Per-Jahr Ergebnisse")
-
     def _color_ret(v):
         return "color:#4ade80;font-weight:600" if v > 0 else "color:#f87171;font-weight:600"
     def _color_dd(v):
         return "color:#f87171" if v < 0 else "color:#9fb0c7"
-
+    _tdf_show = tdf.drop(columns=["_entry_ts","_entry_price"],errors="ignore")
     st.dataframe(
-        tdf.style
-        .map(_color_ret, subset=["Return %", "Max MFE %"])
-        .map(_color_dd, subset=["Max DD %"])
-        .format({"Return %": "{:+.2f}%", "Max DD %": "{:+.2f}%", "Max MFE %": "{:+.2f}%"}),
+        _tdf_show.style
+        .map(_color_ret, subset=["Return %","Netto Return %","Max MFE %"])
+        .map(_color_dd,  subset=["Max DD %"])
+        .format({"Return %":"{:+.2f}%","Netto Return %":"{:+.2f}%","Max DD %":"{:+.2f}%","Max MFE %":"{:+.2f}%"}),
         use_container_width=True,
-        height=min(40 * len(tdf) + 42, 700),
+        height=min(40*len(tdf)+42,700),
     )
 
     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
