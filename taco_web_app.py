@@ -1110,11 +1110,17 @@ def _scan_patterns_cached(
 
         avg_atr_pct = float(np.mean([t["atr"] / t["ep"] for t in primary_trades if t["ep"] > 0]) * 100)
 
-        # Entry/Exit Label aus DOY
+        # Entry/Exit Label aus DOY (Wochenende → nächsten Montag)
         try:
             _ref = pd.Timestamp(year=2000, month=1, day=1)  # Schaltjahr → DOY stimmt mit Kalender überein
-            entry_label = (_ref + pd.Timedelta(days=entry_doy - 1)).strftime("%d. %b")
-            exit_label  = (_ref + pd.Timedelta(days=exit_doy  - 1)).strftime("%d. %b")
+            _entry_ts = _ref + pd.Timedelta(days=entry_doy - 1)
+            _exit_ts  = _ref + pd.Timedelta(days=exit_doy  - 1)
+            if _entry_ts.weekday() == 5: _entry_ts += pd.Timedelta(days=2)  # Sa → Mo
+            if _entry_ts.weekday() == 6: _entry_ts += pd.Timedelta(days=1)  # So → Mo
+            if _exit_ts.weekday()  == 5: _exit_ts  += pd.Timedelta(days=2)
+            if _exit_ts.weekday()  == 6: _exit_ts  += pd.Timedelta(days=1)
+            entry_label = _entry_ts.strftime("%d. %b")
+            exit_label  = _exit_ts.strftime("%d. %b")
         except Exception:
             entry_label = f"DOY {entry_doy}"
             exit_label  = f"DOY {exit_doy}"
@@ -2155,8 +2161,12 @@ def render_seasonality_muster() -> None:
         ][current_month]
 
         result_clean = result.drop(columns=["_sort_key"], errors="ignore")
-        _today_day = _dt.date.today().day
-        _today_month = current_month
+        _today = _dt.date.today()
+        # Wochenende: nächsten Montag als effektiven "heute" nutzen
+        if _today.weekday() == 5: _today = _today + _dt.timedelta(days=2)  # Sa → Mo
+        if _today.weekday() == 6: _today = _today + _dt.timedelta(days=1)  # So → Mo
+        _today_day = _today.day
+        _today_month = _today.month
 
         def _entry_day_key(entry_str: str) -> int:
             try:
@@ -2164,7 +2174,7 @@ def render_seasonality_muster() -> None:
             except Exception:
                 return 99
 
-        # Nur Muster im aktuellen Monat UND Entry >= heute
+        # Nur Muster im aktuellen Monat UND Entry >= nächster Handelstag
         def _is_relevant(entry_str: str) -> bool:
             parts = str(entry_str).strip().split(".")
             try:
