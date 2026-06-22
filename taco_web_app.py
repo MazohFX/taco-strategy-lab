@@ -2221,7 +2221,7 @@ def render_seasonality_muster() -> None:
 
         top_month = (
             _top_raw
-            .sort_values(["Symbol", "_day_key"], ascending=[True, True])
+            .sort_values(["_stars", "_sharpe", "_day_key"], ascending=[False, False, True])
             .drop(columns=["_day_key", "_stars", "_sharpe"], errors="ignore")
             .reset_index(drop=True)
         )
