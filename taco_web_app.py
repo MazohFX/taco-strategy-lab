@@ -1940,7 +1940,7 @@ def render_seasonality_muster() -> None:
         dir_choice = st.multiselect("Richtung", ["Long", "Short"], default=["Long", "Short"])
         min_wr = st.slider("Min. Winrate %", 60, 100, 70, step=5)
         hold_min = st.number_input("Musterlänge min (Kalendertage)", 1, 60, 5)
-        hold_max = st.number_input("Musterlänge max (Kalendertage)", 1, 120, 28)
+        hold_max = st.number_input("Musterlänge max (Kalendertage)", 1, 120, 20)
         hold_step = st.number_input("Schritt", 1, 10, 1)
         holding_periods = list(range(int(hold_min), int(hold_max) + 1, int(hold_step)))
         run_scan = st.button("🔍 Scanner starten", type="primary", use_container_width=True)
