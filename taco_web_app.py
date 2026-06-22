@@ -909,18 +909,27 @@ def _compute_stars(wr: float, avg_ret: float, avg_dd: float, max_dd: float,
     max_stars = rob_cap.get(robustheit, 3)
 
     score = 0.0
-    # Winrate (0–35 Punkte)
-    score += min(35, max(0, (wr - 0.60) / 0.40 * 35))
-    # Avg Profit vs ATR (0–25 Punkte)
-    if atr_pct and atr_pct > 0:
-        score += min(25, max(0, (avg_ret * 100 / atr_pct) / 2.0 * 25))
+    # Winrate (0–25 Punkte) — weniger Gewicht als früher
+    score += min(25, max(0, (wr - 0.60) / 0.40 * 25))
+
+    # Avg Profit absolut (0–25 Punkte): <0.5% = kaum Punkte, 1.5%+ = voll
+    score += min(25, max(0, (avg_ret * 100 - 0.3) / 1.2 * 25))
+
+    # Profit/Risiko-Verhältnis (0–25 Punkte): Ø Gewinn vs Ø DD
+    if avg_dd and abs(avg_dd) > 0:
+        pnl_risk = (avg_ret * 100) / abs(avg_dd * 100)
+        score += min(25, max(0, (pnl_risk - 0.5) / 2.0 * 25))
     else:
-        score += min(25, max(0, avg_ret * 100 / 3.0 * 25))
-    # Avg DD (0–20 Punkte): wenig DD = gut
-    score += min(20, max(0, (1 - abs(avg_dd) / 0.05) * 20))
-    # Sharpe (0–20 Punkte)
+        score += min(25, max(0, avg_ret * 100 / 2.0 * 25))
+
+    # Sharpe (0–25 Punkte)
     if not np.isnan(sharpe):
-        score += min(20, max(0, sharpe / 3.0 * 20))
+        score += min(25, max(0, sharpe / 3.0 * 25))
+
+    # Harte Strafen für schlechtes Profit/Risiko
+    if avg_ret * 100 < 0.4:          max_stars = min(max_stars, 2)  # Zu kleiner Profit → max 2★
+    elif avg_ret * 100 < 0.8:        max_stars = min(max_stars, 3)  # Kleiner Profit → max 3★
+    elif avg_ret * 100 < 1.2:        max_stars = min(max_stars, 4)  # Mittlerer Profit → max 4★
 
     # Sterne aus Score: 0–40=1, 40–55=2, 55–70=3, 70–85=4, 85+=5
     if score >= 85:   raw = 5
