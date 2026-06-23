@@ -1969,6 +1969,15 @@ def render_seasonality_muster() -> None:
         holding_periods = list(range(int(hold_min), int(hold_max) + 1, int(hold_step)))
         run_scan = st.button("🔍 Scanner starten", type="primary", use_container_width=True)
 
+        st.markdown("---")
+        st.markdown("<div style='color:#94a3b8;font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;'>Walk-Forward Validierung</div>", unsafe_allow_html=True)
+        wfa_min_is = st.number_input("Start IS-Fenster (Jahre)", min_value=5, max_value=20, value=10,
+                                      help="Erste N Jahre als In-Sample-Startfenster")
+        wfa_min_folds = st.number_input("Min. Folds für ✅ Badge", min_value=2, max_value=20, value=5,
+                                         help="Muster muss in mind. N Folds als IS-Kandidat erschienen sein")
+        run_wfa = st.button("🔄 Walk-Forward validieren", use_container_width=True,
+                            help="Rechenintensiv — kann mehrere Minuten dauern")
+
     with col_main:
         if daten_modus == "Repo (permanent)" and not selected_symbols:
             st.info("Bitte wähle mindestens ein Symbol aus und starte den Scanner.")
@@ -2046,6 +2055,60 @@ def render_seasonality_muster() -> None:
             st.session_state["muster_scan_result"] = result
             st.session_state["muster_dataframes"] = loaded_dfs
             st.session_state["muster_csv_name"] = f"{n_src} Symbole"
+
+        # ── Walk-Forward Validierung ──────────────────────────────────────────
+        if run_wfa:
+            loaded_dfs_wfa = st.session_state.get("muster_dataframes", {})
+            if not loaded_dfs_wfa:
+                st.warning("Bitte zuerst den Scanner starten, um Daten zu laden.")
+            else:
+                from seasonality_wfa import run_seasonality_wfa, wfa_results_to_dataframe
+                directions_wfa = [d.lower() for d in dir_choice]
+                _wfa_bar = st.progress(0, text="Starte Walk-Forward Validierung…")
+                def _wfa_progress(frac: float, txt: str) -> None:
+                    _wfa_bar.progress(min(frac, 1.0), text=txt)
+                wfa_res = run_seasonality_wfa(
+                    symbol_dfs=loaded_dfs_wfa,
+                    holding_periods=holding_periods,
+                    directions=directions_wfa,
+                    min_winrate=min_wr / 100,
+                    min_trades=max(int(wfa_min_is * 0.8), 3),
+                    min_is_years=int(wfa_min_is),
+                    min_folds_for_badge=int(wfa_min_folds),
+                    progress_callback=_wfa_progress,
+                )
+                _wfa_bar.empty()
+                st.session_state["muster_wfa_result"] = wfa_res
+
+        # WFA-Ergebnis anzeigen (falls vorhanden)
+        _wfa_result = st.session_state.get("muster_wfa_result")
+        if _wfa_result is not None:
+            from seasonality_wfa import wfa_results_to_dataframe, wfa_badge_for_row
+            wfa_df = wfa_results_to_dataframe(_wfa_result)
+            n_validated = (wfa_df["Status"] == "✅ OOS-validiert").sum() if not wfa_df.empty else 0
+            n_is_only   = (wfa_df["Status"] == "⚠️ Nur IS").sum() if not wfa_df.empty else 0
+            st.markdown(
+                f"""<div style="background:#0a1220;border:1px solid rgba(74,222,128,.2);border-radius:10px;
+                    padding:14px 20px;margin-bottom:18px;">
+                  <div style="color:#94a3b8;font-size:.75rem;font-weight:700;letter-spacing:.1em;
+                      text-transform:uppercase;margin-bottom:8px;">Walk-Forward Ergebnis</div>
+                  <span style="color:#4ade80;font-weight:800;font-size:1.1rem;">✅ {n_validated} OOS-validiert</span>
+                  &nbsp;&nbsp;
+                  <span style="color:#fbbf24;font-size:1rem;">⚠️ {n_is_only} Nur IS</span>
+                  &nbsp;&nbsp;
+                  <span style="color:#6b7fa3;font-size:.9rem;">IS-Start: {_wfa_result.min_is_years} Jahre · Badge ab {int(wfa_min_folds)} Folds</span>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            if not wfa_df.empty:
+                st.dataframe(wfa_df, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "⬇️ WFA-Ergebnis CSV",
+                    wfa_df.to_csv(index=False).encode("utf-8"),
+                    file_name="seasonality_wfa_result.csv",
+                    mime="text/csv",
+                )
+            st.markdown("---")
 
         result = st.session_state.get("muster_scan_result", pd.DataFrame())
         csv_name = st.session_state.get("muster_csv_name", "")
@@ -2154,6 +2217,21 @@ def render_seasonality_muster() -> None:
         wr_display_cols = [c for c in ["WR 5J %", "WR 10J %", "WR 15J %", "WR 20J %"] if c in display.columns]
         num_cols = ["Ø Profit %", "Ø DD %", "Max DD %", "Sharpe", "SQN"]
         existing_num_cols = [c for c in num_cols if c in display.columns]
+
+        # WFA-Badge in Tabelle einfügen (wenn WFA-Ergebnis vorhanden)
+        _wfa_res_for_display = st.session_state.get("muster_wfa_result")
+        if _wfa_res_for_display is not None:
+            from seasonality_wfa import wfa_badge_for_row
+            def _get_wfa_badge(row: pd.Series) -> str:
+                return wfa_badge_for_row(
+                    _wfa_res_for_display,
+                    symbol=str(row.get("Symbol", "")),
+                    entry_doy=int(row.get("_entry_doy", 0)),
+                    exit_doy=int(row.get("_exit_doy", 0)),
+                    direction="long" if row.get("Richtung") == "Long" else "short",
+                )
+            display["WFA"] = display.apply(_get_wfa_badge, axis=1)
+
         style_obj = (
             display.style
             .map(color_richtung, subset=["Richtung"])
