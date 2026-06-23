@@ -1,13 +1,37 @@
+import json
 import math
 import calendar
 import re
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+
+# ── Muster-Notizen (JSON-Persistenz) ─────────────────────────────────────────
+_NOTES_FILE = Path(__file__).parent / "pattern_notes.json"
+
+
+def _notes_key(symbol: str, entry: str, exit_: str, richtung: str) -> str:
+    return f"{symbol}|{entry}|{exit_}|{richtung}"
+
+
+def _load_notes() -> dict:
+    if _NOTES_FILE.exists():
+        try:
+            return json.loads(_NOTES_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_notes(notes: dict) -> None:
+    _NOTES_FILE.write_text(json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
+
 
 def load_ohlc_data(symbol: str, source: str = "mt5", fallback_to_yahoo: bool = False):
     from pathlib import Path as _Path
@@ -2244,6 +2268,8 @@ def render_seasonality_muster() -> None:
 
         saved_dfs = st.session_state.get("muster_dataframes", {})
 
+        _notes_all = _load_notes()
+
         if top_month.empty:
             st.info(f"Keine Muster mit ≥{min_wr}% Winrate im {current_month_name} gefunden.")
         else:
@@ -2288,6 +2314,10 @@ def render_seasonality_muster() -> None:
                 _rob_val    = str(row.get("Robustheit", "—"))
                 _rob_clr    = {"🟢 Stark": "#4ade80", "✅ Robust": "#a3e635", "⚠️ Sensitiv": "#facc15", "❌ Fragil": "#f87171"}.get(_rob_val, "#6b7fa3")
 
+                # Notiz für dieses Muster laden
+                _nkey = _notes_key(symbol_str, str(row.get("Entry", "")), str(row.get("Exit", "")), richtung)
+                _cur_note = _notes_all.get(_nkey, "")
+
                 col_info, col_btn = st.columns([6, 1])
                 with col_info:
                     st.markdown(
@@ -2331,6 +2361,30 @@ def render_seasonality_muster() -> None:
                             "lookback": lookback,
                         }
                         st.rerun()
+
+                # ── Notiz-Bereich ──────────────────────────────────────────────
+                with st.expander(
+                    f"📝 Fundamentaler Grund {'· ' + _cur_note[:40] + ('…' if len(_cur_note) > 40 else '') if _cur_note else '· kein Grund hinterlegt'}",
+                    expanded=False,
+                ):
+                    if not _cur_note:
+                        st.markdown(
+                            "<div style='color:#475569;font-size:.75rem;font-style:italic;margin-bottom:6px;'>"
+                            "ℹ️ Kein fundamentaler Grund hinterlegt</div>",
+                            unsafe_allow_html=True,
+                        )
+                    _new_note = st.text_area(
+                        "Notiz",
+                        value=_cur_note,
+                        key=f"note_ta_{i}",
+                        height=80,
+                        label_visibility="collapsed",
+                        placeholder="z.B. JP-Fiskaljahresende, US-Optionsverfall, Quarter-End Rebalancing …",
+                    )
+                    if st.button("💾 Speichern", key=f"note_save_{i}"):
+                        _notes_all[_nkey] = _new_note.strip()
+                        _save_notes(_notes_all)
+                        st.success("Notiz gespeichert.")
 
 
 def render_seasonality_lab() -> None:
