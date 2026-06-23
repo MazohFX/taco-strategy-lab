@@ -1971,9 +1971,11 @@ def render_seasonality_muster() -> None:
 
         st.markdown("---")
         st.markdown("<div style='color:#94a3b8;font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;'>Walk-Forward Validierung</div>", unsafe_allow_html=True)
-        wfa_min_is = st.number_input("Start IS-Fenster (Jahre)", min_value=5, max_value=20, value=10,
+        _wfa_defaults = {5: (4, 2), 10: (10, 5), 15: (10, 8), 20: (12, 7)}
+        _wfa_is_def, _wfa_folds_def = _wfa_defaults.get(lookback, (10, 5))
+        wfa_min_is = st.number_input("Start IS-Fenster (Jahre)", min_value=5, max_value=20, value=_wfa_is_def,
                                       help="Erste N Jahre als In-Sample-Startfenster")
-        wfa_min_folds = st.number_input("Min. Folds für ✅ Badge", min_value=2, max_value=20, value=5,
+        wfa_min_folds = st.number_input("Min. Folds für ✅ Badge", min_value=2, max_value=20, value=_wfa_folds_def,
                                          help="Muster muss in mind. N Folds als IS-Kandidat erschienen sein")
         run_wfa = st.button("🔄 Walk-Forward validieren", use_container_width=True,
                             help="Rechenintensiv — kann mehrere Minuten dauern")
