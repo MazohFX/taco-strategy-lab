@@ -1978,6 +1978,60 @@ def render_seasonality_muster() -> None:
         run_wfa = st.button("🔄 Walk-Forward validieren", use_container_width=True,
                             help="Rechenintensiv — kann mehrere Minuten dauern")
 
+        with st.expander("❓ Was bedeuten diese Einstellungen?", expanded=False):
+            st.markdown(
+                """
+<div style="font-size:.82rem;color:#cbd5e1;line-height:1.7;">
+
+<div style="color:#f0c040;font-weight:700;margin-bottom:4px;">📖 Wie funktioniert Walk-Forward?</div>
+Das Fenster rollt Jahr für Jahr vorwärts. Die ersten <b>N Jahre</b> sind In-Sample (IS) — dort wird
+das Muster gesucht. Das jeweils nächste Jahr ist Out-of-Sample (OOS) — dort wird geprüft,
+ob es auch dort funktioniert hat.
+
+<div style="margin:10px 0 4px 0;color:#f0c040;font-weight:700;">🔁 Beispiel mit IS-Fenster = 10 (Daten 2006–2025)</div>
+</div>
+""", unsafe_allow_html=True)
+            st.markdown("""
+| Fold | In-Sample (Training) | OOS-Test Jahr |
+|------|----------------------|---------------|
+| 1 | 2006 – 2015 | 2016 |
+| 2 | 2006 – 2016 | 2017 |
+| 3 | 2006 – 2017 | 2018 |
+| 4 | 2006 – 2018 | 2019 |
+| 5 | 2006 – 2019 | 2020 |
+| … | … | … |
+| 9 | 2006 – 2023 | 2024 |
+""")
+            st.markdown(
+                """
+<div style="font-size:.82rem;color:#cbd5e1;line-height:1.7;margin-top:6px;">
+
+<div style="color:#f0c040;font-weight:700;margin-bottom:4px;">🏅 Min. Folds für ✅ Badge</div>
+Ein Muster bekommt nur dann <b>✅ OOS-validiert</b>, wenn es in mindestens N Folds als
+IS-Kandidat aufgetaucht ist. Das filtert Zufallstreffer heraus.
+
+<div style="margin:10px 0 4px 0;color:#f0c040;font-weight:700;">📊 Analysezeitraum vs. IS-Fenster</div>
+Der <b>Analysezeitraum</b> (Radio-Button oben) filtert nur, welche Muster angezeigt werden —
+die WFA nutzt immer <b>alle verfügbaren Daten</b> der CSVs.
+<b>→ Tipp: Stelle oben auf 20J, damit nur Muster reinkommen, die über 20 Jahre funktionierten.</b>
+
+<div style="margin:10px 0 4px 0;color:#f0c040;font-weight:700;">✅ Empfohlene Einstellungen</div>
+</div>
+""", unsafe_allow_html=True)
+            st.markdown("""
+| Ziel | Analysezeitraum | IS-Fenster | Min. Folds |
+|------|-----------------|------------|------------|
+| Maximale Robustheit | **20J** | **10–12** | **7** |
+| Ausgewogen (Standard) | **10J** | **10** | **5** |
+| Mehr Muster sehen | **10J** | **8** | **3** |
+""")
+            st.markdown(
+                "<div style='font-size:.76rem;color:#475569;margin-top:6px;'>"
+                "💡 Bei 20J Datenbasis entstehen ~8–10 Folds — mehr Folds = robusteres Badge."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
     with col_main:
         if daten_modus == "Repo (permanent)" and not selected_symbols:
             st.info("Bitte wähle mindestens ein Symbol aus und starte den Scanner.")
