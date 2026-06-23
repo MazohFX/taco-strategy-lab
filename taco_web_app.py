@@ -1978,22 +1978,28 @@ def render_seasonality_muster() -> None:
         run_wfa = st.button("🔄 Walk-Forward validieren", use_container_width=True,
                             help="Rechenintensiv — kann mehrere Minuten dauern")
 
-        with st.expander("❓ Was bedeuten diese Einstellungen?", expanded=False):
+    with col_main:
+        if daten_modus == "Repo (permanent)" and not selected_symbols:
+            st.info("Bitte wähle mindestens ein Symbol aus und starte den Scanner.")
+            return
+        if daten_modus == "CSV Upload" and not csv_files:
+            st.info("Bitte lade eine oder mehrere Pepperstone CSV-Dateien hoch und starte den Scanner.")
+            return
+
+        with st.expander("❓ Walk-Forward Validierung — was bedeuten die Einstellungen?", expanded=False):
             st.markdown(
                 """
-<div style="font-size:.82rem;color:#cbd5e1;line-height:1.7;">
-
-<div style="color:#f0c040;font-weight:700;margin-bottom:4px;">📖 Wie funktioniert Walk-Forward?</div>
-Das Fenster rollt Jahr für Jahr vorwärts. Die ersten <b>N Jahre</b> sind In-Sample (IS) — dort wird
-das Muster gesucht. Das jeweils nächste Jahr ist Out-of-Sample (OOS) — dort wird geprüft,
-ob es auch dort funktioniert hat.
-
-<div style="margin:10px 0 4px 0;color:#f0c040;font-weight:700;">🔁 Beispiel mit IS-Fenster = 10 (Daten 2006–2025)</div>
+<div style="font-size:.88rem;color:#cbd5e1;line-height:1.8;">
+<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:6px;">📖 Wie funktioniert Walk-Forward?</div>
+Das Fenster rollt Jahr für Jahr vorwärts. Die ersten <b>N Jahre</b> sind In-Sample (IS) — dort wird das Muster gesucht.
+Das jeweils nächste Jahr ist Out-of-Sample (OOS) — dort wird geprüft, ob das Muster auch dort funktioniert hat.
 </div>
 """, unsafe_allow_html=True)
+
+            st.markdown("**🔁 Beispiel mit IS-Fenster = 10 (Datenbasis 2006–2025)**")
             st.markdown("""
-| Fold | In-Sample (Training) | OOS-Test Jahr |
-|------|----------------------|---------------|
+| Fold | In-Sample — Training | OOS-Test Jahr |
+|:----:|----------------------|:-------------:|
 | 1 | 2006 – 2015 | 2016 |
 | 2 | 2006 – 2016 | 2017 |
 | 3 | 2006 – 2017 | 2018 |
@@ -2004,41 +2010,29 @@ ob es auch dort funktioniert hat.
 """)
             st.markdown(
                 """
-<div style="font-size:.82rem;color:#cbd5e1;line-height:1.7;margin-top:6px;">
-
-<div style="color:#f0c040;font-weight:700;margin-bottom:4px;">🏅 Min. Folds für ✅ Badge</div>
-Ein Muster bekommt nur dann <b>✅ OOS-validiert</b>, wenn es in mindestens N Folds als
-IS-Kandidat aufgetaucht ist. Das filtert Zufallstreffer heraus.
-
-<div style="margin:10px 0 4px 0;color:#f0c040;font-weight:700;">📊 Analysezeitraum vs. IS-Fenster</div>
-Der <b>Analysezeitraum</b> (Radio-Button oben) filtert nur, welche Muster angezeigt werden —
-die WFA nutzt immer <b>alle verfügbaren Daten</b> der CSVs.
-<b>→ Tipp: Stelle oben auf 20J, damit nur Muster reinkommen, die über 20 Jahre funktionierten.</b>
-
-<div style="margin:10px 0 4px 0;color:#f0c040;font-weight:700;">✅ Empfohlene Einstellungen</div>
+<div style="font-size:.88rem;color:#cbd5e1;line-height:1.8;margin-top:8px;">
+<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">🏅 Min. Folds für ✅ Badge</div>
+Ein Muster bekommt nur dann <b>✅ OOS-validiert</b>, wenn es in mindestens N Folds als IS-Kandidat aufgetaucht ist.
+Das filtert Zufallstreffer heraus — je höher der Wert, desto strenger der Filter.
+<br><br>
+<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">📊 Analysezeitraum vs. IS-Fenster</div>
+Der <b>Analysezeitraum</b> (Radio-Button links) filtert nur, welche Muster <i>angezeigt</i> werden —
+die WFA nutzt immer alle verfügbaren Daten der CSVs unabhängig davon.
+<br>
+<b style="color:#4ade80;">→ Tipp: Stelle links auf 20J</b>, damit nur Muster durchkommen, die über 20 Jahre konsistent waren.
+Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
 </div>
 """, unsafe_allow_html=True)
+
+            st.markdown("**✅ Empfohlene Einstellungen**")
             st.markdown("""
-| Ziel | Analysezeitraum | IS-Fenster | Min. Folds |
-|------|-----------------|------------|------------|
+| Ziel | Analysezeitraum (links) | IS-Fenster | Min. Folds |
+|------|:-----------------------:|:----------:|:----------:|
 | Maximale Robustheit | **20J** | **10–12** | **7** |
 | Ausgewogen (Standard) | **10J** | **10** | **5** |
 | Mehr Muster sehen | **10J** | **8** | **3** |
 """)
-            st.markdown(
-                "<div style='font-size:.76rem;color:#475569;margin-top:6px;'>"
-                "💡 Bei 20J Datenbasis entstehen ~8–10 Folds — mehr Folds = robusteres Badge."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-
-    with col_main:
-        if daten_modus == "Repo (permanent)" and not selected_symbols:
-            st.info("Bitte wähle mindestens ein Symbol aus und starte den Scanner.")
-            return
-        if daten_modus == "CSV Upload" and not csv_files:
-            st.info("Bitte lade eine oder mehrere Pepperstone CSV-Dateien hoch und starte den Scanner.")
-            return
+            st.info("💡 Bei 20J Datenbasis entstehen ~8–10 Folds — mehr Folds = robusteres ✅ Badge.")
 
         if not run_scan and "muster_scan_result" not in st.session_state:
             st.info("Einstellungen wählen und 'Scanner starten' klicken.")
