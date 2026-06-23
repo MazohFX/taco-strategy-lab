@@ -2012,8 +2012,12 @@ Das jeweils nächste Jahr ist Out-of-Sample (OOS) — dort wird geprüft, ob das
                 """
 <div style="font-size:.88rem;color:#cbd5e1;line-height:1.8;margin-top:8px;">
 <div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">🏅 Min. Folds für ✅ Badge</div>
-Ein Muster bekommt nur dann <b>✅ OOS-validiert</b>, wenn es in mindestens N Folds als IS-Kandidat aufgetaucht ist.
-Das filtert Zufallstreffer heraus — je höher der Wert, desto strenger der Filter.
+Ein <b>Fold</b> = ein einzelner Test-Durchlauf mit einem bestimmten IS-Zeitraum und einem OOS-Jahr.
+Im Beispiel oben mit IS-Fenster 10 entstehen <b>9 Folds</b> (Fold 1 bis Fold 9).
+<br>
+Ein Muster bekommt nur dann <b>✅ OOS-validiert</b>, wenn es in mindestens N dieser Folds als IS-Kandidat aufgetaucht ist.
+<br><i>Beispiel: Min. Folds = 5 → das Muster muss in mindestens 5 der 9 Test-Durchläufe gefunden worden sein.</i>
+<br>Das filtert Zufallstreffer heraus — je höher der Wert, desto strenger der Filter.
 <br><br>
 <div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">📊 Analysezeitraum vs. IS-Fenster</div>
 Der <b>Analysezeitraum</b> (Radio-Button links) filtert nur, welche Muster <i>angezeigt</i> werden —
