@@ -4914,22 +4914,21 @@ with st.sidebar:
         sl_step = 0.05
         run_sl_scan = False
         run_radar = False
-
-        st.header("Walk Forward Analysis")
-        wf_asset_preset = st.selectbox("WF Asset", list(ASSET_PRESETS.keys()))
-        wf_comp_preset = st.selectbox("WF Comparison Asset", list(COMPARISON_PRESETS.keys()))
-        wf_start_year = st.number_input("Walk Forward Start Year", 1900, 2100, 2015)
-        wf_end_year = st.number_input("Walk Forward End Year", 1900, 2100, 2026)
-        wf_in_sample_years = st.number_input("In Sample Window Years", 1, 50, 20)
-        wf_cycle_from = st.number_input("WF Cycle From", 2, 100, 5)
-        wf_cycle_to = st.number_input("WF Cycle To", 2, 100, 30)
-        wf_cycle_step = st.number_input("WF Cycle Step", 1, 20, 1)
-        wf_sl_from = st.number_input("WF Stop Loss From %", 0.05, 20.0, 0.25, step=0.05)
-        wf_sl_to = st.number_input("WF Stop Loss To %", 0.05, 20.0, 2.00, step=0.05)
-        wf_sl_step = st.number_input("WF Stop Loss Step %", 0.05, 5.0, 0.05, step=0.05)
-        wf_min_trades = st.number_input("WF Min In-Sample Trades", 1, 1000, 30)
-        wf_max_loss_streak = st.number_input("WF Max In-Sample Loss Streak", 0, 100, 5)
-        run_wf = st.button("Run Walk Forward", type="primary")
+        # WFA inputs are rendered inline in the main content area (like Cycle Scanner)
+        wf_asset_preset = list(ASSET_PRESETS.keys())[0]
+        wf_comp_preset = list(COMPARISON_PRESETS.keys())[0]
+        wf_start_year = 2015
+        wf_end_year = 2026
+        wf_in_sample_years = 20
+        wf_cycle_from = 5
+        wf_cycle_to = 30
+        wf_cycle_step = 1
+        wf_sl_from = 0.25
+        wf_sl_to = 2.0
+        wf_sl_step = 0.05
+        wf_min_trades = 30
+        wf_max_loss_streak = 5
+        run_wf = False
     elif test_mode == "TACO Radar":
         scan_assets = []
         scan_comps = []
@@ -5296,7 +5295,41 @@ with st.expander("Info: Wie funktioniert der TACO Backtest?", expanded=True):
     )
 
 if test_mode == "Walk Forward Analysis":
-    st.subheader("Walk Forward Analysis")
+    # ── Inline-Toolbar (wie Cycle Scanner) ───────────────────────────────────
+    st.markdown(
+        "<div style='font-size:.7rem;text-transform:uppercase;letter-spacing:.09em;"
+        "color:#9fb0c7;font-weight:700;margin-bottom:4px;'>Walk Forward Analysis — Asset & Parameter</div>",
+        unsafe_allow_html=True,
+    )
+    _wf_row1 = st.columns([2, 2, 1, 1])
+    with _wf_row1[0]:
+        wf_asset_preset = st.selectbox("Asset", list(ASSET_PRESETS.keys()), key="wf_asset")
+    with _wf_row1[1]:
+        wf_comp_preset = st.selectbox("Comparison Asset", list(COMPARISON_PRESETS.keys()), key="wf_comp")
+    with _wf_row1[2]:
+        wf_start_year = st.number_input("Start Jahr", 1900, 2100, 2015, key="wf_sy")
+    with _wf_row1[3]:
+        wf_end_year = st.number_input("End Jahr", 1900, 2100, 2026, key="wf_ey")
+
+    _wf_row2 = st.columns([1, 1, 1, 1, 1, 1, 1, 1.4])
+    with _wf_row2[0]:
+        wf_in_sample_years = st.number_input("IS-Fenster (J)", 1, 50, 20, key="wf_is")
+    with _wf_row2[1]:
+        wf_cycle_from = st.number_input("Cycle Von", 2, 100, 5, key="wf_cf")
+    with _wf_row2[2]:
+        wf_cycle_to = st.number_input("Cycle Bis", 2, 100, 30, key="wf_ct")
+    with _wf_row2[3]:
+        wf_cycle_step = st.number_input("Step", 1, 20, 1, key="wf_cs")
+    with _wf_row2[4]:
+        wf_sl_from = st.number_input("SL Von %", 0.05, 20.0, 0.25, step=0.05, key="wf_slf")
+    with _wf_row2[5]:
+        wf_sl_to = st.number_input("SL Bis %", 0.05, 20.0, 2.0, step=0.05, key="wf_slt")
+    with _wf_row2[6]:
+        wf_min_trades = st.number_input("Min Trades", 1, 1000, 30, key="wf_mt")
+    with _wf_row2[7]:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        run_wf = st.button("Run Walk Forward", type="primary", use_container_width=True, key="wf_run")
+
     st.caption(
         "Realistische Out-of-Sample-Validierung: Jedes Testjahr wird nur mit Parametern gehandelt, "
         "die aus den vorherigen In-Sample-Jahren bestimmt wurden. Das OOS-Jahr ist nie Teil der Optimierung. "
