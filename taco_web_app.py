@@ -5340,68 +5340,89 @@ if test_mode == "Walk Forward Analysis":
         "Jedes OOS-Jahr wird nur mit IS-optimierten Parametern gehandelt — kein Lookahead."
     )
 
-    if not run_wf:
+    # Zeige gecachte Ergebnisse wenn vorhanden (kein Neustart nötig nach Page-Reload)
+    _wf_has_cache = "wf_results" in st.session_state
+
+    if not run_wf and not _wf_has_cache:
         st.info("Assets und Parameter oben auswaehlen, dann Run Walk Forward klicken.")
         st.stop()
 
-    if not wf_asset_presets:
-        st.error("Bitte mindestens ein Asset auswaehlen.")
-        st.stop()
-    if wf_end_year < wf_start_year:
-        st.error("End Jahr muss groesser oder gleich Start Jahr sein.")
-        st.stop()
-    if wf_cycle_to < wf_cycle_from:
-        st.error("Cycle Bis muss groesser oder gleich Cycle Von sein.")
-        st.stop()
-    if wf_sl_to < wf_sl_from:
-        st.error("SL Bis muss groesser oder gleich SL Von sein.")
-        st.stop()
+    if run_wf:
+        if not wf_asset_presets:
+            st.error("Bitte mindestens ein Asset auswaehlen.")
+            st.stop()
+        if wf_end_year < wf_start_year:
+            st.error("End Jahr muss groesser oder gleich Start Jahr sein.")
+            st.stop()
+        if wf_cycle_to < wf_cycle_from:
+            st.error("Cycle Bis muss groesser oder gleich Cycle Von sein.")
+            st.stop()
+        if wf_sl_to < wf_sl_from:
+            st.error("SL Bis muss groesser oder gleich SL Von sein.")
+            st.stop()
 
-    wf_cycles = list(range(int(wf_cycle_from), int(wf_cycle_to) + 1, int(wf_cycle_step)))
-    wf_stop_values = np.round(np.arange(float(wf_sl_from), float(wf_sl_to) + float(wf_sl_step) / 2, float(wf_sl_step)), 4).tolist()
-    wf_comp_symbol = COMPARISON_PRESETS[wf_comp_preset]
-    wf_comp_data = load_yahoo(wf_comp_symbol)
-    if wf_comp_data is None:
-        st.error(f"Daten fuer Comparison Asset '{wf_comp_preset}' konnten nicht geladen werden.")
-        st.stop()
+        wf_cycles = list(range(int(wf_cycle_from), int(wf_cycle_to) + 1, int(wf_cycle_step)))
+        wf_stop_values = np.round(np.arange(float(wf_sl_from), float(wf_sl_to) + float(wf_sl_step) / 2, float(wf_sl_step)), 4).tolist()
+        wf_comp_symbol = COMPARISON_PRESETS[wf_comp_preset]
+        wf_comp_data = load_yahoo(wf_comp_symbol)
+        if wf_comp_data is None:
+            st.error(f"Daten fuer Comparison Asset '{wf_comp_preset}' konnten nicht geladen werden.")
+            st.stop()
 
-    # ── Multi-Asset Loop ──────────────────────────────────────────────────────
+        _COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899",
+                   "#06b6d4", "#f97316", "#84cc16", "#ef4444", "#a78bfa"]
+
+        all_asset_results = {}
+        _wf_progress_bar = st.progress(0, text="Starte Walk Forward Analysis...")
+
+        for _ai, _asset_name in enumerate(wf_asset_presets):
+            _asset_symbol = ASSET_PRESETS[_asset_name]
+            _asset_data = load_yahoo(_asset_symbol)
+            if _asset_data is None:
+                st.warning(f"Daten fuer '{_asset_name}' konnten nicht geladen werden — uebersprungen.")
+                continue
+
+            def _wf_progress(frac: float, txt: str, _ai=_ai, _n=len(wf_asset_presets), _name=_asset_name) -> None:
+                overall = (_ai + frac) / _n
+                _wf_progress_bar.progress(min(overall, 1.0), text=f"[{_ai+1}/{_n}] {_name}: {txt}")
+
+            (yr_r, yr_n, tr_r, tr_n,
+             eq_r, eq_n, eq_g, summ) = run_walk_forward(
+                _asset_data, wf_comp_data, settings,
+                int(wf_start_year), int(wf_end_year), int(wf_in_sample_years),
+                wf_cycles, wf_stop_values, int(wf_min_trades), int(wf_max_loss_streak),
+                progress_callback=_wf_progress,
+            )
+            all_asset_results[_asset_name] = {
+                "yearly_r": yr_r, "yearly_n": yr_n,
+                "trades_r": tr_r, "trades_n": tr_n,
+                "equity_r": eq_r, "equity_n": eq_n,
+                "equity_g": eq_g, "summary":  summ,
+            }
+
+        _wf_progress_bar.empty()
+
+        if not all_asset_results:
+            st.error("Keine Ergebnisse — keine Asset-Daten konnten geladen werden.")
+            st.stop()
+
+        # Ergebnisse im Session State speichern
+        st.session_state["wf_results"] = all_asset_results
+        st.session_state["wf_params_label"] = (
+            f"Assets: {', '.join(a.split(' proxy:')[0] for a in wf_asset_presets)} | "
+            f"Comp: {wf_comp_preset.split(' proxy:')[0]} | "
+            f"IS: {wf_in_sample_years}J | {wf_start_year}–{wf_end_year} | "
+            f"Cycle {wf_cycle_from}–{wf_cycle_to} Step {wf_cycle_step} | "
+            f"SL {wf_sl_from}–{wf_sl_to}%"
+        )
+
+    # Ab hier: gecachte oder frisch berechnete Ergebnisse anzeigen
+    all_asset_results = st.session_state["wf_results"]
     _COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899",
                "#06b6d4", "#f97316", "#84cc16", "#ef4444", "#a78bfa"]
 
-    all_asset_results = {}   # asset_name -> dict mit equity_r, yearly_r, ...
-    _wf_progress_bar = st.progress(0, text="Starte Walk Forward Analysis...")
-
-    for _ai, _asset_name in enumerate(wf_asset_presets):
-        _asset_symbol = ASSET_PRESETS[_asset_name]
-        _asset_data = load_yahoo(_asset_symbol)
-        if _asset_data is None:
-            st.warning(f"Daten fuer '{_asset_name}' konnten nicht geladen werden — uebersprungen.")
-            continue
-
-        def _wf_progress(frac: float, txt: str, _ai=_ai, _n=len(wf_asset_presets), _name=_asset_name) -> None:
-            overall = (_ai + frac) / _n
-            _wf_progress_bar.progress(min(overall, 1.0), text=f"[{_ai+1}/{_n}] {_name}: {txt}")
-
-        (yr_r, yr_n, tr_r, tr_n,
-         eq_r, eq_n, eq_g, summ) = run_walk_forward(
-            _asset_data, wf_comp_data, settings,
-            int(wf_start_year), int(wf_end_year), int(wf_in_sample_years),
-            wf_cycles, wf_stop_values, int(wf_min_trades), int(wf_max_loss_streak),
-            progress_callback=_wf_progress,
-        )
-        all_asset_results[_asset_name] = {
-            "yearly_r": yr_r, "yearly_n": yr_n,
-            "trades_r": tr_r, "trades_n": tr_n,
-            "equity_r": eq_r, "equity_n": eq_n,
-            "equity_g": eq_g, "summary":  summ,
-        }
-
-    _wf_progress_bar.empty()
-
-    if not all_asset_results:
-        st.error("Keine Ergebnisse — keine Asset-Daten konnten geladen werden.")
-        st.stop()
+    st.caption(f"💾 Gespeicherte Ergebnisse: {st.session_state.get('wf_params_label', '')} — "
+               "Ergebnisse bleiben nach Page-Reload erhalten. Neu berechnen: 'Run Walk Forward' klicken.")
 
     # ── Übersichtstabelle alle Assets ─────────────────────────────────────────
     st.subheader("Übersicht alle Assets (Robuste Auswahl)")
