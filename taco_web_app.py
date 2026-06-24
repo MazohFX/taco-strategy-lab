@@ -5340,7 +5340,33 @@ if test_mode == "Walk Forward Analysis":
         "Jedes OOS-Jahr wird nur mit IS-optimierten Parametern gehandelt — kein Lookahead."
     )
 
-    # Zeige gecachte Ergebnisse wenn vorhanden (kein Neustart nötig nach Page-Reload)
+    # Persistenter Cache: Datei überlebt App-Neustarts, session_state überlebt Page-Reloads
+    _WF_CACHE_FILE = Path(__file__).parent / "wf_cache.pkl"
+
+    def _wf_save_cache(results: dict, label: str) -> None:
+        import pickle
+        try:
+            _WF_CACHE_FILE.write_bytes(pickle.dumps({"results": results, "label": label}))
+        except Exception:
+            pass
+
+    def _wf_load_cache() -> tuple[dict | None, str]:
+        import pickle
+        if not _WF_CACHE_FILE.exists():
+            return None, ""
+        try:
+            data = pickle.loads(_WF_CACHE_FILE.read_bytes())
+            return data.get("results"), data.get("label", "")
+        except Exception:
+            return None, ""
+
+    # Session State aus Datei befüllen falls leer (nach App-Neustart)
+    if "wf_results" not in st.session_state:
+        _cached, _cached_label = _wf_load_cache()
+        if _cached:
+            st.session_state["wf_results"] = _cached
+            st.session_state["wf_params_label"] = _cached_label
+
     _wf_has_cache = "wf_results" in st.session_state
 
     if not run_wf and not _wf_has_cache:
@@ -5406,15 +5432,18 @@ if test_mode == "Walk Forward Analysis":
             st.error("Keine Ergebnisse — keine Asset-Daten konnten geladen werden.")
             st.stop()
 
-        # Ergebnisse im Session State speichern
-        st.session_state["wf_results"] = all_asset_results
-        st.session_state["wf_params_label"] = (
+        # Ergebnisse in Session State UND Datei speichern
+        _wf_label = (
             f"Assets: {', '.join(a.split(' proxy:')[0] for a in wf_asset_presets)} | "
             f"Comp: {wf_comp_preset.split(' proxy:')[0]} | "
             f"IS: {wf_in_sample_years}J | {wf_start_year}–{wf_end_year} | "
             f"Cycle {wf_cycle_from}–{wf_cycle_to} Step {wf_cycle_step} | "
             f"SL {wf_sl_from}–{wf_sl_to}%"
         )
+        st.session_state["wf_results"] = all_asset_results
+        st.session_state["wf_params_label"] = _wf_label
+        _wf_save_cache(all_asset_results, _wf_label)
+        st.success("✅ Ergebnisse gespeichert — bleiben auch nach App-Neustart erhalten.")
 
     # Ab hier: gecachte oder frisch berechnete Ergebnisse anzeigen
     all_asset_results = st.session_state["wf_results"]
@@ -5422,7 +5451,7 @@ if test_mode == "Walk Forward Analysis":
                "#06b6d4", "#f97316", "#84cc16", "#ef4444", "#a78bfa"]
 
     st.caption(f"💾 Gespeicherte Ergebnisse: {st.session_state.get('wf_params_label', '')} — "
-               "Ergebnisse bleiben nach Page-Reload erhalten. Neu berechnen: 'Run Walk Forward' klicken.")
+               "Ergebnisse bleiben auch nach App-Neustart erhalten. Neu berechnen: 'Run Walk Forward' klicken.")
 
     # ── Übersichtstabelle alle Assets ─────────────────────────────────────────
     st.subheader("Übersicht alle Assets (Robuste Auswahl)")

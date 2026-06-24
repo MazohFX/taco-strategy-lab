@@ -7,3 +7,4 @@ __pycache__/
 taco_mt5_update/
 taco_web_app_UPLOAD.py
 .DS_Store
+wf_cache.pkl
