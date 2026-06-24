@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from scipy import stats as _scipy_stats
 
 
 # ── Muster-Notizen (JSON-Persistenz) ─────────────────────────────────────────
@@ -3950,11 +3951,22 @@ def optimize_in_sample(
     in_end_year: int,
     min_trades: int,
     max_loss_streak: int,
-) -> tuple[dict | None, pd.DataFrame]:
-    """Optimize only inside the in-sample window. The OOS year is not touched here."""
+) -> tuple[dict | None, dict | None, pd.DataFrame]:
+    """
+    Optimize only inside the in-sample window. The OOS year is not touched here.
+
+    Returns (robust_params, naive_params, results_df).
+    - naive_params:  combo with the single highest Profit Factor (original behavior)
+    - robust_params: combo with the best average PF across its direct neighbours
+                     (±1 step in Cycle Length and ±1 step in Stop Loss %) — Plateau selection
+    Guardrails (min_trades, max_loss_streak) are applied before plateau scoring.
+    """
     rows = []
-    for cycle in cycles:
-        for stop_pct in stop_values:
+    # score_map: (cycle_idx, sl_idx) -> profit_factor for plateau lookup
+    score_map: dict[tuple[int, int], float] = {}
+
+    for c_idx, cycle in enumerate(cycles):
+        for s_idx, stop_pct in enumerate(stop_values):
             test_settings = Settings(
                 cycle_length=int(cycle),
                 smoothing=base_settings.smoothing,
@@ -3985,27 +3997,60 @@ def optimize_in_sample(
                 or pd.isna(metrics["Profit Factor"])
             ):
                 continue
+            pf = float(metrics["Profit Factor"])
+            score_map[(c_idx, s_idx)] = pf
             rows.append({
                 "Cycle Length": int(cycle),
                 "Stop Loss %": float(stop_pct),
                 "Trades": metrics["Trades"],
                 "Winrate": metrics["Winrate"],
-                "Profit Factor": metrics["Profit Factor"],
+                "Profit Factor": pf,
                 "Net Profit": metrics["Net Profit"],
                 "Max DD": metrics["Max DD"],
                 "Expectancy R": metrics["Expectancy R"],
                 "Max Loss Streak": metrics["Max Loss Streak"],
+                "_c_idx": c_idx,
+                "_s_idx": s_idx,
             })
 
     results = pd.DataFrame(rows)
     if results.empty:
-        return None, results
+        return None, None, results
 
     results = results.sort_values(
         ["Profit Factor", "Expectancy R", "Net Profit", "Max DD"],
         ascending=[False, False, False, False],
     ).reset_index(drop=True)
-    return results.iloc[0].to_dict(), results
+
+    # Naive: absolute maximum (original behavior)
+    naive_row = results.iloc[0]
+    naive_params = naive_row.drop(["_c_idx", "_s_idx"]).to_dict()
+
+    # Robust: best neighbourhood average (±1 in Cycle and SL dimensions)
+    n_cycles = len(cycles)
+    n_sl = len(stop_values)
+    best_avg = -np.inf
+    best_robust_row = naive_row  # fallback
+
+    for _, row in results.iterrows():
+        ci, si = int(row["_c_idx"]), int(row["_s_idx"])
+        neighbourhood = [score_map[(ci, si)]]
+        for dc in (-1, 0, 1):
+            for ds in (-1, 0, 1):
+                if dc == 0 and ds == 0:
+                    continue
+                nc, ns = ci + dc, si + ds
+                if 0 <= nc < n_cycles and 0 <= ns < n_sl and (nc, ns) in score_map:
+                    neighbourhood.append(score_map[(nc, ns)])
+        avg = float(np.mean(neighbourhood))
+        if avg > best_avg:
+            best_avg = avg
+            best_robust_row = row
+
+    robust_params = best_robust_row.drop(["_c_idx", "_s_idx"]).to_dict()
+
+    results = results.drop(columns=["_c_idx", "_s_idx"])
+    return robust_params, naive_params, results
 
 
 def evaluate_oos_year(
@@ -4043,6 +4088,65 @@ def evaluate_oos_year(
     return metrics, trades, equity
 
 
+def _build_equity_curve(trades_df: pd.DataFrame, initial_capital: float) -> pd.DataFrame:
+    if trades_df.empty:
+        return pd.DataFrame(columns=["date", "equity"])
+    t = trades_df.sort_values("exit_date").reset_index(drop=True)
+    return pd.DataFrame({"date": t["exit_date"], "equity": initial_capital + t["pnl"].cumsum()})
+
+
+def _wf_pool_stats(trades_df: pd.DataFrame, equity_df: pd.DataFrame) -> dict:
+    """Gepoolte OOS-Statistiken inkl. Wilcoxon und Wilson CI."""
+    if trades_df.empty:
+        return {}
+    pnl = trades_df["pnl"].tolist()
+    wins = [p for p in pnl if p > 0]
+    n, n_wins = len(pnl), len(wins)
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(p for p in pnl if p <= 0))
+    pf = gross_profit / gross_loss if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
+    wr = n_wins / n * 100 if n > 0 else 0.0
+
+    avg_r = float(trades_df["r_multiple"].mean()) if "r_multiple" in trades_df.columns else float("nan")
+
+    max_dd = float("nan")
+    if not equity_df.empty:
+        eq = equity_df["equity"]
+        dd = (eq - eq.cummax()) / eq.cummax() * 100
+        max_dd = float(abs(dd.min()))
+
+    # Wilcoxon Signed-Rank Test (einseitig: Edge > 0)
+    if n >= 8:
+        try:
+            w_stat, w_p = _scipy_stats.wilcoxon(pnl, alternative="greater")
+        except Exception:
+            w_stat, w_p = float("nan"), float("nan")
+    else:
+        w_stat, w_p = float("nan"), float("nan")
+
+    # Wilson 95% CI für Win Rate
+    z = _scipy_stats.norm.ppf(0.975)
+    if n > 0:
+        p_hat = n_wins / n
+        denom = 1 + z**2 / n
+        center = (p_hat + z**2 / (2 * n)) / denom
+        margin = (z * math.sqrt(p_hat * (1 - p_hat) / n + z**2 / (4 * n**2))) / denom
+        wi_lo, wi_hi = (center - margin) * 100, (center + margin) * 100
+    else:
+        wi_lo, wi_hi = 0.0, 100.0
+
+    return {
+        "n_trades": n,
+        "profit_factor": round(pf, 3),
+        "winrate": round(wr, 1),
+        "avg_r": round(avg_r, 3) if not math.isnan(avg_r) else "n/a",
+        "max_dd": round(max_dd, 2) if not math.isnan(max_dd) else "n/a",
+        "wilcoxon_p": round(w_p, 4) if not math.isnan(w_p) else "n/a",
+        "wilson_lo": round(wi_lo, 1),
+        "wilson_hi": round(wi_hi, 1),
+    }
+
+
 def run_walk_forward(
     asset: pd.DataFrame,
     comp: pd.DataFrame,
@@ -4054,106 +4158,132 @@ def run_walk_forward(
     stop_values: list[float],
     min_trades: int,
     max_loss_streak: int,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
-    """Run rolling walk-forward optimization without using the OOS year in-sample."""
-    yearly_rows = []
-    trade_rows = []
-    optimization_rows = []
+    progress_callback=None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    """
+    Run rolling walk-forward optimization without using the OOS year in-sample.
 
-    for oos_year in range(int(wf_start_year), int(wf_end_year) + 1):
-        in_end = oos_year - 1
+    Returns (yearly_robust, yearly_naive, trades_robust, trades_naive,
+             equity_robust, equity_naive, equity_global, summary_robust)
+    - yearly_*:  per-fold results for robust and naive selection
+    - trades_*:  pooled OOS trades for each mode
+    - equity_*:  chained OOS equity curve for each mode
+    - equity_global: full-period IS backtest (global benchmark, Aufgabe 3)
+    - summary_robust: overall stats dict for robust mode
+    """
+    robust_yearly_rows = []
+    naive_yearly_rows  = []
+    robust_trade_rows  = []
+    naive_trade_rows   = []
+    oos_years = list(range(int(wf_start_year), int(wf_end_year) + 1))
+    n_folds   = len(oos_years)
+
+    for fold_i, oos_year in enumerate(oos_years):
+        in_end   = oos_year - 1
         in_start = oos_year - int(in_sample_years)
 
-        best_params, opt_results = optimize_in_sample(
-            asset,
-            comp,
-            base_settings,
-            cycles,
-            stop_values,
-            in_start,
-            in_end,
-            min_trades,
-            max_loss_streak,
+        if progress_callback:
+            progress_callback(fold_i / (n_folds + 1), f"Fold {fold_i+1}/{n_folds}: IS {in_start}–{in_end} → OOS {oos_year}")
+
+        robust_params, naive_params, opt_results = optimize_in_sample(
+            asset, comp, base_settings, cycles, stop_values,
+            in_start, in_end, min_trades, max_loss_streak,
         )
 
-        if not opt_results.empty:
-            opt_results = opt_results.copy()
-            opt_results["OOS Year"] = oos_year
-            opt_results["In Sample"] = f"{in_start}-{in_end}"
-            optimization_rows.append(opt_results)
+        _no_params_row = {
+            "OOS Jahr": oos_year, "In Sample Zeitraum": f"{in_start}-{in_end}",
+            "Cycle Length": np.nan, "Stop Loss %": np.nan, "Trades": 0,
+            "Winrate": np.nan, "Profit Factor": np.nan, "Net Profit": 0.0,
+            "Max DD": np.nan, "Expectancy R": np.nan, "Max Loss Streak": np.nan,
+            "Status": "No valid in-sample params",
+        }
 
-        if best_params is None:
+        if robust_params is None:
+            robust_yearly_rows.append(_no_params_row.copy())
+            naive_yearly_rows.append(_no_params_row.copy())
+            continue
+
+        # Log robustness sacrifice
+        naive_pf  = float(naive_params.get("Profit Factor", 0) or 0)
+        robust_pf = float(robust_params.get("Profit Factor", 0) or 0)
+        sacrifice = (naive_pf - robust_pf) / abs(naive_pf) * 100 if naive_pf != 0 else 0.0
+
+        for mode, params, yearly_rows, trade_rows in [
+            ("robust", robust_params, robust_yearly_rows, robust_trade_rows),
+            ("naive",  naive_params,  naive_yearly_rows,  naive_trade_rows),
+        ]:
+            metrics, trades, _ = evaluate_oos_year(asset, comp, base_settings, params, oos_year)
             yearly_rows.append({
                 "OOS Jahr": oos_year,
                 "In Sample Zeitraum": f"{in_start}-{in_end}",
-                "Cycle Length": np.nan,
-                "Stop Loss %": np.nan,
-                "Trades": 0,
-                "Winrate": np.nan,
-                "Profit Factor": np.nan,
-                "Net Profit": 0.0,
-                "Max DD": np.nan,
-                "Expectancy R": np.nan,
-                "Max Loss Streak": np.nan,
-                "Status": "No valid in-sample params",
+                "Cycle Length": int(params["Cycle Length"]),
+                "Stop Loss %": float(params["Stop Loss %"]),
+                "IS PF": round(float(params.get("Profit Factor", 0) or 0), 3),
+                "Robustheits-Opfer %": round(sacrifice, 1) if mode == "robust" else "-",
+                "Trades": metrics["Trades"],
+                "Winrate": metrics["Winrate"],
+                "Profit Factor": metrics["Profit Factor"],
+                "Net Profit": metrics["Net Profit"],
+                "Max DD": metrics["Max DD"],
+                "Expectancy R": metrics["Expectancy R"],
+                "Max Loss Streak": metrics["Max Loss Streak"],
+                "Status": "OK",
             })
-            continue
+            if not trades.empty:
+                t = trades.copy()
+                t.insert(0, "OOS Jahr", oos_year)
+                trade_rows.append(t[["OOS Jahr", "entry_date", "exit_date", "side", "entry", "exit", "pnl", "r_multiple"]])
 
-        metrics, trades, _ = evaluate_oos_year(asset, comp, base_settings, best_params, oos_year)
-        yearly_rows.append({
-            "OOS Jahr": oos_year,
-            "In Sample Zeitraum": f"{in_start}-{in_end}",
-            "Cycle Length": int(best_params["Cycle Length"]),
-            "Stop Loss %": float(best_params["Stop Loss %"]),
-            "Trades": metrics["Trades"],
-            "Winrate": metrics["Winrate"],
-            "Profit Factor": metrics["Profit Factor"],
-            "Net Profit": metrics["Net Profit"],
-            "Max DD": metrics["Max DD"],
-            "Expectancy R": metrics["Expectancy R"],
-            "Max Loss Streak": metrics["Max Loss Streak"],
-            "Status": "OK",
-        })
+    yearly_robust = pd.DataFrame(robust_yearly_rows)
+    yearly_naive  = pd.DataFrame(naive_yearly_rows)
+    trades_robust = pd.concat(robust_trade_rows, ignore_index=True) if robust_trade_rows else pd.DataFrame(
+        columns=["OOS Jahr", "entry_date", "exit_date", "side", "entry", "exit", "pnl", "r_multiple"])
+    trades_naive  = pd.concat(naive_trade_rows, ignore_index=True) if naive_trade_rows else pd.DataFrame(
+        columns=["OOS Jahr", "entry_date", "exit_date", "side", "entry", "exit", "pnl", "r_multiple"])
 
-        if not trades.empty:
-            oos_trades = trades.copy()
-            oos_trades.insert(0, "OOS Jahr", oos_year)
-            trade_rows.append(oos_trades[["OOS Jahr", "entry_date", "exit_date", "side", "entry", "exit", "pnl", "r_multiple"]])
+    equity_robust = _build_equity_curve(trades_robust, base_settings.initial_capital)
+    equity_naive  = _build_equity_curve(trades_naive,  base_settings.initial_capital)
 
-    yearly = pd.DataFrame(yearly_rows)
-    wf_trades = pd.concat(trade_rows, ignore_index=True) if trade_rows else pd.DataFrame(
-        columns=["OOS Jahr", "entry_date", "exit_date", "side", "entry", "exit", "pnl", "r_multiple"]
+    # ── Aufgabe 3: Globaler IS-Benchmark (kein Fold-Split) ───────────────────
+    if progress_callback:
+        progress_callback(n_folds / (n_folds + 1), "Globaler Benchmark (gesamter Zeitraum)...")
+
+    global_robust_params, _, global_opt = optimize_in_sample(
+        asset, comp, base_settings, cycles, stop_values,
+        wf_start_year, wf_end_year, min_trades, max_loss_streak,
     )
-    optimization = pd.concat(optimization_rows, ignore_index=True) if optimization_rows else pd.DataFrame()
-
-    if wf_trades.empty:
-        equity_curve = pd.DataFrame(columns=["date", "equity"])
-        summary = {
-            "OOS Jahre": len(yearly),
-            "OOS Trades": 0,
-            "Avg Profit Factor": np.nan,
-            "Avg Expectancy R": np.nan,
-            "Walk Forward Winrate": np.nan,
-            "Walk Forward Max DD": np.nan,
-        }
+    if global_robust_params is not None:
+        global_settings = Settings(
+            cycle_length=int(global_robust_params["Cycle Length"]),
+            smoothing=base_settings.smoothing, softness=base_settings.softness,
+            mode=base_settings.mode, trade_direction=base_settings.trade_direction,
+            start_year=int(wf_start_year), end_year=int(wf_end_year),
+            upper=base_settings.upper, lower=base_settings.lower,
+            risk_pct=base_settings.risk_pct, stop_pct=float(global_robust_params["Stop Loss %"]),
+            tp_mode=base_settings.tp_mode, rr=base_settings.rr,
+            fixed_tp_pct=base_settings.fixed_tp_pct, exit_on_zero=base_settings.exit_on_zero,
+            time_exit=base_settings.time_exit, exit_after_bars=base_settings.exit_after_bars,
+            initial_capital=base_settings.initial_capital,
+            commission_pct=base_settings.commission_pct, slippage_pct=base_settings.slippage_pct,
+        )
+        global_df = calculate_oscillator(asset, comp, global_settings)
+        global_trades, _, _ = backtest(global_df, global_settings)
+        equity_global = _build_equity_curve(global_trades, base_settings.initial_capital)
     else:
-        wf_trades = wf_trades.sort_values("exit_date").reset_index(drop=True)
-        equity_curve = pd.DataFrame({
-            "date": wf_trades["exit_date"],
-            "equity": base_settings.initial_capital + wf_trades["pnl"].cumsum(),
-        })
-        dd = equity_curve["equity"] / equity_curve["equity"].cummax() - 1
-        wins = wf_trades[wf_trades["pnl"] > 0]
-        summary = {
-            "OOS Jahre": len(yearly),
-            "OOS Trades": len(wf_trades),
-            "Avg Profit Factor": yearly["Profit Factor"].replace([np.inf, -np.inf], np.nan).mean(),
-            "Avg Expectancy R": yearly["Expectancy R"].mean(),
-            "Walk Forward Winrate": len(wins) / len(wf_trades) * 100,
-            "Walk Forward Max DD": dd.min() * 100,
-        }
+        equity_global = pd.DataFrame(columns=["date", "equity"])
 
-    return yearly, wf_trades, equity_curve, summary
+    # ── Summary für robuste Auswahl ────────────────────────────────────────
+    pool_stats = _wf_pool_stats(trades_robust, equity_robust)
+    summary = {
+        "OOS Jahre":          len(yearly_robust),
+        "OOS Trades":         pool_stats.get("n_trades", 0),
+        "Avg Profit Factor":  yearly_robust["Profit Factor"].replace([np.inf, -np.inf], np.nan).mean() if not yearly_robust.empty else np.nan,
+        "Avg Expectancy R":   yearly_robust["Expectancy R"].mean() if not yearly_robust.empty else np.nan,
+        "Walk Forward Winrate": pool_stats.get("winrate", np.nan),
+        "Walk Forward Max DD":  pool_stats.get("max_dd", np.nan),
+    }
+
+    return yearly_robust, yearly_naive, trades_robust, trades_naive, equity_robust, equity_naive, equity_global, summary
 
 
 def plot_backtest_charts(df: pd.DataFrame, trades: pd.DataFrame, equity: pd.DataFrame, settings: Settings) -> None:
@@ -5169,7 +5299,8 @@ if test_mode == "Walk Forward Analysis":
     st.subheader("Walk Forward Analysis")
     st.caption(
         "Realistische Out-of-Sample-Validierung: Jedes Testjahr wird nur mit Parametern gehandelt, "
-        "die aus den vorherigen In-Sample-Jahren bestimmt wurden. Das OOS-Jahr ist nie Teil der Optimierung."
+        "die aus den vorherigen In-Sample-Jahren bestimmt wurden. Das OOS-Jahr ist nie Teil der Optimierung. "
+        "Robuste Auswahl: Plateau-Methode (bester Nachbar-Durchschnitt ±1 Schritt in Cycle+SL)."
     )
 
     if not run_wf:
@@ -5197,42 +5328,114 @@ if test_mode == "Walk Forward Analysis":
     wf_cycles = list(range(int(wf_cycle_from), int(wf_cycle_to) + 1, int(wf_cycle_step)))
     wf_stop_values = np.round(np.arange(float(wf_sl_from), float(wf_sl_to) + float(wf_sl_step) / 2, float(wf_sl_step)), 4).tolist()
 
-    with st.spinner("Walk Forward Analysis laeuft. Je breiter Cycle/SL-Range, desto laenger dauert es."):
-        wf_yearly, wf_trades, wf_equity, wf_summary = run_walk_forward(
-            wf_asset_data,
-            wf_comp_data,
-            settings,
-            int(wf_start_year),
-            int(wf_end_year),
-            int(wf_in_sample_years),
-            wf_cycles,
-            wf_stop_values,
-            int(wf_min_trades),
-            int(wf_max_loss_streak),
-        )
+    _wf_progress_bar = st.progress(0, text="Walk Forward Analysis laeuft...")
+    def _wf_progress(frac: float, txt: str) -> None:
+        _wf_progress_bar.progress(min(frac, 1.0), text=txt)
 
-    st.subheader("Walk Forward Gesamtauswertung")
+    (wf_yearly_r, wf_yearly_n,
+     wf_trades_r, wf_trades_n,
+     wf_equity_r, wf_equity_n,
+     wf_equity_g, wf_summary) = run_walk_forward(
+        wf_asset_data, wf_comp_data, settings,
+        int(wf_start_year), int(wf_end_year), int(wf_in_sample_years),
+        wf_cycles, wf_stop_values, int(wf_min_trades), int(wf_max_loss_streak),
+        progress_callback=_wf_progress,
+    )
+    _wf_progress_bar.empty()
+
+    # ── Gesamtauswertung ─────────────────────────────────────────────────────
+    st.subheader("Walk Forward Gesamtauswertung (Robuste Auswahl)")
     summary_cols = st.columns(6)
     for col, (key, value) in zip(summary_cols, wf_summary.items()):
-        col.metric(key, "n/a" if pd.isna(value) else f"{value:,.2f}")
+        col.metric(key, "n/a" if (isinstance(value, float) and math.isnan(value)) else f"{value:,.2f}")
 
-    if not wf_equity.empty:
-        wf_equity_fig = go.Figure()
-        wf_equity_fig.add_trace(go.Scatter(x=wf_equity["date"], y=wf_equity["equity"], mode="lines", name="Walk Forward Equity"))
-        wf_equity_fig.update_layout(height=360, margin=dict(l=20, r=20, t=30, b=20), yaxis_title="Equity")
-        st.plotly_chart(wf_equity_fig, use_container_width=True)
+    # ── Equity-Chart: 3 Linien ────────────────────────────────────────────────
+    st.subheader("Equity-Kurven: Robuste WFA vs. Naive WFA vs. Globaler IS-Benchmark")
+    wf_equity_fig = go.Figure()
 
-    st.subheader("Walk Forward Jahresergebnisse")
-    st.dataframe(wf_yearly, use_container_width=True)
+    if not wf_equity_r.empty:
+        wf_equity_fig.add_trace(go.Scatter(
+            x=wf_equity_r["date"], y=wf_equity_r["equity"],
+            mode="lines", name="WFA OOS — Robuste Auswahl (Plateau)",
+            line=dict(color="#3b82f6", width=2.5),
+        ))
+    if not wf_equity_n.empty:
+        wf_equity_fig.add_trace(go.Scatter(
+            x=wf_equity_n["date"], y=wf_equity_n["equity"],
+            mode="lines", name="WFA OOS — Naive Auswahl (Einzelspitze)",
+            line=dict(color="#f97316", width=1.8, dash="dot"),
+        ))
+    if not wf_equity_g.empty:
+        wf_equity_fig.add_trace(go.Scatter(
+            x=wf_equity_g["date"], y=wf_equity_g["equity"],
+            mode="lines", name="Globaler IS-Backtest (geschoent, kein OOS-Split)",
+            line=dict(color="#ef4444", width=1.5, dash="dash"),
+        ))
 
-    st.subheader("Walk Forward Trades")
-    st.dataframe(wf_trades, use_container_width=True)
+    wf_equity_fig.add_hline(y=settings.initial_capital, line_dash="dot",
+                             line_color="rgba(150,150,150,0.6)", annotation_text="Startkapital")
+    wf_equity_fig.update_layout(
+        height=420, margin=dict(l=20, r=20, t=30, b=20),
+        yaxis_title="Equity", legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(wf_equity_fig, use_container_width=True)
 
-    yearly_csv = wf_yearly.to_csv(index=False).encode("utf-8")
-    trades_csv = wf_trades.to_csv(index=False).encode("utf-8")
-    col_a, col_b = st.columns(2)
-    col_a.download_button("WF Jahresergebnisse als CSV laden", yearly_csv, "taco_walk_forward_years.csv", "text/csv")
-    col_b.download_button("WF Trades als CSV laden", trades_csv, "taco_walk_forward_trades.csv", "text/csv")
+    # Ueberanpassungs-Gap
+    if not wf_equity_r.empty and not wf_equity_g.empty:
+        ic = settings.initial_capital
+        wfa_ret  = (wf_equity_r["equity"].iloc[-1] / ic - 1) * 100
+        glob_ret = (wf_equity_g["equity"].iloc[-1] / ic - 1) * 100
+        gap_c1, gap_c2, gap_c3 = st.columns(3)
+        gap_c1.metric("WFA OOS Rendite (robust)", f"{wfa_ret:.1f}%")
+        gap_c2.metric("Globaler IS-Backtest Rendite", f"{glob_ret:.1f}%")
+        gap_c3.metric("Ueberanpassungs-Gap", f"{glob_ret - wfa_ret:+.1f}%", delta_color="inverse")
+
+    # ── Gepoolte OOS-Statistiken ──────────────────────────────────────────────
+    st.subheader("Gepoolte OOS-Statistiken")
+    stats_r = _wf_pool_stats(wf_trades_r, wf_equity_r)
+    stats_n = _wf_pool_stats(wf_trades_n, wf_equity_n)
+
+    sc1, sc2 = st.columns(2)
+    for col, label, stats in [(sc1, "🔵 Robuste Auswahl (Plateau)", stats_r),
+                               (sc2, "🟠 Naive Auswahl (Einzelspitze)", stats_n)]:
+        with col:
+            st.markdown(f"**{label}**")
+            if not stats:
+                st.info("Keine OOS-Trades.")
+            else:
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Profit Factor", stats.get("profit_factor", "n/a"))
+                m2.metric("Win Rate", f"{stats.get('winrate', 0):.1f}%")
+                m3.metric("Avg R", stats.get("avg_r", "n/a"))
+                m4, m5 = st.columns(2)
+                m4.metric("Max Drawdown", f"{stats.get('max_dd', 'n/a')}%")
+                m5.metric("Trades", stats.get("n_trades", 0))
+                wp = stats.get("wilcoxon_p", "n/a")
+                sig_icon = ("🟢 signifikant" if isinstance(wp, float) and wp < 0.05
+                            else ("🔴 nicht signifikant" if isinstance(wp, float) else "—"))
+                st.markdown(f"**Wilcoxon p-Wert:** `{wp}` {sig_icon}")
+                st.caption(f"Wilson 95% CI Win Rate: {stats.get('wilson_lo', '?')}% – {stats.get('wilson_hi', '?')}%")
+
+    # ── Jahresergebnisse ──────────────────────────────────────────────────────
+    st.subheader("Jahresergebnisse — Robuste vs. Naive Auswahl")
+    tab_r, tab_n = st.tabs(["Robuste Auswahl", "Naive Auswahl"])
+    with tab_r:
+        st.dataframe(wf_yearly_r, use_container_width=True)
+    with tab_n:
+        st.dataframe(wf_yearly_n, use_container_width=True)
+
+    # ── Trade-Log ────────────────────────────────────────────────────────────
+    with st.expander("OOS Trade Log — Robuste Auswahl"):
+        st.dataframe(wf_trades_r, use_container_width=True)
+    with st.expander("OOS Trade Log — Naive Auswahl"):
+        st.dataframe(wf_trades_n, use_container_width=True)
+
+    # ── CSV-Downloads ────────────────────────────────────────────────────────
+    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a.download_button("WF Robust Jahre CSV", wf_yearly_r.to_csv(index=False).encode(), "wf_robust_years.csv", "text/csv")
+    col_b.download_button("WF Naiv Jahre CSV",   wf_yearly_n.to_csv(index=False).encode(), "wf_naive_years.csv",  "text/csv")
+    col_c.download_button("WF Robust Trades CSV", wf_trades_r.to_csv(index=False).encode(), "wf_robust_trades.csv", "text/csv")
+    col_d.download_button("WF Naiv Trades CSV",   wf_trades_n.to_csv(index=False).encode(), "wf_naive_trades.csv",  "text/csv")
     st.stop()
 
 if test_mode == "TACO Radar":
