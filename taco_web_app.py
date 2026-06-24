@@ -5298,18 +5298,23 @@ if test_mode == "Walk Forward Analysis":
     # ── Inline-Toolbar (wie Cycle Scanner) ───────────────────────────────────
     st.markdown(
         "<div style='font-size:.7rem;text-transform:uppercase;letter-spacing:.09em;"
-        "color:#9fb0c7;font-weight:700;margin-bottom:4px;'>Walk Forward Analysis — Asset & Parameter</div>",
+        "color:#9fb0c7;font-weight:700;margin-bottom:4px;'>Walk Forward Analysis — Assets & Parameter</div>",
         unsafe_allow_html=True,
     )
-    _wf_row1 = st.columns([2, 2, 1, 1])
+    _wf_row1 = st.columns([2, 2, 1])
     with _wf_row1[0]:
-        wf_asset_preset = st.selectbox("Asset", list(ASSET_PRESETS.keys()), key="wf_asset")
+        wf_asset_presets = st.multiselect(
+            "Assets",
+            list(ASSET_PRESETS.keys()),
+            default=["UK100 proxy: FTSE 100 Index (^FTSE)"],
+            key="wf_assets",
+        )
     with _wf_row1[1]:
         wf_comp_preset = st.selectbox("Comparison Asset", list(COMPARISON_PRESETS.keys()), key="wf_comp")
     with _wf_row1[2]:
-        wf_start_year = st.number_input("Start Jahr", 1900, 2100, 2015, key="wf_sy")
-    with _wf_row1[3]:
-        wf_end_year = st.number_input("End Jahr", 1900, 2100, 2026, key="wf_ey")
+        _wf_yc = st.columns(2)
+        wf_start_year = _wf_yc[0].number_input("Start Jahr", 1900, 2100, 2015, key="wf_sy")
+        wf_end_year   = _wf_yc[1].number_input("End Jahr",   1900, 2100, 2026, key="wf_ey")
 
     _wf_row2 = st.columns([1, 1, 1, 1, 1, 1, 1, 1.4])
     with _wf_row2[0]:
@@ -5331,144 +5336,177 @@ if test_mode == "Walk Forward Analysis":
         run_wf = st.button("Run Walk Forward", type="primary", use_container_width=True, key="wf_run")
 
     st.caption(
-        "Realistische Out-of-Sample-Validierung: Jedes Testjahr wird nur mit Parametern gehandelt, "
-        "die aus den vorherigen In-Sample-Jahren bestimmt wurden. Das OOS-Jahr ist nie Teil der Optimierung. "
-        "Robuste Auswahl: Plateau-Methode (bester Nachbar-Durchschnitt ±1 Schritt in Cycle+SL)."
+        "Robuste Auswahl: Plateau-Methode (bester Nachbar-Durchschnitt ±1 Schritt in Cycle+SL). "
+        "Jedes OOS-Jahr wird nur mit IS-optimierten Parametern gehandelt — kein Lookahead."
     )
 
     if not run_wf:
-        st.info("Waehle links Asset, Comparison, Fenster und Optimierungsbereiche aus. Danach auf Run Walk Forward klicken.")
+        st.info("Assets und Parameter oben auswaehlen, dann Run Walk Forward klicken.")
         st.stop()
 
+    if not wf_asset_presets:
+        st.error("Bitte mindestens ein Asset auswaehlen.")
+        st.stop()
     if wf_end_year < wf_start_year:
-        st.error("Walk Forward End Year muss groesser oder gleich Start Year sein.")
+        st.error("End Jahr muss groesser oder gleich Start Jahr sein.")
         st.stop()
     if wf_cycle_to < wf_cycle_from:
-        st.error("WF Cycle To muss groesser oder gleich WF Cycle From sein.")
+        st.error("Cycle Bis muss groesser oder gleich Cycle Von sein.")
         st.stop()
     if wf_sl_to < wf_sl_from:
-        st.error("WF Stop Loss To muss groesser oder gleich WF Stop Loss From sein.")
-        st.stop()
-
-    wf_asset_symbol = ASSET_PRESETS[wf_asset_preset]
-    wf_comp_symbol = COMPARISON_PRESETS[wf_comp_preset]
-    wf_asset_data = load_yahoo(wf_asset_symbol)
-    wf_comp_data = load_yahoo(wf_comp_symbol)
-    if wf_asset_data is None or wf_comp_data is None:
-        st.error("Yahoo-Daten konnten fuer die Walk Forward Analysis nicht geladen werden.")
+        st.error("SL Bis muss groesser oder gleich SL Von sein.")
         st.stop()
 
     wf_cycles = list(range(int(wf_cycle_from), int(wf_cycle_to) + 1, int(wf_cycle_step)))
     wf_stop_values = np.round(np.arange(float(wf_sl_from), float(wf_sl_to) + float(wf_sl_step) / 2, float(wf_sl_step)), 4).tolist()
+    wf_comp_symbol = COMPARISON_PRESETS[wf_comp_preset]
+    wf_comp_data = load_yahoo(wf_comp_symbol)
+    if wf_comp_data is None:
+        st.error(f"Daten fuer Comparison Asset '{wf_comp_preset}' konnten nicht geladen werden.")
+        st.stop()
 
-    _wf_progress_bar = st.progress(0, text="Walk Forward Analysis laeuft...")
-    def _wf_progress(frac: float, txt: str) -> None:
-        _wf_progress_bar.progress(min(frac, 1.0), text=txt)
+    # ── Multi-Asset Loop ──────────────────────────────────────────────────────
+    _COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899",
+               "#06b6d4", "#f97316", "#84cc16", "#ef4444", "#a78bfa"]
 
-    (wf_yearly_r, wf_yearly_n,
-     wf_trades_r, wf_trades_n,
-     wf_equity_r, wf_equity_n,
-     wf_equity_g, wf_summary) = run_walk_forward(
-        wf_asset_data, wf_comp_data, settings,
-        int(wf_start_year), int(wf_end_year), int(wf_in_sample_years),
-        wf_cycles, wf_stop_values, int(wf_min_trades), int(wf_max_loss_streak),
-        progress_callback=_wf_progress,
-    )
+    all_asset_results = {}   # asset_name -> dict mit equity_r, yearly_r, ...
+    _wf_progress_bar = st.progress(0, text="Starte Walk Forward Analysis...")
+
+    for _ai, _asset_name in enumerate(wf_asset_presets):
+        _asset_symbol = ASSET_PRESETS[_asset_name]
+        _asset_data = load_yahoo(_asset_symbol)
+        if _asset_data is None:
+            st.warning(f"Daten fuer '{_asset_name}' konnten nicht geladen werden — uebersprungen.")
+            continue
+
+        def _wf_progress(frac: float, txt: str, _ai=_ai, _n=len(wf_asset_presets), _name=_asset_name) -> None:
+            overall = (_ai + frac) / _n
+            _wf_progress_bar.progress(min(overall, 1.0), text=f"[{_ai+1}/{_n}] {_name}: {txt}")
+
+        (yr_r, yr_n, tr_r, tr_n,
+         eq_r, eq_n, eq_g, summ) = run_walk_forward(
+            _asset_data, wf_comp_data, settings,
+            int(wf_start_year), int(wf_end_year), int(wf_in_sample_years),
+            wf_cycles, wf_stop_values, int(wf_min_trades), int(wf_max_loss_streak),
+            progress_callback=_wf_progress,
+        )
+        all_asset_results[_asset_name] = {
+            "yearly_r": yr_r, "yearly_n": yr_n,
+            "trades_r": tr_r, "trades_n": tr_n,
+            "equity_r": eq_r, "equity_n": eq_n,
+            "equity_g": eq_g, "summary":  summ,
+        }
+
     _wf_progress_bar.empty()
 
-    # ── Gesamtauswertung ─────────────────────────────────────────────────────
-    st.subheader("Walk Forward Gesamtauswertung (Robuste Auswahl)")
-    summary_cols = st.columns(6)
-    for col, (key, value) in zip(summary_cols, wf_summary.items()):
-        col.metric(key, "n/a" if (isinstance(value, float) and math.isnan(value)) else f"{value:,.2f}")
+    if not all_asset_results:
+        st.error("Keine Ergebnisse — keine Asset-Daten konnten geladen werden.")
+        st.stop()
 
-    # ── Equity-Chart: 3 Linien ────────────────────────────────────────────────
-    st.subheader("Equity-Kurven: Robuste WFA vs. Naive WFA vs. Globaler IS-Benchmark")
-    wf_equity_fig = go.Figure()
+    # ── Übersichtstabelle alle Assets ─────────────────────────────────────────
+    st.subheader("Übersicht alle Assets (Robuste Auswahl)")
+    _overview_rows = []
+    for _name, _res in all_asset_results.items():
+        _s = _res["summary"]
+        _sr = _wf_pool_stats(_res["trades_r"], _res["equity_r"])
+        _label = _name.split(" proxy:")[0].replace(" proxy", "")
+        _overview_rows.append({
+            "Asset":          _label,
+            "OOS Jahre":      _s.get("OOS Jahre", 0),
+            "OOS Trades":     _s.get("OOS Trades", 0),
+            "Profit Factor":  round(float(_s.get("Avg Profit Factor") or 0), 2),
+            "Win Rate %":     _sr.get("winrate", "n/a"),
+            "Avg R":          _sr.get("avg_r", "n/a"),
+            "Max DD %":       _sr.get("max_dd", "n/a"),
+            "Wilcoxon p":     _sr.get("wilcoxon_p", "n/a"),
+            "Wilson CI":      f"{_sr.get('wilson_lo','?')}–{_sr.get('wilson_hi','?')}%",
+        })
+    st.dataframe(pd.DataFrame(_overview_rows).set_index("Asset"), use_container_width=True)
 
-    if not wf_equity_r.empty:
-        wf_equity_fig.add_trace(go.Scatter(
-            x=wf_equity_r["date"], y=wf_equity_r["equity"],
-            mode="lines", name="WFA OOS — Robuste Auswahl (Plateau)",
-            line=dict(color="#3b82f6", width=2.5),
+    # ── Equity-Chart: alle Assets übereinander ────────────────────────────────
+    st.subheader("Equity-Kurven — Robuste WFA OOS pro Asset")
+    _eq_fig = go.Figure()
+    for _i, (_name, _res) in enumerate(all_asset_results.items()):
+        _eq = _res["equity_r"]
+        if _eq.empty:
+            continue
+        _label = _name.split(" proxy:")[0].replace(" proxy", "")
+        _color = _COLORS[_i % len(_COLORS)]
+        _eq_fig.add_trace(go.Scatter(
+            x=_eq["date"], y=_eq["equity"],
+            mode="lines", name=f"{_label} (robust)",
+            line=dict(color=_color, width=2),
         ))
-    if not wf_equity_n.empty:
-        wf_equity_fig.add_trace(go.Scatter(
-            x=wf_equity_n["date"], y=wf_equity_n["equity"],
-            mode="lines", name="WFA OOS — Naive Auswahl (Einzelspitze)",
-            line=dict(color="#f97316", width=1.8, dash="dot"),
-        ))
-    if not wf_equity_g.empty:
-        wf_equity_fig.add_trace(go.Scatter(
-            x=wf_equity_g["date"], y=wf_equity_g["equity"],
-            mode="lines", name="Globaler IS-Backtest (geschoent, kein OOS-Split)",
-            line=dict(color="#ef4444", width=1.5, dash="dash"),
-        ))
+        _eq_g = _res["equity_g"]
+        if not _eq_g.empty:
+            _eq_fig.add_trace(go.Scatter(
+                x=_eq_g["date"], y=_eq_g["equity"],
+                mode="lines", name=f"{_label} (IS-Benchmark)",
+                line=dict(color=_color, width=1.2, dash="dash"),
+                opacity=0.5, showlegend=True,
+            ))
 
-    wf_equity_fig.add_hline(y=settings.initial_capital, line_dash="dot",
-                             line_color="rgba(150,150,150,0.6)", annotation_text="Startkapital")
-    wf_equity_fig.update_layout(
-        height=420, margin=dict(l=20, r=20, t=30, b=20),
-        yaxis_title="Equity", legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    _eq_fig.add_hline(y=settings.initial_capital, line_dash="dot",
+                      line_color="rgba(150,150,150,0.5)", annotation_text="Startkapital")
+    _eq_fig.update_layout(
+        height=460, margin=dict(l=20, r=20, t=30, b=20),
+        yaxis_title="Equity",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=10)),
     )
-    st.plotly_chart(wf_equity_fig, use_container_width=True)
+    st.plotly_chart(_eq_fig, use_container_width=True)
 
-    # Ueberanpassungs-Gap
-    if not wf_equity_r.empty and not wf_equity_g.empty:
-        ic = settings.initial_capital
-        wfa_ret  = (wf_equity_r["equity"].iloc[-1] / ic - 1) * 100
-        glob_ret = (wf_equity_g["equity"].iloc[-1] / ic - 1) * 100
-        gap_c1, gap_c2, gap_c3 = st.columns(3)
-        gap_c1.metric("WFA OOS Rendite (robust)", f"{wfa_ret:.1f}%")
-        gap_c2.metric("Globaler IS-Backtest Rendite", f"{glob_ret:.1f}%")
-        gap_c3.metric("Ueberanpassungs-Gap", f"{glob_ret - wfa_ret:+.1f}%", delta_color="inverse")
+    # ── Detail pro Asset (ausklappbar) ────────────────────────────────────────
+    st.subheader("Detail pro Asset")
+    for _name, _res in all_asset_results.items():
+        _label = _name.split(" proxy:")[0].replace(" proxy", "")
+        with st.expander(f"📊 {_label}"):
+            _sr = _wf_pool_stats(_res["trades_r"], _res["equity_r"])
+            _sn = _wf_pool_stats(_res["trades_n"], _res["equity_n"])
 
-    # ── Gepoolte OOS-Statistiken ──────────────────────────────────────────────
-    st.subheader("Gepoolte OOS-Statistiken")
-    stats_r = _wf_pool_stats(wf_trades_r, wf_equity_r)
-    stats_n = _wf_pool_stats(wf_trades_n, wf_equity_n)
+            # Metriken
+            _mc = st.columns(6)
+            _mc[0].metric("OOS Trades",    _sr.get("n_trades", 0))
+            _mc[1].metric("Profit Factor", _sr.get("profit_factor", "n/a"))
+            _mc[2].metric("Win Rate",      f"{_sr.get('winrate', 0):.1f}%")
+            _mc[3].metric("Avg R",         _sr.get("avg_r", "n/a"))
+            _mc[4].metric("Max DD",        f"{_sr.get('max_dd', 'n/a')}%")
+            _wp = _sr.get("wilcoxon_p", "n/a")
+            _sig = ("🟢" if isinstance(_wp, float) and _wp < 0.05
+                    else ("🔴" if isinstance(_wp, float) else "—"))
+            _mc[5].metric("Wilcoxon p", f"{_wp} {_sig}")
 
-    sc1, sc2 = st.columns(2)
-    for col, label, stats in [(sc1, "🔵 Robuste Auswahl (Plateau)", stats_r),
-                               (sc2, "🟠 Naive Auswahl (Einzelspitze)", stats_n)]:
-        with col:
-            st.markdown(f"**{label}**")
-            if not stats:
-                st.info("Keine OOS-Trades.")
-            else:
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Profit Factor", stats.get("profit_factor", "n/a"))
-                m2.metric("Win Rate", f"{stats.get('winrate', 0):.1f}%")
-                m3.metric("Avg R", stats.get("avg_r", "n/a"))
-                m4, m5 = st.columns(2)
-                m4.metric("Max Drawdown", f"{stats.get('max_dd', 'n/a')}%")
-                m5.metric("Trades", stats.get("n_trades", 0))
-                wp = stats.get("wilcoxon_p", "n/a")
-                sig_icon = ("🟢 signifikant" if isinstance(wp, float) and wp < 0.05
-                            else ("🔴 nicht signifikant" if isinstance(wp, float) else "—"))
-                st.markdown(f"**Wilcoxon p-Wert:** `{wp}` {sig_icon}")
-                st.caption(f"Wilson 95% CI Win Rate: {stats.get('wilson_lo', '?')}% – {stats.get('wilson_hi', '?')}%")
+            # Überanpassungs-Gap
+            if not _res["equity_r"].empty and not _res["equity_g"].empty:
+                _ic = settings.initial_capital
+                _wr = (_res["equity_r"]["equity"].iloc[-1] / _ic - 1) * 100
+                _wg = (_res["equity_g"]["equity"].iloc[-1] / _ic - 1) * 100
+                _gc1, _gc2, _gc3 = st.columns(3)
+                _gc1.metric("WFA OOS Rendite", f"{_wr:.1f}%")
+                _gc2.metric("IS-Benchmark Rendite", f"{_wg:.1f}%")
+                _gc3.metric("Ueberanpassungs-Gap", f"{_wg - _wr:+.1f}%", delta_color="inverse")
 
-    # ── Jahresergebnisse ──────────────────────────────────────────────────────
-    st.subheader("Jahresergebnisse — Robuste vs. Naive Auswahl")
-    tab_r, tab_n = st.tabs(["Robuste Auswahl", "Naive Auswahl"])
-    with tab_r:
-        st.dataframe(wf_yearly_r, use_container_width=True)
-    with tab_n:
-        st.dataframe(wf_yearly_n, use_container_width=True)
+            # Jahresergebnisse
+            _t1, _t2 = st.tabs(["Robust", "Naiv"])
+            with _t1:
+                st.dataframe(_res["yearly_r"], use_container_width=True)
+            with _t2:
+                st.dataframe(_res["yearly_n"], use_container_width=True)
 
-    # ── Trade-Log ────────────────────────────────────────────────────────────
-    with st.expander("OOS Trade Log — Robuste Auswahl"):
-        st.dataframe(wf_trades_r, use_container_width=True)
-    with st.expander("OOS Trade Log — Naive Auswahl"):
-        st.dataframe(wf_trades_n, use_container_width=True)
+            # Downloads
+            _dc1, _dc2 = st.columns(2)
+            _dc1.download_button(
+                f"CSV Robust ({_label})",
+                _res["yearly_r"].to_csv(index=False).encode(),
+                f"wf_{_label}_robust.csv", "text/csv",
+                key=f"dl_r_{_name}",
+            )
+            _dc2.download_button(
+                f"CSV Naiv ({_label})",
+                _res["yearly_n"].to_csv(index=False).encode(),
+                f"wf_{_label}_naiv.csv", "text/csv",
+                key=f"dl_n_{_name}",
+            )
 
-    # ── CSV-Downloads ────────────────────────────────────────────────────────
-    col_a, col_b, col_c, col_d = st.columns(4)
-    col_a.download_button("WF Robust Jahre CSV", wf_yearly_r.to_csv(index=False).encode(), "wf_robust_years.csv", "text/csv")
-    col_b.download_button("WF Naiv Jahre CSV",   wf_yearly_n.to_csv(index=False).encode(), "wf_naive_years.csv",  "text/csv")
-    col_c.download_button("WF Robust Trades CSV", wf_trades_r.to_csv(index=False).encode(), "wf_robust_trades.csv", "text/csv")
-    col_d.download_button("WF Naiv Trades CSV",   wf_trades_n.to_csv(index=False).encode(), "wf_naive_trades.csv",  "text/csv")
     st.stop()
 
 if test_mode == "TACO Radar":
