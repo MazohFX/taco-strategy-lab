@@ -5340,18 +5340,47 @@ if test_mode == "Walk Forward Analysis":
         "Jedes OOS-Jahr wird nur mit IS-optimierten Parametern gehandelt — kein Lookahead."
     )
 
-    # Persistenter Cache: Datei überlebt App-Neustarts, session_state überlebt Page-Reloads
-    _WF_CACHE_FILE = Path(__file__).parent / "wf_cache.pkl"
+    # ── Cache-Helfer ─────────────────────────────────────────────────────────
+    import pickle, json as _json
 
-    def _wf_save_cache(results: dict, label: str) -> None:
-        import pickle
+    # /tmp überlebt Soft-Restarts auf Streamlit Cloud (länger als App-Verzeichnis)
+    _WF_CACHE_FILE = Path("/tmp/taco_wf_cache.pkl")
+
+    def _wf_results_to_json(results: dict) -> str:
+        """Serialisiert Ergebnisse zu JSON (für Download-Button)."""
+        out = {}
+        for asset, res in results.items():
+            out[asset] = {k: v.to_json(date_format="iso") if isinstance(v, pd.DataFrame) else v
+                          for k, v in res.items()}
+        return _json.dumps(out)
+
+    def _wf_results_from_json(raw: str) -> dict:
+        """Deserialisiert JSON zurück zu DataFrames."""
+        data = _json.loads(raw)
+        results = {}
+        for asset, res in data.items():
+            results[asset] = {}
+            for k, v in res.items():
+                if isinstance(v, str):
+                    try:
+                        results[asset][k] = pd.read_json(v)
+                        # Datumsspalten wiederherstellen
+                        for col in ("date", "entry_date", "exit_date"):
+                            if col in results[asset][k].columns:
+                                results[asset][k][col] = pd.to_datetime(results[asset][k][col])
+                    except Exception:
+                        results[asset][k] = v
+                else:
+                    results[asset][k] = v
+        return results
+
+    def _wf_save_tmp(results: dict, label: str) -> None:
         try:
             _WF_CACHE_FILE.write_bytes(pickle.dumps({"results": results, "label": label}))
         except Exception:
             pass
 
-    def _wf_load_cache() -> tuple[dict | None, str]:
-        import pickle
+    def _wf_load_tmp() -> tuple[dict | None, str]:
         if not _WF_CACHE_FILE.exists():
             return None, ""
         try:
@@ -5360,17 +5389,38 @@ if test_mode == "Walk Forward Analysis":
         except Exception:
             return None, ""
 
-    # Session State aus Datei befüllen falls leer (nach App-Neustart)
+    # L1: session_state (überlebt Page-Reload)
+    # L2: /tmp Datei (überlebt Soft-Restart)
+    # L3: JSON-Upload durch User (überlebt Deployment)
     if "wf_results" not in st.session_state:
-        _cached, _cached_label = _wf_load_cache()
+        _cached, _cached_label = _wf_load_tmp()
         if _cached:
             st.session_state["wf_results"] = _cached
             st.session_state["wf_params_label"] = _cached_label
 
+    # JSON-Upload-Widget (immer sichtbar, auch ohne Cache)
+    _upload_col, _info_col = st.columns([1, 3])
+    with _upload_col:
+        _uploaded = st.file_uploader("💾 Ergebnisse laden (.json)", type="json",
+                                     key="wf_upload", label_visibility="collapsed",
+                                     help="Lade eine zuvor gespeicherte WFA-Ergebnis-Datei hoch")
+    if _uploaded is not None and "wf_upload_name" not in st.session_state or \
+       (_uploaded is not None and st.session_state.get("wf_upload_name") != _uploaded.name):
+        try:
+            _loaded = _wf_results_from_json(_uploaded.read().decode())
+            st.session_state["wf_results"] = _loaded
+            st.session_state["wf_params_label"] = f"Geladen aus: {_uploaded.name}"
+            st.session_state["wf_upload_name"] = _uploaded.name
+            _wf_save_tmp(_loaded, st.session_state["wf_params_label"])
+            st.success("✅ Ergebnisse erfolgreich geladen!")
+        except Exception as _e:
+            st.error(f"Fehler beim Laden: {_e}")
+
     _wf_has_cache = "wf_results" in st.session_state
 
     if not run_wf and not _wf_has_cache:
-        st.info("Assets und Parameter oben auswaehlen, dann Run Walk Forward klicken.")
+        st.info("Assets und Parameter oben auswaehlen, dann **Run Walk Forward** klicken. "
+                "Oder eine gespeicherte Ergebnis-Datei oben hochladen.")
         st.stop()
 
     if run_wf:
@@ -5442,16 +5492,32 @@ if test_mode == "Walk Forward Analysis":
         )
         st.session_state["wf_results"] = all_asset_results
         st.session_state["wf_params_label"] = _wf_label
-        _wf_save_cache(all_asset_results, _wf_label)
-        st.success("✅ Ergebnisse gespeichert — bleiben auch nach App-Neustart erhalten.")
+        _wf_save_tmp(all_asset_results, _wf_label)
+        # JSON für dauerhaften Download bereitstellen
+        st.session_state["wf_json"] = _wf_results_to_json(all_asset_results)
+        st.session_state["wf_json_name"] = f"wfa_ergebnisse_{wf_start_year}_{wf_end_year}.json"
 
     # Ab hier: gecachte oder frisch berechnete Ergebnisse anzeigen
     all_asset_results = st.session_state["wf_results"]
     _COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899",
                "#06b6d4", "#f97316", "#84cc16", "#ef4444", "#a78bfa"]
 
-    st.caption(f"💾 Gespeicherte Ergebnisse: {st.session_state.get('wf_params_label', '')} — "
-               "Ergebnisse bleiben auch nach App-Neustart erhalten. Neu berechnen: 'Run Walk Forward' klicken.")
+    _status_c1, _status_c2 = st.columns([3, 1])
+    _status_c1.caption(f"💾 {st.session_state.get('wf_params_label', '')} — "
+                       "Neu berechnen: 'Run Walk Forward' klicken.")
+    # JSON-Download-Button — immer anzeigen sobald Ergebnisse vorhanden
+    if "wf_json" not in st.session_state and "wf_results" in st.session_state:
+        st.session_state["wf_json"] = _wf_results_to_json(st.session_state["wf_results"])
+        st.session_state["wf_json_name"] = "wfa_ergebnisse.json"
+    if "wf_json" in st.session_state:
+        _status_c2.download_button(
+            "⬇️ Ergebnisse sichern",
+            data=st.session_state["wf_json"],
+            file_name=st.session_state.get("wf_json_name", "wfa_ergebnisse.json"),
+            mime="application/json",
+            help="Datei lokal speichern und beim nächsten Mal oben wieder hochladen",
+            key="wf_dl_results",
+        )
 
     # ── Übersichtstabelle alle Assets ─────────────────────────────────────────
     st.subheader("Übersicht alle Assets (Robuste Auswahl)")
