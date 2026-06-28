@@ -2344,11 +2344,11 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
 
         # ── Top Setups aktueller Monat ──────────────────────────────────────
         import datetime as _dt
-        current_month = _dt.date.today().month
-        current_month_name = [
-            "", "Januar", "Februar", "März", "April", "Mai", "Juni",
-            "Juli", "August", "September", "Oktober", "November", "Dezember"
-        ][current_month]
+        _month_names_list = ["", "Januar", "Februar", "März", "April", "Mai", "Juni",
+                             "Juli", "August", "September", "Oktober", "November", "Dezember"]
+        # Wenn Monat-Filter gesetzt → diesen Monat anzeigen, sonst aktuellen Monat
+        current_month = monat_nr if monat_nr > 0 else _dt.date.today().month
+        current_month_name = _month_names_list[current_month]
 
         result_clean = result.drop(columns=["_sort_key"], errors="ignore")
         _today = _dt.date.today()
@@ -2364,12 +2364,14 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
             except Exception:
                 return 99
 
-        # Nur Muster im aktuellen Monat UND Entry >= nächster Handelstag
+        # Nur Muster im gewählten Monat UND (bei aktuellem Monat) Entry >= nächster Handelstag
         def _is_relevant(entry_str: str) -> bool:
             parts = str(entry_str).strip().split(".")
             try:
                 mon = _month_map.get(parts[1].strip()[:3], 0)
                 day = int(parts[0].strip())
+                if monat_nr > 0:
+                    return mon == current_month  # gefilterter Monat: alle Einträge zeigen
                 return mon == _today_month and day >= _today_day
             except Exception:
                 return False
