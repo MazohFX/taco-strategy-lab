@@ -2112,6 +2112,20 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
             st.session_state["muster_csv_name"] = f"{n_src} Symbole"
 
         # ── Walk-Forward Validierung ──────────────────────────────────────────
+        import pickle as _pickle
+        _MUSTER_WFA_CACHE = Path("/tmp/taco_muster_wfa_cache.pkl")
+
+        # L2: /tmp → session_state beim Start laden
+        if "muster_wfa_result" not in st.session_state and _MUSTER_WFA_CACHE.exists():
+            try:
+                _cached = _pickle.loads(_MUSTER_WFA_CACHE.read_bytes())
+                st.session_state["muster_wfa_result"] = _cached["wfa_res"]
+                st.session_state["muster_scan_result"] = _cached["scan_result"]
+                st.session_state["muster_csv_name"] = _cached.get("csv_name", "")
+                st.session_state["muster_dataframes"] = _cached.get("dfs", {})
+            except Exception:
+                _MUSTER_WFA_CACHE.unlink(missing_ok=True)
+
         if run_wfa:
             loaded_dfs_wfa = st.session_state.get("muster_dataframes", {})
             if not loaded_dfs_wfa:
@@ -2134,6 +2148,16 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
                 )
                 _wfa_bar.empty()
                 st.session_state["muster_wfa_result"] = wfa_res
+                # L2: in /tmp sichern
+                try:
+                    _MUSTER_WFA_CACHE.write_bytes(_pickle.dumps({
+                        "wfa_res": wfa_res,
+                        "scan_result": st.session_state.get("muster_scan_result", pd.DataFrame()),
+                        "csv_name": st.session_state.get("muster_csv_name", ""),
+                        "dfs": loaded_dfs_wfa,
+                    }))
+                except Exception:
+                    pass
 
         # WFA-Ergebnis anzeigen (falls vorhanden)
         _wfa_result = st.session_state.get("muster_wfa_result")
