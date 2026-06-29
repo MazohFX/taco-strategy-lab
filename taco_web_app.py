@@ -1740,35 +1740,57 @@ def _render_muster_detail() -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Profit-Qualität: stark vs. schwach ─────────────────────────────────────
-    _threshold = 0.50
-    _n_stark   = sum(1 for v in _bar_ret if v >= _threshold)
-    _n_schwach = sum(1 for v in _bar_ret if 0 <= v < _threshold)
-    _n_negativ = sum(1 for v in _bar_ret if v < 0)
-    _n_total   = len(_bar_ret)
-    _avg_profit = sum(_bar_ret) / _n_total if _n_total else 0
+    # ── Profit-Qualität: stark vs. schwach (gesamt / 10J / 5J) ────────────────
+    _threshold   = 0.50
     _atr_pct_val = float(row.get("Ø ATR %", 0) or 0)
-    _profit_ok = _avg_profit >= _atr_pct_val * 0.25 if _atr_pct_val > 0 else True
-    _profit_atr_clr = "#4ade80" if _profit_ok else "#f87171"
+    _all_years   = sorted(tdf["Jahr"].unique())
+    _end_yr_det  = max(_all_years) if _all_years else 2025
+
+    def _quality_block(rets: list, label: str) -> str:
+        n_total  = len(rets)
+        if n_total == 0:
+            return ""
+        n_stark   = sum(1 for v in rets if v >= _threshold)
+        n_schwach = sum(1 for v in rets if 0 <= v < _threshold)
+        n_neg     = sum(1 for v in rets if v < 0)
+        avg_p     = sum(rets) / n_total
+        ok        = avg_p >= _atr_pct_val * 0.25 if _atr_pct_val > 0 else True
+        atr_clr   = "#4ade80" if ok else "#f87171"
+        return f"""
+        <div style="background:#070f1a;border-radius:6px;padding:8px 10px;margin-bottom:4px;">
+          <div style="color:#94a3b8;font-size:.68rem;font-weight:700;text-transform:uppercase;
+               letter-spacing:.08em;margin-bottom:6px;">{label}</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+            <div style="background:#0d1828;border:1px solid #4ade8033;border-radius:6px;padding:7px 10px;">
+              <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Stark ≥0.50%</div>
+              <div style="color:#4ade80;font-size:1.1rem;font-weight:800;">{n_stark}<span style="color:#6b7fa3;font-size:.8rem;"> / {n_total}J</span></div>
+            </div>
+            <div style="background:#0d1828;border:1px solid #fbbf2433;border-radius:6px;padding:7px 10px;">
+              <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Schwach &lt;0.50%</div>
+              <div style="color:#fbbf24;font-size:1.1rem;font-weight:800;">{n_schwach}<span style="color:#6b7fa3;font-size:.8rem;"> / {n_total}J</span></div>
+            </div>
+            <div style="background:#0d1828;border:1px solid #f8717133;border-radius:6px;padding:7px 10px;">
+              <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Verlierer</div>
+              <div style="color:#f87171;font-size:1.1rem;font-weight:800;">{n_neg}<span style="color:#6b7fa3;font-size:.8rem;"> / {n_total}J</span></div>
+            </div>
+            <div style="background:#0d1828;border:1px solid {atr_clr}33;border-radius:6px;padding:7px 10px;">
+              <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Ø Profit vs ATR</div>
+              <div style="color:{atr_clr};font-size:1.1rem;font-weight:800;">{avg_p:+.2f}%<span style="color:#6b7fa3;font-size:.72rem;"> / {_atr_pct_val:.2f}%</span></div>
+            </div>
+          </div>
+        </div>"""
+
+    _rets_all = _bar_ret
+    _rets_10  = [r for yr, r in zip(_bar_yrs, _bar_ret) if int(yr) >= _end_yr_det - 9]
+    _rets_5   = [r for yr, r in zip(_bar_yrs, _bar_ret) if int(yr) >= _end_yr_det - 4]
+
+    _quality_html = (
+        _quality_block(_rets_all, f"Gesamt ({len(_rets_all)}J)") +
+        _quality_block(_rets_10,  f"Letzte 10 Jahre") +
+        _quality_block(_rets_5,   f"Letzte 5 Jahre")
+    )
     st.markdown(
-        f"""<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 8px 0;">
-          <div style="background:#0d1828;border:1px solid #4ade8033;border-radius:8px;padding:10px 14px;">
-            <div style="color:#6b7fa3;font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;">Stark ≥0.50%</div>
-            <div style="color:#4ade80;font-size:1.3rem;font-weight:800;">{_n_stark}<span style="color:#6b7fa3;font-size:.85rem;"> / {_n_total}J</span></div>
-          </div>
-          <div style="background:#0d1828;border:1px solid #fbbf2433;border-radius:8px;padding:10px 14px;">
-            <div style="color:#6b7fa3;font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;">Schwach &lt;0.50%</div>
-            <div style="color:#fbbf24;font-size:1.3rem;font-weight:800;">{_n_schwach}<span style="color:#6b7fa3;font-size:.85rem;"> / {_n_total}J</span></div>
-          </div>
-          <div style="background:#0d1828;border:1px solid #f8717133;border-radius:8px;padding:10px 14px;">
-            <div style="color:#6b7fa3;font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;">Verlierer</div>
-            <div style="color:#f87171;font-size:1.3rem;font-weight:800;">{_n_negativ}<span style="color:#6b7fa3;font-size:.85rem;"> / {_n_total}J</span></div>
-          </div>
-          <div style="background:#0d1828;border:1px solid {_profit_atr_clr}33;border-radius:8px;padding:10px 14px;">
-            <div style="color:#6b7fa3;font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;">Ø Profit vs ATR</div>
-            <div style="color:{_profit_atr_clr};font-size:1.3rem;font-weight:800;">{_avg_profit:+.2f}%<span style="color:#6b7fa3;font-size:.75rem;"> / {_atr_pct_val:.2f}%</span></div>
-          </div>
-        </div>""",
+        f"<div style='margin:14px 0 8px 0;'>{_quality_html}</div>",
         unsafe_allow_html=True,
     )
 
