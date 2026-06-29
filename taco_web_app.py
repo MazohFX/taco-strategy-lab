@@ -1,37 +1,13 @@
-import json
 import math
 import calendar
 import re
 from dataclasses import dataclass
 from datetime import date
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-
-
-# ── Muster-Notizen (JSON-Persistenz) ─────────────────────────────────────────
-_NOTES_FILE = Path(__file__).parent / "pattern_notes.json"
-
-
-def _notes_key(symbol: str, entry: str, exit_: str, richtung: str) -> str:
-    return f"{symbol}|{entry}|{exit_}|{richtung}"
-
-
-def _load_notes() -> dict:
-    if _NOTES_FILE.exists():
-        try:
-            return json.loads(_NOTES_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
-
-
-def _save_notes(notes: dict) -> None:
-    _NOTES_FILE.write_text(json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
-
 
 def load_ohlc_data(symbol: str, source: str = "mt5", fallback_to_yahoo: bool = False):
     from pathlib import Path as _Path
@@ -933,27 +909,18 @@ def _compute_stars(wr: float, avg_ret: float, avg_dd: float, max_dd: float,
     max_stars = rob_cap.get(robustheit, 3)
 
     score = 0.0
-    # Winrate (0–25 Punkte) — weniger Gewicht als früher
-    score += min(25, max(0, (wr - 0.60) / 0.40 * 25))
-
-    # Avg Profit absolut (0–25 Punkte): <0.5% = kaum Punkte, 1.5%+ = voll
-    score += min(25, max(0, (avg_ret * 100 - 0.3) / 1.2 * 25))
-
-    # Profit/Risiko-Verhältnis (0–25 Punkte): Ø Gewinn vs Ø DD
-    if avg_dd and abs(avg_dd) > 0:
-        pnl_risk = (avg_ret * 100) / abs(avg_dd * 100)
-        score += min(25, max(0, (pnl_risk - 0.5) / 2.0 * 25))
+    # Winrate (0–35 Punkte)
+    score += min(35, max(0, (wr - 0.60) / 0.40 * 35))
+    # Avg Profit vs ATR (0–25 Punkte)
+    if atr_pct and atr_pct > 0:
+        score += min(25, max(0, (avg_ret * 100 / atr_pct) / 2.0 * 25))
     else:
-        score += min(25, max(0, avg_ret * 100 / 2.0 * 25))
-
-    # Sharpe (0–25 Punkte)
+        score += min(25, max(0, avg_ret * 100 / 3.0 * 25))
+    # Avg DD (0–20 Punkte): wenig DD = gut
+    score += min(20, max(0, (1 - abs(avg_dd) / 0.05) * 20))
+    # Sharpe (0–20 Punkte)
     if not np.isnan(sharpe):
-        score += min(25, max(0, sharpe / 3.0 * 25))
-
-    # Harte Strafen für schlechtes Profit/Risiko
-    if avg_ret * 100 < 0.4:          max_stars = min(max_stars, 2)  # Zu kleiner Profit → max 2★
-    elif avg_ret * 100 < 0.8:        max_stars = min(max_stars, 3)  # Kleiner Profit → max 3★
-    elif avg_ret * 100 < 1.2:        max_stars = min(max_stars, 4)  # Mittlerer Profit → max 4★
+        score += min(20, max(0, sharpe / 3.0 * 20))
 
     # Sterne aus Score: 0–40=1, 40–55=2, 55–70=3, 70–85=4, 85+=5
     if score >= 85:   raw = 5
@@ -1057,9 +1024,9 @@ def _scan_patterns_cached(
     if len(trades) < min_trades:
         return []
 
-    def _stats_for_years(yr_start: int, dir_: str, min_t: int | None = None) -> dict | None:
+    def _stats_for_years(yr_start: int, dir_: str) -> dict | None:
         sub = [t for t in trades if t["yr"] >= yr_start]
-        if len(sub) < (min_t if min_t is not None else min_trades):
+        if len(sub) < min_trades:
             return None
         rets = np.array([t["long_ret"] if dir_ == "long" else t["short_ret"] for t in sub])
         dds  = np.array([t["long_dd"]  if dir_ == "long" else t["short_dd"]  for t in sub])
@@ -1091,7 +1058,7 @@ def _scan_patterns_cached(
         sharpe = avg_ret / std_ret * np.sqrt(252 / max(avg_td, 1)) if std_ret > 1e-10 else np.nan
         sqn    = avg_ret / std_ret * np.sqrt(nt) * 100 if std_ret > 1e-10 else np.nan
 
-        wr_5j  = (_stats_for_years(y5,  dir_, min_t=3) or {}).get("wr", np.nan)
+        wr_5j  = (_stats_for_years(y5,  dir_) or {}).get("wr", np.nan)
         wr_10j = (_stats_for_years(y10, dir_) or {}).get("wr", np.nan)
         wr_15j = (_stats_for_years(y15, dir_) or {}).get("wr", np.nan)
         # Für 20J: wenn nicht genug Daten, alle verfügbaren Jahre nehmen
@@ -1143,17 +1110,11 @@ def _scan_patterns_cached(
 
         avg_atr_pct = float(np.mean([t["atr"] / t["ep"] for t in primary_trades if t["ep"] > 0]) * 100)
 
-        # Entry/Exit Label aus DOY (Wochenende → nächsten Montag)
+        # Entry/Exit Label aus DOY
         try:
             _ref = pd.Timestamp(year=2000, month=1, day=1)  # Schaltjahr → DOY stimmt mit Kalender überein
-            _entry_ts = _ref + pd.Timedelta(days=entry_doy - 1)
-            _exit_ts  = _ref + pd.Timedelta(days=exit_doy  - 1)
-            if _entry_ts.weekday() == 5: _entry_ts += pd.Timedelta(days=2)  # Sa → Mo
-            if _entry_ts.weekday() == 6: _entry_ts += pd.Timedelta(days=1)  # So → Mo
-            if _exit_ts.weekday()  == 5: _exit_ts  += pd.Timedelta(days=2)
-            if _exit_ts.weekday()  == 6: _exit_ts  += pd.Timedelta(days=1)
-            entry_label = _entry_ts.strftime("%d. %b")
-            exit_label  = _exit_ts.strftime("%d. %b")
+            entry_label = (_ref + pd.Timedelta(days=entry_doy - 1)).strftime("%d. %b")
+            exit_label  = (_ref + pd.Timedelta(days=exit_doy  - 1)).strftime("%d. %b")
         except Exception:
             entry_label = f"DOY {entry_doy}"
             exit_label  = f"DOY {exit_doy}"
@@ -1380,32 +1341,31 @@ def _render_muster_detail() -> None:
     )
     st.markdown(_rob_legend, unsafe_allow_html=True)
 
-    # ── Gegenmuster-Check ─────────────────────────────────────────────────────
+    # Gegenläufige Muster-Warnung
     _cur_entry_doy = int(row.get("_entry_doy", 0))
     _cur_exit_doy  = int(row.get("_exit_doy",  0))
-    _opp_dir       = "Short" if richtung == "Long" else "Long"
+    _cur_dir       = row.get("Richtung", "")
+    _opp_dir       = "Short" if _cur_dir == "Long" else "Long"
     _all_results   = st.session_state.get("muster_scan_result", pd.DataFrame())
     _conflicts     = []
-    if isinstance(_all_results, pd.DataFrame) and not _all_results.empty and "_entry_doy" in _all_results.columns:
+    if isinstance(_all_results, pd.DataFrame) and not _all_results.empty:
         for _, _r in _all_results.iterrows():
-            if _r.get("Symbol") != symbol_str:
-                continue
-            if _r.get("Richtung") != _opp_dir:
-                continue
+            if _r.get("Symbol") != symbol_str: continue
+            if _r.get("Richtung") != _opp_dir: continue
             _wr10 = _r.get("WR 10J %", 0) or 0
-            if pd.isna(_wr10) or float(_wr10) < 70:
-                continue
-            _re = int(_r.get("_entry_doy", 0))
-            _rx = int(_r.get("_exit_doy",  0))
-            if _re == 0 or _rx == 0:
-                continue
+            if pd.isna(_wr10) or float(_wr10) < 70: continue
+            _stars_c = int(_r.get("⭐ Rating", 0) or 0)
+            if _stars_c < 2: continue
+            _re = int(_r.get("_entry_doy", 0)); _rx = int(_r.get("_exit_doy", 0))
+            if _re == 0 or _rx == 0: continue
             if _re < _cur_exit_doy and _rx > _cur_entry_doy:
                 _conflicts.append(_r)
+
     if _conflicts:
         _warn_rows = ""
         for _c in _conflicts:
-            _c_wr    = _c["WR 10J %"] if "WR 10J %" in _c.index else "—"
-            _c_rob   = _c["Robustheit"] if "Robustheit" in _c.index else "—"
+            _c_wr   = _c["WR 10J %"] if "WR 10J %" in _c.index else "—"
+            _c_rob  = _c["Robustheit"] if "Robustheit" in _c.index else "—"
             _c_stars = "⭐" * int(_c["⭐ Rating"]) if "⭐ Rating" in _c.index else "⭐"
             _c_entry = _c["Entry"] if "Entry" in _c.index else "—"
             _c_exit  = _c["Exit"]  if "Exit"  in _c.index else "—"
@@ -1504,8 +1464,6 @@ def _render_muster_detail() -> None:
                 "Max DD %": round(dd_pct, 2),
                 "Max MFE %": round(mfe_pct, 2),
                 "W/L": "✅ Win" if ret_pct > 0 else "❌ Loss",
-                "_entry_ts": entry_date,
-                "_entry_price": ep,
             })
         except Exception:
             continue
@@ -1515,9 +1473,7 @@ def _render_muster_detail() -> None:
         return
 
     tdf = pd.DataFrame(trade_rows).sort_values("Jahr").reset_index(drop=True)
-    tdf_5  = tdf[tdf["Jahr"] >= end_y -  5 + 1]
     tdf_10 = tdf[tdf["Jahr"] >= end_y - 10 + 1]
-    tdf_15 = tdf[tdf["Jahr"] >= end_y - 15 + 1]
     tdf_20 = tdf
 
     wins_10 = (tdf_10["Return %"] > 0).sum()
@@ -1554,105 +1510,21 @@ def _render_muster_detail() -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Echtheits-Check ──────────────────────────────────────────────────────
-    st.markdown("### 🔍 Echtheits-Check: Netto-Edge nach Kosten")
-    _ec_c1, _ec_c2, _ec_c3, _ec_c4 = st.columns(4)
-    with _ec_c1:
-        _ec_comm = st.number_input("Commission %", 0.0, 2.0, 0.05, step=0.01, key=f"ec_comm_{symbol_str}_{row['Entry']}")
-    with _ec_c2:
-        _ec_slip = st.number_input("Slippage %", 0.0, 2.0, 0.02, step=0.01, key=f"ec_slip_{symbol_str}_{row['Entry']}")
-    with _ec_c3:
-        _perc_pct = st.slider("Perzentil-Stop %", 70, 95, 85, step=5, key=f"ec_perc_{symbol_str}_{row['Entry']}")
-    with _ec_c4:
-        _stddev_k = st.slider("StdDev-Faktor k", 1.0, 3.0, 1.75, step=0.25, key=f"ec_k_{symbol_str}_{row['Entry']}")
-    _atr_mult = st.slider("ATR-Multiplikator", 1.0, 3.0, 1.75, step=0.25, key=f"ec_atr_{symbol_str}_{row['Entry']}")
-    _kostenpuffer = 2.0 * (_ec_slip + _ec_comm)
-    tdf["Netto Return %"] = (tdf["Return %"] - _kostenpuffer).round(2)
-
-    def _fenster_data(sub):
-        if len(sub) < 2: return None
-        avg_net = (sub["Return %"] - _kostenpuffer).mean()
-        avg_dd  = abs(sub["Max DD %"].mean())
-        ratio   = avg_net / avg_dd if avg_dd > 0 else float("inf")
-        return {"avg_net": avg_net, "ratio": ratio, "wins": (sub["Return %"] > 0).sum(), "n": len(sub)}
-
-    def _ampel_html(label, d):
-        if d is None:
-            return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:14px 18px;">'
-                    f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'
-                    f'<div style="color:#475569;">—</div></div>')
-        if d["ratio"] >= 1.5 and d["avg_net"] > 0:   sym,farbe,txt="🟢","#4ade80","Robust positiv"
-        elif d["ratio"] >= 0.8 and d["avg_net"] > 0: sym,farbe,txt="🟡","#f0c040","Knapp / Break-even"
-        else:                                          sym,farbe,txt="🔴","#f87171","Verlierer nach Kosten"
-        return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:14px 18px;">'
-                f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'
-                f'<div style="color:{farbe};font-size:1.05rem;font-weight:700;margin-bottom:3px;">{sym} {txt}</div>'
-                f'<div style="color:#9fb0c7;font-size:.8rem;">Ø netto {d["avg_net"]:+.2f}% · Ratio {d["ratio"]:.2f} · {d["wins"]}W/{d["n"]-d["wins"]}L</div></div>')
-
-    st.markdown(
-        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;">'
-        + "".join([_ampel_html("5J",_fenster_data(tdf_5)),_ampel_html("10J",_fenster_data(tdf_10)),
-                   _ampel_html("15J",_fenster_data(tdf_15)),_ampel_html("20J",_fenster_data(tdf_20))])
-        + '</div>', unsafe_allow_html=True)
-
-    # ── Stop-Loss-Empfehlung ─────────────────────────────────────────────────
-    st.markdown("### 🛡️ Stop-Loss-Empfehlung")
-    _dd_abs  = tdf["Max DD %"].abs()
-    _sl_perc = float(np.percentile(_dd_abs, _perc_pct)) + _kostenpuffer
-    _sl_std  = float(_dd_abs.mean() + _stddev_k * _dd_abs.std(ddof=1)) + _kostenpuffer
-    _atr_pct_vals = []
-    try:
-        _h=df_sym["high"].to_numpy();_l=df_sym["low"].to_numpy();_c=df_sym["close"].to_numpy()
-        _n=len(_c);_tr=np.zeros(_n);_tr[0]=_h[0]-_l[0]
-        for _i in range(1,_n): _tr[_i]=max(_h[_i]-_l[_i],abs(_h[_i]-_c[_i-1]),abs(_l[_i]-_c[_i-1]))
-        _aw=np.full(_n,np.nan)
-        if _n>=14:
-            _aw[13]=_tr[:14].mean()
-            for _i in range(14,_n): _aw[_i]=(_aw[_i-1]*13+_tr[_i])/14
-        _as=pd.Series(_aw,index=df_sym.index)
-        for _,_r in tdf.iterrows():
-            _ets=_r["_entry_ts"];_ep=_r["_entry_price"]
-            if _ets in _as.index and not np.isnan(_as[_ets]) and _ep>0:
-                _atr_pct_vals.append(_as[_ets]/_ep*100)
-    except Exception: pass
-    _atr_ok=len(_atr_pct_vals)>0
-    _sl_atr=float(np.mean(_atr_pct_vals))*_atr_mult+_kostenpuffer if _atr_ok else 0.0
-    _methoden={"Perzentil":_sl_perc,"Avg+StdDev":_sl_std}
-    if _atr_ok: _methoden["ATR"]=_sl_atr
-    _empf=max(_methoden,key=_methoden.get)
-    if _empf=="ATR": _begr=f"ATR-Stop am größten (Ø {float(np.mean(_atr_pct_vals)):.2f}% × {_atr_mult}×) — Volatilität übersteigt die hist. DD-Quantile."
-    elif _empf=="Avg+StdDev": _begr=f"Avg+StdDev-Stop am größten — Ausreißer-DD {_dd_abs.max():.2f}% hebt σ={_dd_abs.std(ddof=1):.2f}% stark an."
-    else: _begr=f"Perzentil-Stop am größten — {_perc_pct}. Perzentil ({float(np.percentile(_dd_abs,_perc_pct)):.2f}%) übertrifft andere Methoden."
-
-    def _sl_card(name,val,empf):
-        b="border:2px solid #4ade80;" if empf else "border:1px solid rgba(148,163,184,.15);"
-        tag=('<div style="display:inline-block;background:#14532d;color:#4ade80;font-size:.7rem;font-weight:700;border-radius:4px;padding:2px 8px;margin-bottom:6px;">✅ Empfohlen</div>' if empf else "")
-        fc="#4ade80" if empf else "#9fb0c7"
-        return (f'<div style="background:#0a1220;{b}border-radius:8px;padding:16px 20px;">{tag}'
-                f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">{name}</div>'
-                f'<div style="color:{fc};font-size:1.2rem;font-weight:700;">{val:.2f}%</div>'
-                f'<div style="color:#475569;font-size:.75rem;margin-top:3px;">inkl. Kostenpuffer {_kostenpuffer:.2f}%</div></div>')
-
-    _cards=[_sl_card("Perzentil",_sl_perc,_empf=="Perzentil"),_sl_card("Avg + StdDev",_sl_std,_empf=="Avg+StdDev")]
-    if _atr_ok: _cards.append(_sl_card("ATR",_sl_atr,_empf=="ATR"))
-    else: _cards.append('<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:16px 20px;"><div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">ATR</div><div style="color:#475569;">keine ATR-Daten verfügbar</div></div>')
-    st.markdown(f'<div style="display:grid;grid-template-columns:repeat({len(_cards)},1fr);gap:14px;margin-bottom:10px;">{"".join(_cards)}</div>'
-                f'<div style="color:#6b7fa3;font-size:.82rem;margin-bottom:22px;">💡 {_begr}</div>',unsafe_allow_html=True)
-
     # Tabelle — full width
     st.markdown("### 📋 Per-Jahr Ergebnisse")
+
     def _color_ret(v):
         return "color:#4ade80;font-weight:600" if v > 0 else "color:#f87171;font-weight:600"
     def _color_dd(v):
         return "color:#f87171" if v < 0 else "color:#9fb0c7"
-    _tdf_show = tdf.drop(columns=["_entry_ts","_entry_price"],errors="ignore")
+
     st.dataframe(
-        _tdf_show.style
-        .map(_color_ret, subset=["Return %","Netto Return %","Max MFE %"])
-        .map(_color_dd,  subset=["Max DD %"])
-        .format({"Return %":"{:+.2f}%","Netto Return %":"{:+.2f}%","Max DD %":"{:+.2f}%","Max MFE %":"{:+.2f}%"}),
+        tdf.style
+        .map(_color_ret, subset=["Return %", "Max MFE %"])
+        .map(_color_dd, subset=["Max DD %"])
+        .format({"Return %": "{:+.2f}%", "Max DD %": "{:+.2f}%", "Max MFE %": "{:+.2f}%"}),
         use_container_width=True,
-        height=min(40*len(tdf)+42,700),
+        height=min(40 * len(tdf) + 42, 700),
     )
 
     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
@@ -1737,60 +1609,6 @@ def _render_muster_detail() -> None:
     st.markdown(
         f"<div style='background:#111827;border-radius:10px;padding:20px 16px 14px 16px;'>"
         f"{_rows_html}</div>",
-        unsafe_allow_html=True,
-    )
-
-    # ── Profit-Qualität: stark vs. schwach (gesamt / 10J / 5J) ────────────────
-    _threshold   = 0.50
-    _atr_pct_val = float(row.get("Ø ATR %", 0) or 0)
-    _all_years   = sorted(tdf["Jahr"].unique())
-    _end_yr_det  = max(_all_years) if _all_years else 2025
-
-    def _quality_block(rets: list, label: str) -> str:
-        n_total  = len(rets)
-        if n_total == 0:
-            return ""
-        n_stark   = sum(1 for v in rets if v >= _threshold)
-        n_schwach = sum(1 for v in rets if 0 <= v < _threshold)
-        n_neg     = sum(1 for v in rets if v < 0)
-        avg_p     = sum(rets) / n_total
-        ok        = avg_p >= _atr_pct_val * 0.25 if _atr_pct_val > 0 else True
-        atr_clr   = "#4ade80" if ok else "#f87171"
-        return f"""
-        <div style="background:#070f1a;border-radius:6px;padding:8px 10px;margin-bottom:4px;">
-          <div style="color:#94a3b8;font-size:.68rem;font-weight:700;text-transform:uppercase;
-               letter-spacing:.08em;margin-bottom:6px;">{label}</div>
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
-            <div style="background:#0d1828;border:1px solid #4ade8033;border-radius:6px;padding:7px 10px;">
-              <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Stark ≥0.50%</div>
-              <div style="color:#4ade80;font-size:1.1rem;font-weight:800;">{n_stark}<span style="color:#6b7fa3;font-size:.8rem;"> / {n_total}J</span></div>
-            </div>
-            <div style="background:#0d1828;border:1px solid #fbbf2433;border-radius:6px;padding:7px 10px;">
-              <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Schwach &lt;0.50%</div>
-              <div style="color:#fbbf24;font-size:1.1rem;font-weight:800;">{n_schwach}<span style="color:#6b7fa3;font-size:.8rem;"> / {n_total}J</span></div>
-            </div>
-            <div style="background:#0d1828;border:1px solid #f8717133;border-radius:6px;padding:7px 10px;">
-              <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Verlierer</div>
-              <div style="color:#f87171;font-size:1.1rem;font-weight:800;">{n_neg}<span style="color:#6b7fa3;font-size:.8rem;"> / {n_total}J</span></div>
-            </div>
-            <div style="background:#0d1828;border:1px solid {atr_clr}33;border-radius:6px;padding:7px 10px;">
-              <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Ø Profit vs ATR</div>
-              <div style="color:{atr_clr};font-size:1.1rem;font-weight:800;">{avg_p:+.2f}%<span style="color:#6b7fa3;font-size:.72rem;"> / {_atr_pct_val:.2f}%</span></div>
-            </div>
-          </div>
-        </div>"""
-
-    _rets_all = _bar_ret
-    _rets_10  = [r for yr, r in zip(_bar_yrs, _bar_ret) if int(yr) >= _end_yr_det - 9]
-    _rets_5   = [r for yr, r in zip(_bar_yrs, _bar_ret) if int(yr) >= _end_yr_det - 4]
-
-    _quality_html = (
-        _quality_block(_rets_all, f"Gesamt ({len(_rets_all)}J)") +
-        _quality_block(_rets_10,  f"Letzte 10 Jahre") +
-        _quality_block(_rets_5,   f"Letzte 5 Jahre")
-    )
-    st.markdown(
-        f"<div style='margin:14px 0 8px 0;'>{_quality_html}</div>",
         unsafe_allow_html=True,
     )
 
@@ -2018,21 +1836,10 @@ def render_seasonality_muster() -> None:
         dir_choice = st.multiselect("Richtung", ["Long", "Short"], default=["Long", "Short"])
         min_wr = st.slider("Min. Winrate %", 60, 100, 70, step=5)
         hold_min = st.number_input("Musterlänge min (Kalendertage)", 1, 60, 5)
-        hold_max = st.number_input("Musterlänge max (Kalendertage)", 1, 120, 20)
+        hold_max = st.number_input("Musterlänge max (Kalendertage)", 1, 120, 28)
         hold_step = st.number_input("Schritt", 1, 10, 1)
         holding_periods = list(range(int(hold_min), int(hold_max) + 1, int(hold_step)))
         run_scan = st.button("🔍 Scanner starten", type="primary", use_container_width=True)
-
-        st.markdown("---")
-        st.markdown("<div style='color:#94a3b8;font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;'>Walk-Forward Validierung</div>", unsafe_allow_html=True)
-        _wfa_defaults = {5: (4, 2), 10: (10, 5), 15: (10, 8), 20: (12, 7)}
-        _wfa_is_def, _wfa_folds_def = _wfa_defaults.get(lookback, (10, 5))
-        wfa_min_is = st.number_input("Start IS-Fenster (Jahre)", min_value=5, max_value=20, value=_wfa_is_def,
-                                      help="Erste N Jahre als In-Sample-Startfenster")
-        wfa_min_folds = st.number_input("Min. Folds für ✅ Badge", min_value=2, max_value=20, value=_wfa_folds_def,
-                                         help="Muster muss in mind. N Folds als IS-Kandidat erschienen sein")
-        run_wfa = st.button("🔄 Walk-Forward validieren", use_container_width=True,
-                            help="Rechenintensiv — kann mehrere Minuten dauern")
 
     with col_main:
         if daten_modus == "Repo (permanent)" and not selected_symbols:
@@ -2041,58 +1848,6 @@ def render_seasonality_muster() -> None:
         if daten_modus == "CSV Upload" and not csv_files:
             st.info("Bitte lade eine oder mehrere Pepperstone CSV-Dateien hoch und starte den Scanner.")
             return
-
-        with st.expander("❓ Walk-Forward Validierung — was bedeuten die Einstellungen?", expanded=False):
-            st.markdown(
-                """
-<div style="font-size:.88rem;color:#cbd5e1;line-height:1.8;">
-<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:6px;">📖 Wie funktioniert Walk-Forward?</div>
-Das Fenster rollt Jahr für Jahr vorwärts. Die ersten <b>N Jahre</b> sind In-Sample (IS) — dort wird das Muster gesucht.
-Das jeweils nächste Jahr ist Out-of-Sample (OOS) — dort wird geprüft, ob das Muster auch dort funktioniert hat.
-</div>
-""", unsafe_allow_html=True)
-
-            st.markdown("**🔁 Beispiel mit IS-Fenster = 10 (Datenbasis 2006–2025)**")
-            st.markdown("""
-| Fold | In-Sample — Training | OOS-Test Jahr |
-|:----:|----------------------|:-------------:|
-| 1 | 2006 – 2015 | 2016 |
-| 2 | 2006 – 2016 | 2017 |
-| 3 | 2006 – 2017 | 2018 |
-| 4 | 2006 – 2018 | 2019 |
-| 5 | 2006 – 2019 | 2020 |
-| … | … | … |
-| 9 | 2006 – 2023 | 2024 |
-""")
-            st.markdown(
-                """
-<div style="font-size:.88rem;color:#cbd5e1;line-height:1.8;margin-top:8px;">
-<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">🏅 Min. Folds für ✅ Badge</div>
-Ein <b>Fold</b> = ein einzelner Test-Durchlauf mit einem bestimmten IS-Zeitraum und einem OOS-Jahr.
-Im Beispiel oben mit IS-Fenster 10 entstehen <b>9 Folds</b> (Fold 1 bis Fold 9).
-<br>
-Ein Muster bekommt nur dann <b>✅ OOS-validiert</b>, wenn es in mindestens N dieser Folds als IS-Kandidat aufgetaucht ist.
-<br><i>Beispiel: Min. Folds = 5 → das Muster muss in mindestens 5 der 9 Test-Durchläufe gefunden worden sein.</i>
-<br>Das filtert Zufallstreffer heraus — je höher der Wert, desto strenger der Filter.
-<br><br>
-<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">📊 Analysezeitraum vs. IS-Fenster</div>
-Der <b>Analysezeitraum</b> (Radio-Button links) filtert nur, welche Muster <i>angezeigt</i> werden —
-die WFA nutzt immer alle verfügbaren Daten der CSVs unabhängig davon.
-<br>
-<b style="color:#4ade80;">→ Tipp: Stelle links auf 20J</b>, damit nur Muster durchkommen, die über 20 Jahre konsistent waren.
-Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
-</div>
-""", unsafe_allow_html=True)
-
-            st.markdown("**✅ Empfohlene Einstellungen**")
-            st.markdown("""
-| Ziel | Analysezeitraum (links) | IS-Fenster | Min. Folds |
-|------|:-----------------------:|:----------:|:----------:|
-| Maximale Robustheit | **20J** | **10–12** | **7** |
-| Ausgewogen (Standard) | **10J** | **10** | **5** |
-| Mehr Muster sehen | **10J** | **8** | **3** |
-""")
-            st.info("💡 Bei 20J Datenbasis entstehen ~8–10 Folds — mehr Folds = robusteres ✅ Badge.")
 
         if not run_scan and "muster_scan_result" not in st.session_state:
             st.info("Einstellungen wählen und 'Scanner starten' klicken.")
@@ -2163,60 +1918,6 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
             st.session_state["muster_scan_result"] = result
             st.session_state["muster_dataframes"] = loaded_dfs
             st.session_state["muster_csv_name"] = f"{n_src} Symbole"
-
-        # ── Walk-Forward Validierung ──────────────────────────────────────────
-        if run_wfa:
-            loaded_dfs_wfa = st.session_state.get("muster_dataframes", {})
-            if not loaded_dfs_wfa:
-                st.warning("Bitte zuerst den Scanner starten, um Daten zu laden.")
-            else:
-                from seasonality_wfa import run_seasonality_wfa, wfa_results_to_dataframe
-                directions_wfa = [d.lower() for d in dir_choice]
-                _wfa_bar = st.progress(0, text="Starte Walk-Forward Validierung…")
-                def _wfa_progress(frac: float, txt: str) -> None:
-                    _wfa_bar.progress(min(frac, 1.0), text=txt)
-                wfa_res = run_seasonality_wfa(
-                    symbol_dfs=loaded_dfs_wfa,
-                    holding_periods=holding_periods,
-                    directions=directions_wfa,
-                    min_winrate=min_wr / 100,
-                    min_trades=max(int(wfa_min_is * 0.8), 3),
-                    min_is_years=int(wfa_min_is),
-                    min_folds_for_badge=int(wfa_min_folds),
-                    progress_callback=_wfa_progress,
-                )
-                _wfa_bar.empty()
-                st.session_state["muster_wfa_result"] = wfa_res
-
-        # WFA-Ergebnis anzeigen (falls vorhanden)
-        _wfa_result = st.session_state.get("muster_wfa_result")
-        if _wfa_result is not None:
-            from seasonality_wfa import wfa_results_to_dataframe, wfa_badge_for_row
-            wfa_df = wfa_results_to_dataframe(_wfa_result)
-            n_validated = (wfa_df["Status"] == "✅ OOS-validiert").sum() if not wfa_df.empty else 0
-            n_is_only   = (wfa_df["Status"] == "⚠️ Nur IS").sum() if not wfa_df.empty else 0
-            st.markdown(
-                f"""<div style="background:#0a1220;border:1px solid rgba(74,222,128,.2);border-radius:10px;
-                    padding:14px 20px;margin-bottom:18px;">
-                  <div style="color:#94a3b8;font-size:.75rem;font-weight:700;letter-spacing:.1em;
-                      text-transform:uppercase;margin-bottom:8px;">Walk-Forward Ergebnis</div>
-                  <span style="color:#4ade80;font-weight:800;font-size:1.1rem;">✅ {n_validated} OOS-validiert</span>
-                  &nbsp;&nbsp;
-                  <span style="color:#fbbf24;font-size:1rem;">⚠️ {n_is_only} Nur IS</span>
-                  &nbsp;&nbsp;
-                  <span style="color:#6b7fa3;font-size:.9rem;">IS-Start: {_wfa_result.min_is_years} Jahre · Badge ab {int(wfa_min_folds)} Folds</span>
-                </div>""",
-                unsafe_allow_html=True,
-            )
-            if not wfa_df.empty:
-                st.dataframe(wfa_df, use_container_width=True, hide_index=True)
-                st.download_button(
-                    "⬇️ WFA-Ergebnis CSV",
-                    wfa_df.to_csv(index=False).encode("utf-8"),
-                    file_name="seasonality_wfa_result.csv",
-                    mime="text/csv",
-                )
-            st.markdown("---")
 
         result = st.session_state.get("muster_scan_result", pd.DataFrame())
         csv_name = st.session_state.get("muster_csv_name", "")
@@ -2325,21 +2026,6 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
         wr_display_cols = [c for c in ["WR 5J %", "WR 10J %", "WR 15J %", "WR 20J %"] if c in display.columns]
         num_cols = ["Ø Profit %", "Ø DD %", "Max DD %", "Sharpe", "SQN"]
         existing_num_cols = [c for c in num_cols if c in display.columns]
-
-        # WFA-Badge in Tabelle einfügen (wenn WFA-Ergebnis vorhanden)
-        _wfa_res_for_display = st.session_state.get("muster_wfa_result")
-        if _wfa_res_for_display is not None:
-            from seasonality_wfa import wfa_badge_for_row
-            def _get_wfa_badge(row: pd.Series) -> str:
-                return wfa_badge_for_row(
-                    _wfa_res_for_display,
-                    symbol=str(row.get("Symbol", "")),
-                    entry_doy=int(row.get("_entry_doy", 0)),
-                    exit_doy=int(row.get("_exit_doy", 0)),
-                    direction="long" if row.get("Richtung") == "Long" else "short",
-                )
-            display["WFA"] = display.apply(_get_wfa_badge, axis=1)
-
         style_obj = (
             display.style
             .map(color_richtung, subset=["Richtung"])
@@ -2357,11 +2043,10 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
             "SQN": "{:.2f}",
         })
         styled = style_obj.format({k: v for k, v in fmt.items() if k in display.columns}, na_rep="-")
-        with st.expander("📋 Alle Muster anzeigen", expanded=False):
-            try:
-                st.dataframe(styled, use_container_width=True, height=420)
-            except Exception:
-                st.dataframe(display, use_container_width=True, height=420)
+        try:
+            st.dataframe(styled, use_container_width=True, height=420)
+        except Exception:
+            st.dataframe(display, use_container_width=True, height=420)
 
         csv_export = display.to_csv(index=False).encode("utf-8")
         st.download_button(
@@ -2371,27 +2056,16 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
             mime="text/csv",
         )
 
-        # ── Top Setups ausgewählter Monat ──────────────────────────────────────
+        # ── Top Setups aktueller Monat ──────────────────────────────────────
         import datetime as _dt
-        _month_names_list = ["", "Januar", "Februar", "März", "April", "Mai", "Juni",
-                             "Juli", "August", "September", "Oktober", "November", "Dezember"]
-        # Ausgewählten Monat aus Dropdown nutzen, sonst aktuellen Monat
-        if monat_nr > 0:
-            current_month = monat_nr
-        else:
-            current_month = _dt.date.today().month
-        current_month_name = _month_names_list[current_month]
+        current_month = _dt.date.today().month
+        current_month_name = [
+            "", "Januar", "Februar", "März", "April", "Mai", "Juni",
+            "Juli", "August", "September", "Oktober", "November", "Dezember"
+        ][current_month]
 
         result_clean = result.drop(columns=["_sort_key"], errors="ignore")
-        _today = _dt.date.today()
-        # Wochenende: nächsten Montag als effektiven "heute" nutzen
-        if _today.weekday() == 5: _today = _today + _dt.timedelta(days=2)  # Sa → Mo
-        if _today.weekday() == 6: _today = _today + _dt.timedelta(days=1)  # So → Mo
-        # Für zukünftige Monate: ab dem 1. des Monats filtern
-        if current_month != _today.month:
-            _today_day = 1
-        else:
-            _today_day = _today.day
+        _today_day = _dt.date.today().day
         _today_month = current_month
 
         def _entry_day_key(entry_str: str) -> int:
@@ -2400,7 +2074,7 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
             except Exception:
                 return 99
 
-        # Nur Muster im ausgewählten Monat UND Entry >= nächster Handelstag
+        # Nur Muster im aktuellen Monat UND Entry >= heute
         def _is_relevant(entry_str: str) -> bool:
             parts = str(entry_str).strip().split(".")
             try:
@@ -2418,8 +2092,8 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
         _top_raw["_stars"]   = pd.to_numeric(_top_raw.get("⭐ Rating", 3), errors="coerce").fillna(3)
         _top_raw["_sharpe"]  = pd.to_numeric(_top_raw.get("Sharpe", 0),    errors="coerce").fillna(0)
 
-        # Nur 5 Sterne
-        _top_raw = _top_raw[_top_raw["_stars"] >= 5]
+        # Nur mindestens 4 Sterne
+        _top_raw = _top_raw[_top_raw["_stars"] >= 4]
 
         # Pro Symbol: Cluster-Dedup — Entries innerhalb von 3 Tagen = gleiche Opportunity
         # Sortiere nach Symbol + Entry-Tag, dann beste Sterne/Sharpe nach vorne
@@ -2438,7 +2112,7 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
 
         top_month = (
             _top_raw
-            .sort_values(["Symbol", "_sharpe", "_day_key"], ascending=[True, False, True])
+            .sort_values(["Symbol", "_day_key"], ascending=[True, True])
             .drop(columns=["_day_key", "_stars", "_sharpe"], errors="ignore")
             .reset_index(drop=True)
         )
@@ -2460,8 +2134,6 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
         )
 
         saved_dfs = st.session_state.get("muster_dataframes", {})
-
-        _notes_all = _load_notes()
 
         if top_month.empty:
             st.info(f"Keine Muster mit ≥{min_wr}% Winrate im {current_month_name} gefunden.")
@@ -2507,10 +2179,6 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
                 _rob_val    = str(row.get("Robustheit", "—"))
                 _rob_clr    = {"🟢 Stark": "#4ade80", "✅ Robust": "#a3e635", "⚠️ Sensitiv": "#facc15", "❌ Fragil": "#f87171"}.get(_rob_val, "#6b7fa3")
 
-                # Notiz für dieses Muster laden
-                _nkey = _notes_key(symbol_str, str(row.get("Entry", "")), str(row.get("Exit", "")), richtung)
-                _cur_note = _notes_all.get(_nkey, "")
-
                 col_info, col_btn = st.columns([6, 1])
                 with col_info:
                     st.markdown(
@@ -2554,30 +2222,6 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
                             "lookback": lookback,
                         }
                         st.rerun()
-
-                # ── Notiz-Bereich ──────────────────────────────────────────────
-                with st.expander(
-                    f"📝 Fundamentaler Grund {'· ' + _cur_note[:40] + ('…' if len(_cur_note) > 40 else '') if _cur_note else '· kein Grund hinterlegt'}",
-                    expanded=False,
-                ):
-                    if not _cur_note:
-                        st.markdown(
-                            "<div style='color:#475569;font-size:.75rem;font-style:italic;margin-bottom:6px;'>"
-                            "ℹ️ Kein fundamentaler Grund hinterlegt</div>",
-                            unsafe_allow_html=True,
-                        )
-                    _new_note = st.text_area(
-                        "Notiz",
-                        value=_cur_note,
-                        key=f"note_ta_{i}",
-                        height=80,
-                        label_visibility="collapsed",
-                        placeholder="z.B. JP-Fiskaljahresende, US-Optionsverfall, Quarter-End Rebalancing …",
-                    )
-                    if st.button("💾 Speichern", key=f"note_save_{i}"):
-                        _notes_all[_nkey] = _new_note.strip()
-                        _save_notes(_notes_all)
-                        st.success("Notiz gespeichert.")
 
 
 def render_seasonality_lab() -> None:
@@ -2636,13 +2280,13 @@ def render_seasonality_lab() -> None:
         .season-stat {
             text-align: center;
             color: #9fb0c7;
-            font-size: .68rem;
+            font-size: .80rem;
             line-height: 1.15;
         }
         .season-stat strong {
             display: block;
             color: #63c7e8;
-            font-size: .90rem;
+            font-size: 1.08rem;
             line-height: 1.1;
             margin-bottom: 2px;
         }
