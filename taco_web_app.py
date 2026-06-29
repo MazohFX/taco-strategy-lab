@@ -1057,9 +1057,9 @@ def _scan_patterns_cached(
     if len(trades) < min_trades:
         return []
 
-    def _stats_for_years(yr_start: int, dir_: str) -> dict | None:
+    def _stats_for_years(yr_start: int, dir_: str, min_t: int | None = None) -> dict | None:
         sub = [t for t in trades if t["yr"] >= yr_start]
-        if len(sub) < min_trades:
+        if len(sub) < (min_t if min_t is not None else min_trades):
             return None
         rets = np.array([t["long_ret"] if dir_ == "long" else t["short_ret"] for t in sub])
         dds  = np.array([t["long_dd"]  if dir_ == "long" else t["short_dd"]  for t in sub])
@@ -1091,7 +1091,7 @@ def _scan_patterns_cached(
         sharpe = avg_ret / std_ret * np.sqrt(252 / max(avg_td, 1)) if std_ret > 1e-10 else np.nan
         sqn    = avg_ret / std_ret * np.sqrt(nt) * 100 if std_ret > 1e-10 else np.nan
 
-        wr_5j  = (_stats_for_years(y5,  dir_) or {}).get("wr", np.nan)
+        wr_5j  = (_stats_for_years(y5,  dir_, min_t=3) or {}).get("wr", np.nan)
         wr_10j = (_stats_for_years(y10, dir_) or {}).get("wr", np.nan)
         wr_15j = (_stats_for_years(y15, dir_) or {}).get("wr", np.nan)
         # Für 20J: wenn nicht genug Daten, alle verfügbaren Jahre nehmen
