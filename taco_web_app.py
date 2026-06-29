@@ -2317,21 +2317,28 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
             mime="text/csv",
         )
 
-        # ── Top Setups aktueller Monat ──────────────────────────────────────
+        # ── Top Setups ausgewählter Monat ──────────────────────────────────────
         import datetime as _dt
-        current_month = _dt.date.today().month
-        current_month_name = [
-            "", "Januar", "Februar", "März", "April", "Mai", "Juni",
-            "Juli", "August", "September", "Oktober", "November", "Dezember"
-        ][current_month]
+        _month_names_list = ["", "Januar", "Februar", "März", "April", "Mai", "Juni",
+                             "Juli", "August", "September", "Oktober", "November", "Dezember"]
+        # Ausgewählten Monat aus Dropdown nutzen, sonst aktuellen Monat
+        if monat_nr > 0:
+            current_month = monat_nr
+        else:
+            current_month = _dt.date.today().month
+        current_month_name = _month_names_list[current_month]
 
         result_clean = result.drop(columns=["_sort_key"], errors="ignore")
         _today = _dt.date.today()
         # Wochenende: nächsten Montag als effektiven "heute" nutzen
         if _today.weekday() == 5: _today = _today + _dt.timedelta(days=2)  # Sa → Mo
         if _today.weekday() == 6: _today = _today + _dt.timedelta(days=1)  # So → Mo
-        _today_day = _today.day
-        _today_month = _today.month
+        # Für zukünftige Monate: ab dem 1. des Monats filtern
+        if current_month != _today.month:
+            _today_day = 1
+        else:
+            _today_day = _today.day
+        _today_month = current_month
 
         def _entry_day_key(entry_str: str) -> int:
             try:
@@ -2339,7 +2346,7 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
             except Exception:
                 return 99
 
-        # Nur Muster im aktuellen Monat UND Entry >= nächster Handelstag
+        # Nur Muster im ausgewählten Monat UND Entry >= nächster Handelstag
         def _is_relevant(entry_str: str) -> bool:
             parts = str(entry_str).strip().split(".")
             try:
