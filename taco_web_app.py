@@ -1806,6 +1806,24 @@ def render_seasonality_muster() -> None:
         _dl_bar.empty()
     _available_symbols = sorted([f.stem.upper() for f in _MT5_DIR.glob("*.csv")]) if _MT5_DIR.exists() else []
 
+    # ── Settings-Cache: Eingaben überleben App-Neustarts (/tmp, gleicher Mechanismus wie WFA-Cache) ──
+    import pickle as _pickle_settings
+    _MUSTER_SETTINGS_CACHE = Path("/tmp/taco_muster_settings.pkl")
+    _MUSTER_SETTINGS_DEFAULTS = {
+        "muster_lookback": 10, "muster_dir_choice": ["Long", "Short"], "muster_min_wr": 70,
+        "muster_hold_min": 5, "muster_hold_max": 28, "muster_hold_step": 1,
+    }
+    if "muster_settings_loaded" not in st.session_state:
+        st.session_state["muster_settings_loaded"] = True
+        _loaded_settings = dict(_MUSTER_SETTINGS_DEFAULTS)
+        if _MUSTER_SETTINGS_CACHE.exists():
+            try:
+                _loaded_settings.update(_pickle_settings.loads(_MUSTER_SETTINGS_CACHE.read_bytes()))
+            except Exception:
+                pass
+        for _k, _v in _loaded_settings.items():
+            st.session_state.setdefault(_k, _v)
+
     with col_ctrl:
         st.markdown("<div style='color:#94a3b8;font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px;'>Einstellungen</div>", unsafe_allow_html=True)
 
@@ -1832,14 +1850,22 @@ def render_seasonality_muster() -> None:
         import datetime as _dt2
         _cur_yr = _dt2.date.today().year
         _end_yr = _cur_yr - 1  # letztes vollständiges Jahr
-        lookback = st.radio("Analysezeitraum (Filter gilt für)", [5, 10, 15, 20], format_func=lambda x: f"{x}J ({_end_yr-x+1}–{_end_yr})", horizontal=True, index=1)
-        dir_choice = st.multiselect("Richtung", ["Long", "Short"], default=["Long", "Short"])
-        min_wr = st.slider("Min. Winrate %", 60, 100, 70, step=5)
-        hold_min = st.number_input("Musterlänge min (Kalendertage)", 1, 60, 5)
-        hold_max = st.number_input("Musterlänge max (Kalendertage)", 1, 120, 28)
-        hold_step = st.number_input("Schritt", 1, 10, 1)
+        lookback = st.radio("Analysezeitraum (Filter gilt für)", [5, 10, 15, 20], format_func=lambda x: f"{x}J ({_end_yr-x+1}–{_end_yr})", horizontal=True, key="muster_lookback")
+        dir_choice = st.multiselect("Richtung", ["Long", "Short"], key="muster_dir_choice")
+        min_wr = st.slider("Min. Winrate %", 60, 100, step=5, key="muster_min_wr")
+        hold_min = st.number_input("Musterlänge min (Kalendertage)", 1, 60, key="muster_hold_min")
+        hold_max = st.number_input("Musterlänge max (Kalendertage)", 1, 120, key="muster_hold_max")
+        hold_step = st.number_input("Schritt", 1, 10, key="muster_hold_step")
         holding_periods = list(range(int(hold_min), int(hold_max) + 1, int(hold_step)))
         run_scan = st.button("🔍 Scanner starten", type="primary", use_container_width=True)
+        if run_scan:
+            try:
+                _MUSTER_SETTINGS_CACHE.write_bytes(_pickle_settings.dumps({
+                    "muster_lookback": lookback, "muster_dir_choice": dir_choice, "muster_min_wr": min_wr,
+                    "muster_hold_min": hold_min, "muster_hold_max": hold_max, "muster_hold_step": hold_step,
+                }))
+            except Exception:
+                pass
 
     with col_main:
         if daten_modus == "Repo (permanent)" and not selected_symbols:
