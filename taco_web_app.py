@@ -1808,7 +1808,8 @@ def render_seasonality_muster() -> None:
 
     # ── Settings-Cache: Eingaben überleben App-Neustarts (/tmp, gleicher Mechanismus wie WFA-Cache) ──
     import pickle as _pickle_settings
-    _MUSTER_SETTINGS_CACHE = Path("/tmp/taco_muster_settings.pkl")
+    from pathlib import Path as _SettingsPath
+    _MUSTER_SETTINGS_CACHE = _SettingsPath("/tmp/taco_muster_settings.pkl")
     _MUSTER_SETTINGS_DEFAULTS = {
         "muster_lookback": 10, "muster_dir_choice": ["Long", "Short"], "muster_min_wr": 70,
         "muster_hold_min": 5, "muster_hold_max": 28, "muster_hold_step": 1,
