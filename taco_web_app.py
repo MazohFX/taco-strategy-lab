@@ -1,13 +1,38 @@
+import json
 import math
 import calendar
 import re
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from scipy import stats as _scipy_stats
+
+
+# ── Muster-Notizen (JSON-Persistenz) ─────────────────────────────────────────
+_NOTES_FILE = Path(__file__).parent / "pattern_notes.json"
+
+
+def _notes_key(symbol: str, entry: str, exit_: str, richtung: str) -> str:
+    return f"{symbol}|{entry}|{exit_}|{richtung}"
+
+
+def _load_notes() -> dict:
+    if _NOTES_FILE.exists():
+        try:
+            return json.loads(_NOTES_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_notes(notes: dict) -> None:
+    _NOTES_FILE.write_text(json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
+
 
 def load_ohlc_data(symbol: str, source: str = "mt5", fallback_to_yahoo: bool = False):
     from pathlib import Path as _Path
@@ -909,18 +934,27 @@ def _compute_stars(wr: float, avg_ret: float, avg_dd: float, max_dd: float,
     max_stars = rob_cap.get(robustheit, 3)
 
     score = 0.0
-    # Winrate (0–35 Punkte)
-    score += min(35, max(0, (wr - 0.60) / 0.40 * 35))
-    # Avg Profit vs ATR (0–25 Punkte)
-    if atr_pct and atr_pct > 0:
-        score += min(25, max(0, (avg_ret * 100 / atr_pct) / 2.0 * 25))
+    # Winrate (0–25 Punkte) — weniger Gewicht als früher
+    score += min(25, max(0, (wr - 0.60) / 0.40 * 25))
+
+    # Avg Profit absolut (0–25 Punkte): <0.5% = kaum Punkte, 1.5%+ = voll
+    score += min(25, max(0, (avg_ret * 100 - 0.3) / 1.2 * 25))
+
+    # Profit/Risiko-Verhältnis (0–25 Punkte): Ø Gewinn vs Ø DD
+    if avg_dd and abs(avg_dd) > 0:
+        pnl_risk = (avg_ret * 100) / abs(avg_dd * 100)
+        score += min(25, max(0, (pnl_risk - 0.5) / 2.0 * 25))
     else:
-        score += min(25, max(0, avg_ret * 100 / 3.0 * 25))
-    # Avg DD (0–20 Punkte): wenig DD = gut
-    score += min(20, max(0, (1 - abs(avg_dd) / 0.05) * 20))
-    # Sharpe (0–20 Punkte)
+        score += min(25, max(0, avg_ret * 100 / 2.0 * 25))
+
+    # Sharpe (0–25 Punkte)
     if not np.isnan(sharpe):
-        score += min(20, max(0, sharpe / 3.0 * 20))
+        score += min(25, max(0, sharpe / 3.0 * 25))
+
+    # Harte Strafen für schlechtes Profit/Risiko
+    if avg_ret * 100 < 0.4:          max_stars = min(max_stars, 2)  # Zu kleiner Profit → max 2★
+    elif avg_ret * 100 < 0.8:        max_stars = min(max_stars, 3)  # Kleiner Profit → max 3★
+    elif avg_ret * 100 < 1.2:        max_stars = min(max_stars, 4)  # Mittlerer Profit → max 4★
 
     # Sterne aus Score: 0–40=1, 40–55=2, 55–70=3, 70–85=4, 85+=5
     if score >= 85:   raw = 5
@@ -1110,11 +1144,17 @@ def _scan_patterns_cached(
 
         avg_atr_pct = float(np.mean([t["atr"] / t["ep"] for t in primary_trades if t["ep"] > 0]) * 100)
 
-        # Entry/Exit Label aus DOY
+        # Entry/Exit Label aus DOY (Wochenende → nächsten Montag)
         try:
             _ref = pd.Timestamp(year=2000, month=1, day=1)  # Schaltjahr → DOY stimmt mit Kalender überein
-            entry_label = (_ref + pd.Timedelta(days=entry_doy - 1)).strftime("%d. %b")
-            exit_label  = (_ref + pd.Timedelta(days=exit_doy  - 1)).strftime("%d. %b")
+            _entry_ts = _ref + pd.Timedelta(days=entry_doy - 1)
+            _exit_ts  = _ref + pd.Timedelta(days=exit_doy  - 1)
+            if _entry_ts.weekday() == 5: _entry_ts += pd.Timedelta(days=2)  # Sa → Mo
+            if _entry_ts.weekday() == 6: _entry_ts += pd.Timedelta(days=1)  # So → Mo
+            if _exit_ts.weekday()  == 5: _exit_ts  += pd.Timedelta(days=2)
+            if _exit_ts.weekday()  == 6: _exit_ts  += pd.Timedelta(days=1)
+            entry_label = _entry_ts.strftime("%d. %b")
+            exit_label  = _exit_ts.strftime("%d. %b")
         except Exception:
             entry_label = f"DOY {entry_doy}"
             exit_label  = f"DOY {exit_doy}"
@@ -1341,31 +1381,32 @@ def _render_muster_detail() -> None:
     )
     st.markdown(_rob_legend, unsafe_allow_html=True)
 
-    # Gegenläufige Muster-Warnung
+    # ── Gegenmuster-Check ─────────────────────────────────────────────────────
     _cur_entry_doy = int(row.get("_entry_doy", 0))
     _cur_exit_doy  = int(row.get("_exit_doy",  0))
-    _cur_dir       = row.get("Richtung", "")
-    _opp_dir       = "Short" if _cur_dir == "Long" else "Long"
+    _opp_dir       = "Short" if richtung == "Long" else "Long"
     _all_results   = st.session_state.get("muster_scan_result", pd.DataFrame())
     _conflicts     = []
-    if isinstance(_all_results, pd.DataFrame) and not _all_results.empty:
+    if isinstance(_all_results, pd.DataFrame) and not _all_results.empty and "_entry_doy" in _all_results.columns:
         for _, _r in _all_results.iterrows():
-            if _r.get("Symbol") != symbol_str: continue
-            if _r.get("Richtung") != _opp_dir: continue
+            if _r.get("Symbol") != symbol_str:
+                continue
+            if _r.get("Richtung") != _opp_dir:
+                continue
             _wr10 = _r.get("WR 10J %", 0) or 0
-            if pd.isna(_wr10) or float(_wr10) < 70: continue
-            _stars_c = int(_r.get("⭐ Rating", 0) or 0)
-            if _stars_c < 2: continue
-            _re = int(_r.get("_entry_doy", 0)); _rx = int(_r.get("_exit_doy", 0))
-            if _re == 0 or _rx == 0: continue
+            if pd.isna(_wr10) or float(_wr10) < 70:
+                continue
+            _re = int(_r.get("_entry_doy", 0))
+            _rx = int(_r.get("_exit_doy",  0))
+            if _re == 0 or _rx == 0:
+                continue
             if _re < _cur_exit_doy and _rx > _cur_entry_doy:
                 _conflicts.append(_r)
-
     if _conflicts:
         _warn_rows = ""
         for _c in _conflicts:
-            _c_wr   = _c["WR 10J %"] if "WR 10J %" in _c.index else "—"
-            _c_rob  = _c["Robustheit"] if "Robustheit" in _c.index else "—"
+            _c_wr    = _c["WR 10J %"] if "WR 10J %" in _c.index else "—"
+            _c_rob   = _c["Robustheit"] if "Robustheit" in _c.index else "—"
             _c_stars = "⭐" * int(_c["⭐ Rating"]) if "⭐ Rating" in _c.index else "⭐"
             _c_entry = _c["Entry"] if "Entry" in _c.index else "—"
             _c_exit  = _c["Exit"]  if "Exit"  in _c.index else "—"
@@ -1464,6 +1505,8 @@ def _render_muster_detail() -> None:
                 "Max DD %": round(dd_pct, 2),
                 "Max MFE %": round(mfe_pct, 2),
                 "W/L": "✅ Win" if ret_pct > 0 else "❌ Loss",
+                "_entry_ts": entry_date,
+                "_entry_price": ep,
             })
         except Exception:
             continue
@@ -1473,7 +1516,9 @@ def _render_muster_detail() -> None:
         return
 
     tdf = pd.DataFrame(trade_rows).sort_values("Jahr").reset_index(drop=True)
+    tdf_5  = tdf[tdf["Jahr"] >= end_y -  5 + 1]
     tdf_10 = tdf[tdf["Jahr"] >= end_y - 10 + 1]
+    tdf_15 = tdf[tdf["Jahr"] >= end_y - 15 + 1]
     tdf_20 = tdf
 
     wins_10 = (tdf_10["Return %"] > 0).sum()
@@ -1510,21 +1555,105 @@ def _render_muster_detail() -> None:
         unsafe_allow_html=True,
     )
 
+    # ── Echtheits-Check ──────────────────────────────────────────────────────
+    st.markdown("### 🔍 Echtheits-Check: Netto-Edge nach Kosten")
+    _ec_c1, _ec_c2, _ec_c3, _ec_c4 = st.columns(4)
+    with _ec_c1:
+        _ec_comm = st.number_input("Commission %", 0.0, 2.0, 0.05, step=0.01, key=f"ec_comm_{symbol_str}_{row['Entry']}")
+    with _ec_c2:
+        _ec_slip = st.number_input("Slippage %", 0.0, 2.0, 0.02, step=0.01, key=f"ec_slip_{symbol_str}_{row['Entry']}")
+    with _ec_c3:
+        _perc_pct = st.slider("Perzentil-Stop %", 70, 95, 85, step=5, key=f"ec_perc_{symbol_str}_{row['Entry']}")
+    with _ec_c4:
+        _stddev_k = st.slider("StdDev-Faktor k", 1.0, 3.0, 1.75, step=0.25, key=f"ec_k_{symbol_str}_{row['Entry']}")
+    _atr_mult = st.slider("ATR-Multiplikator", 1.0, 3.0, 1.75, step=0.25, key=f"ec_atr_{symbol_str}_{row['Entry']}")
+    _kostenpuffer = 2.0 * (_ec_slip + _ec_comm)
+    tdf["Netto Return %"] = (tdf["Return %"] - _kostenpuffer).round(2)
+
+    def _fenster_data(sub):
+        if len(sub) < 2: return None
+        avg_net = (sub["Return %"] - _kostenpuffer).mean()
+        avg_dd  = abs(sub["Max DD %"].mean())
+        ratio   = avg_net / avg_dd if avg_dd > 0 else float("inf")
+        return {"avg_net": avg_net, "ratio": ratio, "wins": (sub["Return %"] > 0).sum(), "n": len(sub)}
+
+    def _ampel_html(label, d):
+        if d is None:
+            return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:14px 18px;">'
+                    f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'
+                    f'<div style="color:#475569;">—</div></div>')
+        if d["ratio"] >= 1.5 and d["avg_net"] > 0:   sym,farbe,txt="🟢","#4ade80","Robust positiv"
+        elif d["ratio"] >= 0.8 and d["avg_net"] > 0: sym,farbe,txt="🟡","#f0c040","Knapp / Break-even"
+        else:                                          sym,farbe,txt="🔴","#f87171","Verlierer nach Kosten"
+        return (f'<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:14px 18px;">'
+                f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Netto-Edge {label}</div>'
+                f'<div style="color:{farbe};font-size:1.05rem;font-weight:700;margin-bottom:3px;">{sym} {txt}</div>'
+                f'<div style="color:#9fb0c7;font-size:.8rem;">Ø netto {d["avg_net"]:+.2f}% · Ratio {d["ratio"]:.2f} · {d["wins"]}W/{d["n"]-d["wins"]}L</div></div>')
+
+    st.markdown(
+        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;">'
+        + "".join([_ampel_html("5J",_fenster_data(tdf_5)),_ampel_html("10J",_fenster_data(tdf_10)),
+                   _ampel_html("15J",_fenster_data(tdf_15)),_ampel_html("20J",_fenster_data(tdf_20))])
+        + '</div>', unsafe_allow_html=True)
+
+    # ── Stop-Loss-Empfehlung ─────────────────────────────────────────────────
+    st.markdown("### 🛡️ Stop-Loss-Empfehlung")
+    _dd_abs  = tdf["Max DD %"].abs()
+    _sl_perc = float(np.percentile(_dd_abs, _perc_pct)) + _kostenpuffer
+    _sl_std  = float(_dd_abs.mean() + _stddev_k * _dd_abs.std(ddof=1)) + _kostenpuffer
+    _atr_pct_vals = []
+    try:
+        _h=df_sym["high"].to_numpy();_l=df_sym["low"].to_numpy();_c=df_sym["close"].to_numpy()
+        _n=len(_c);_tr=np.zeros(_n);_tr[0]=_h[0]-_l[0]
+        for _i in range(1,_n): _tr[_i]=max(_h[_i]-_l[_i],abs(_h[_i]-_c[_i-1]),abs(_l[_i]-_c[_i-1]))
+        _aw=np.full(_n,np.nan)
+        if _n>=14:
+            _aw[13]=_tr[:14].mean()
+            for _i in range(14,_n): _aw[_i]=(_aw[_i-1]*13+_tr[_i])/14
+        _as=pd.Series(_aw,index=df_sym.index)
+        for _,_r in tdf.iterrows():
+            _ets=_r["_entry_ts"];_ep=_r["_entry_price"]
+            if _ets in _as.index and not np.isnan(_as[_ets]) and _ep>0:
+                _atr_pct_vals.append(_as[_ets]/_ep*100)
+    except Exception: pass
+    _atr_ok=len(_atr_pct_vals)>0
+    _sl_atr=float(np.mean(_atr_pct_vals))*_atr_mult+_kostenpuffer if _atr_ok else 0.0
+    _methoden={"Perzentil":_sl_perc,"Avg+StdDev":_sl_std}
+    if _atr_ok: _methoden["ATR"]=_sl_atr
+    _empf=max(_methoden,key=_methoden.get)
+    if _empf=="ATR": _begr=f"ATR-Stop am größten (Ø {float(np.mean(_atr_pct_vals)):.2f}% × {_atr_mult}×) — Volatilität übersteigt die hist. DD-Quantile."
+    elif _empf=="Avg+StdDev": _begr=f"Avg+StdDev-Stop am größten — Ausreißer-DD {_dd_abs.max():.2f}% hebt σ={_dd_abs.std(ddof=1):.2f}% stark an."
+    else: _begr=f"Perzentil-Stop am größten — {_perc_pct}. Perzentil ({float(np.percentile(_dd_abs,_perc_pct)):.2f}%) übertrifft andere Methoden."
+
+    def _sl_card(name,val,empf):
+        b="border:2px solid #4ade80;" if empf else "border:1px solid rgba(148,163,184,.15);"
+        tag=('<div style="display:inline-block;background:#14532d;color:#4ade80;font-size:.7rem;font-weight:700;border-radius:4px;padding:2px 8px;margin-bottom:6px;">✅ Empfohlen</div>' if empf else "")
+        fc="#4ade80" if empf else "#9fb0c7"
+        return (f'<div style="background:#0a1220;{b}border-radius:8px;padding:16px 20px;">{tag}'
+                f'<div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">{name}</div>'
+                f'<div style="color:{fc};font-size:1.2rem;font-weight:700;">{val:.2f}%</div>'
+                f'<div style="color:#475569;font-size:.75rem;margin-top:3px;">inkl. Kostenpuffer {_kostenpuffer:.2f}%</div></div>')
+
+    _cards=[_sl_card("Perzentil",_sl_perc,_empf=="Perzentil"),_sl_card("Avg + StdDev",_sl_std,_empf=="Avg+StdDev")]
+    if _atr_ok: _cards.append(_sl_card("ATR",_sl_atr,_empf=="ATR"))
+    else: _cards.append('<div style="background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:16px 20px;"><div style="color:#6b7fa3;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">ATR</div><div style="color:#475569;">keine ATR-Daten verfügbar</div></div>')
+    st.markdown(f'<div style="display:grid;grid-template-columns:repeat({len(_cards)},1fr);gap:14px;margin-bottom:10px;">{"".join(_cards)}</div>'
+                f'<div style="color:#6b7fa3;font-size:.82rem;margin-bottom:22px;">💡 {_begr}</div>',unsafe_allow_html=True)
+
     # Tabelle — full width
     st.markdown("### 📋 Per-Jahr Ergebnisse")
-
     def _color_ret(v):
         return "color:#4ade80;font-weight:600" if v > 0 else "color:#f87171;font-weight:600"
     def _color_dd(v):
         return "color:#f87171" if v < 0 else "color:#9fb0c7"
-
+    _tdf_show = tdf.drop(columns=["_entry_ts","_entry_price"],errors="ignore")
     st.dataframe(
-        tdf.style
-        .map(_color_ret, subset=["Return %", "Max MFE %"])
-        .map(_color_dd, subset=["Max DD %"])
-        .format({"Return %": "{:+.2f}%", "Max DD %": "{:+.2f}%", "Max MFE %": "{:+.2f}%"}),
+        _tdf_show.style
+        .map(_color_ret, subset=["Return %","Netto Return %","Max MFE %"])
+        .map(_color_dd,  subset=["Max DD %"])
+        .format({"Return %":"{:+.2f}%","Netto Return %":"{:+.2f}%","Max DD %":"{:+.2f}%","Max MFE %":"{:+.2f}%"}),
         use_container_width=True,
-        height=min(40 * len(tdf) + 42, 700),
+        height=min(40*len(tdf)+42,700),
     )
 
     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
@@ -1806,7 +1935,7 @@ def render_seasonality_muster() -> None:
         _dl_bar.empty()
     _available_symbols = sorted([f.stem.upper() for f in _MT5_DIR.glob("*.csv")]) if _MT5_DIR.exists() else []
 
-    # ── Settings-Cache: Eingaben überleben App-Neustarts (/tmp, gleicher Mechanismus wie WFA-Cache) ──
+    # ── Settings-Cache: Eingaben überleben App-Neustarts (/tmp) ──────────────
     import pickle as _pickle_settings
     from pathlib import Path as _SettingsPath
     _MUSTER_SETTINGS_CACHE = _SettingsPath("/tmp/taco_muster_settings.pkl")
@@ -1868,6 +1997,17 @@ def render_seasonality_muster() -> None:
             except Exception:
                 pass
 
+        st.markdown("---")
+        st.markdown("<div style='color:#94a3b8;font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;'>Walk-Forward Validierung</div>", unsafe_allow_html=True)
+        _wfa_defaults = {5: (4, 2), 10: (10, 5), 15: (10, 8), 20: (12, 7)}
+        _wfa_is_def, _wfa_folds_def = _wfa_defaults.get(lookback, (10, 5))
+        wfa_min_is = st.number_input("Start IS-Fenster (Jahre)", min_value=5, max_value=20, value=_wfa_is_def,
+                                      help="Erste N Jahre als In-Sample-Startfenster")
+        wfa_min_folds = st.number_input("Min. Folds für ✅ Badge", min_value=2, max_value=20, value=_wfa_folds_def,
+                                         help="Muster muss in mind. N Folds als IS-Kandidat erschienen sein")
+        run_wfa = st.button("🔄 Walk-Forward validieren", use_container_width=True,
+                            help="Rechenintensiv — kann mehrere Minuten dauern")
+
     with col_main:
         if daten_modus == "Repo (permanent)" and not selected_symbols:
             st.info("Bitte wähle mindestens ein Symbol aus und starte den Scanner.")
@@ -1875,6 +2015,58 @@ def render_seasonality_muster() -> None:
         if daten_modus == "CSV Upload" and not csv_files:
             st.info("Bitte lade eine oder mehrere Pepperstone CSV-Dateien hoch und starte den Scanner.")
             return
+
+        with st.expander("❓ Walk-Forward Validierung — was bedeuten die Einstellungen?", expanded=False):
+            st.markdown(
+                """
+<div style="font-size:.88rem;color:#cbd5e1;line-height:1.8;">
+<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:6px;">📖 Wie funktioniert Walk-Forward?</div>
+Das Fenster rollt Jahr für Jahr vorwärts. Die ersten <b>N Jahre</b> sind In-Sample (IS) — dort wird das Muster gesucht.
+Das jeweils nächste Jahr ist Out-of-Sample (OOS) — dort wird geprüft, ob das Muster auch dort funktioniert hat.
+</div>
+""", unsafe_allow_html=True)
+
+            st.markdown("**🔁 Beispiel mit IS-Fenster = 10 (Datenbasis 2006–2025)**")
+            st.markdown("""
+| Fold | In-Sample — Training | OOS-Test Jahr |
+|:----:|----------------------|:-------------:|
+| 1 | 2006 – 2015 | 2016 |
+| 2 | 2006 – 2016 | 2017 |
+| 3 | 2006 – 2017 | 2018 |
+| 4 | 2006 – 2018 | 2019 |
+| 5 | 2006 – 2019 | 2020 |
+| … | … | … |
+| 9 | 2006 – 2023 | 2024 |
+""")
+            st.markdown(
+                """
+<div style="font-size:.88rem;color:#cbd5e1;line-height:1.8;margin-top:8px;">
+<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">🏅 Min. Folds für ✅ Badge</div>
+Ein <b>Fold</b> = ein einzelner Test-Durchlauf mit einem bestimmten IS-Zeitraum und einem OOS-Jahr.
+Im Beispiel oben mit IS-Fenster 10 entstehen <b>9 Folds</b> (Fold 1 bis Fold 9).
+<br>
+Ein Muster bekommt nur dann <b>✅ OOS-validiert</b>, wenn es in mindestens N dieser Folds als IS-Kandidat aufgetaucht ist.
+<br><i>Beispiel: Min. Folds = 5 → das Muster muss in mindestens 5 der 9 Test-Durchläufe gefunden worden sein.</i>
+<br>Das filtert Zufallstreffer heraus — je höher der Wert, desto strenger der Filter.
+<br><br>
+<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">📊 Analysezeitraum vs. IS-Fenster</div>
+Der <b>Analysezeitraum</b> (Radio-Button links) filtert nur, welche Muster <i>angezeigt</i> werden —
+die WFA nutzt immer alle verfügbaren Daten der CSVs unabhängig davon.
+<br>
+<b style="color:#4ade80;">→ Tipp: Stelle links auf 20J</b>, damit nur Muster durchkommen, die über 20 Jahre konsistent waren.
+Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
+</div>
+""", unsafe_allow_html=True)
+
+            st.markdown("**✅ Empfohlene Einstellungen**")
+            st.markdown("""
+| Ziel | Analysezeitraum (links) | IS-Fenster | Min. Folds |
+|------|:-----------------------:|:----------:|:----------:|
+| Maximale Robustheit | **20J** | **10–12** | **7** |
+| Ausgewogen (Standard) | **10J** | **10** | **5** |
+| Mehr Muster sehen | **10J** | **8** | **3** |
+""")
+            st.info("💡 Bei 20J Datenbasis entstehen ~8–10 Folds — mehr Folds = robusteres ✅ Badge.")
 
         if not run_scan and "muster_scan_result" not in st.session_state:
             st.info("Einstellungen wählen und 'Scanner starten' klicken.")
@@ -1945,6 +2137,84 @@ def render_seasonality_muster() -> None:
             st.session_state["muster_scan_result"] = result
             st.session_state["muster_dataframes"] = loaded_dfs
             st.session_state["muster_csv_name"] = f"{n_src} Symbole"
+
+        # ── Walk-Forward Validierung ──────────────────────────────────────────
+        import pickle as _pickle
+        _MUSTER_WFA_CACHE = Path("/tmp/taco_muster_wfa_cache.pkl")
+
+        # L2: /tmp → session_state beim Start laden
+        if "muster_wfa_result" not in st.session_state and _MUSTER_WFA_CACHE.exists():
+            try:
+                _cached = _pickle.loads(_MUSTER_WFA_CACHE.read_bytes())
+                st.session_state["muster_wfa_result"] = _cached["wfa_res"]
+                st.session_state["muster_scan_result"] = _cached["scan_result"]
+                st.session_state["muster_csv_name"] = _cached.get("csv_name", "")
+                st.session_state["muster_dataframes"] = _cached.get("dfs", {})
+            except Exception:
+                _MUSTER_WFA_CACHE.unlink(missing_ok=True)
+
+        if run_wfa:
+            loaded_dfs_wfa = st.session_state.get("muster_dataframes", {})
+            if not loaded_dfs_wfa:
+                st.warning("Bitte zuerst den Scanner starten, um Daten zu laden.")
+            else:
+                from seasonality_wfa import run_seasonality_wfa, wfa_results_to_dataframe
+                directions_wfa = [d.lower() for d in dir_choice]
+                _wfa_bar = st.progress(0, text="Starte Walk-Forward Validierung…")
+                def _wfa_progress(frac: float, txt: str) -> None:
+                    _wfa_bar.progress(min(frac, 1.0), text=txt)
+                wfa_res = run_seasonality_wfa(
+                    symbol_dfs=loaded_dfs_wfa,
+                    holding_periods=holding_periods,
+                    directions=directions_wfa,
+                    min_winrate=min_wr / 100,
+                    min_trades=max(int(wfa_min_is * 0.8), 3),
+                    min_is_years=int(wfa_min_is),
+                    min_folds_for_badge=int(wfa_min_folds),
+                    progress_callback=_wfa_progress,
+                )
+                _wfa_bar.empty()
+                st.session_state["muster_wfa_result"] = wfa_res
+                # L2: in /tmp sichern
+                try:
+                    _MUSTER_WFA_CACHE.write_bytes(_pickle.dumps({
+                        "wfa_res": wfa_res,
+                        "scan_result": st.session_state.get("muster_scan_result", pd.DataFrame()),
+                        "csv_name": st.session_state.get("muster_csv_name", ""),
+                        "dfs": loaded_dfs_wfa,
+                    }))
+                except Exception:
+                    pass
+
+        # WFA-Ergebnis anzeigen (falls vorhanden)
+        _wfa_result = st.session_state.get("muster_wfa_result")
+        if _wfa_result is not None:
+            from seasonality_wfa import wfa_results_to_dataframe, wfa_badge_for_row
+            wfa_df = wfa_results_to_dataframe(_wfa_result)
+            n_validated = (wfa_df["Status"] == "✅ OOS-validiert").sum() if not wfa_df.empty else 0
+            n_is_only   = (wfa_df["Status"] == "⚠️ Nur IS").sum() if not wfa_df.empty else 0
+            st.markdown(
+                f"""<div style="background:#0a1220;border:1px solid rgba(74,222,128,.2);border-radius:10px;
+                    padding:14px 20px;margin-bottom:18px;">
+                  <div style="color:#94a3b8;font-size:.75rem;font-weight:700;letter-spacing:.1em;
+                      text-transform:uppercase;margin-bottom:8px;">Walk-Forward Ergebnis</div>
+                  <span style="color:#4ade80;font-weight:800;font-size:1.1rem;">✅ {n_validated} OOS-validiert</span>
+                  &nbsp;&nbsp;
+                  <span style="color:#fbbf24;font-size:1rem;">⚠️ {n_is_only} Nur IS</span>
+                  &nbsp;&nbsp;
+                  <span style="color:#6b7fa3;font-size:.9rem;">IS-Start: {_wfa_result.min_is_years} Jahre · Badge ab {int(wfa_min_folds)} Folds</span>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            if not wfa_df.empty:
+                st.dataframe(wfa_df, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "⬇️ WFA-Ergebnis CSV",
+                    wfa_df.to_csv(index=False).encode("utf-8"),
+                    file_name="seasonality_wfa_result.csv",
+                    mime="text/csv",
+                )
+            st.markdown("---")
 
         result = st.session_state.get("muster_scan_result", pd.DataFrame())
         csv_name = st.session_state.get("muster_csv_name", "")
@@ -2053,6 +2323,21 @@ def render_seasonality_muster() -> None:
         wr_display_cols = [c for c in ["WR 5J %", "WR 10J %", "WR 15J %", "WR 20J %"] if c in display.columns]
         num_cols = ["Ø Profit %", "Ø DD %", "Max DD %", "Sharpe", "SQN"]
         existing_num_cols = [c for c in num_cols if c in display.columns]
+
+        # WFA-Badge in Tabelle einfügen (wenn WFA-Ergebnis vorhanden)
+        _wfa_res_for_display = st.session_state.get("muster_wfa_result")
+        if _wfa_res_for_display is not None:
+            from seasonality_wfa import wfa_badge_for_row
+            def _get_wfa_badge(row: pd.Series) -> str:
+                return wfa_badge_for_row(
+                    _wfa_res_for_display,
+                    symbol=str(row.get("Symbol", "")),
+                    entry_doy=int(row.get("_entry_doy", 0)),
+                    exit_doy=int(row.get("_exit_doy", 0)),
+                    direction="long" if row.get("Richtung") == "Long" else "short",
+                )
+            display["WFA"] = display.apply(_get_wfa_badge, axis=1)
+
         style_obj = (
             display.style
             .map(color_richtung, subset=["Richtung"])
@@ -2070,10 +2355,11 @@ def render_seasonality_muster() -> None:
             "SQN": "{:.2f}",
         })
         styled = style_obj.format({k: v for k, v in fmt.items() if k in display.columns}, na_rep="-")
-        try:
-            st.dataframe(styled, use_container_width=True, height=420)
-        except Exception:
-            st.dataframe(display, use_container_width=True, height=420)
+        with st.expander("📋 Alle Muster anzeigen", expanded=False):
+            try:
+                st.dataframe(styled, use_container_width=True, height=420)
+            except Exception:
+                st.dataframe(display, use_container_width=True, height=420)
 
         csv_export = display.to_csv(index=False).encode("utf-8")
         st.download_button(
@@ -2085,15 +2371,19 @@ def render_seasonality_muster() -> None:
 
         # ── Top Setups aktueller Monat ──────────────────────────────────────
         import datetime as _dt
-        current_month = _dt.date.today().month
-        current_month_name = [
-            "", "Januar", "Februar", "März", "April", "Mai", "Juni",
-            "Juli", "August", "September", "Oktober", "November", "Dezember"
-        ][current_month]
+        _month_names_list = ["", "Januar", "Februar", "März", "April", "Mai", "Juni",
+                             "Juli", "August", "September", "Oktober", "November", "Dezember"]
+        # Wenn Monat-Filter gesetzt → diesen Monat anzeigen, sonst aktuellen Monat
+        current_month = monat_nr if monat_nr > 0 else _dt.date.today().month
+        current_month_name = _month_names_list[current_month]
 
         result_clean = result.drop(columns=["_sort_key"], errors="ignore")
-        _today_day = _dt.date.today().day
-        _today_month = current_month
+        _today = _dt.date.today()
+        # Wochenende: nächsten Montag als effektiven "heute" nutzen
+        if _today.weekday() == 5: _today = _today + _dt.timedelta(days=2)  # Sa → Mo
+        if _today.weekday() == 6: _today = _today + _dt.timedelta(days=1)  # So → Mo
+        _today_day = _today.day
+        _today_month = _today.month
 
         def _entry_day_key(entry_str: str) -> int:
             try:
@@ -2101,12 +2391,14 @@ def render_seasonality_muster() -> None:
             except Exception:
                 return 99
 
-        # Nur Muster im aktuellen Monat UND Entry >= heute
+        # Nur Muster im gewählten Monat UND (bei aktuellem Monat) Entry >= nächster Handelstag
         def _is_relevant(entry_str: str) -> bool:
             parts = str(entry_str).strip().split(".")
             try:
                 mon = _month_map.get(parts[1].strip()[:3], 0)
                 day = int(parts[0].strip())
+                if monat_nr > 0:
+                    return mon == current_month  # gefilterter Monat: alle Einträge zeigen
                 return mon == _today_month and day >= _today_day
             except Exception:
                 return False
@@ -2139,7 +2431,7 @@ def render_seasonality_muster() -> None:
 
         top_month = (
             _top_raw
-            .sort_values(["Symbol", "_day_key"], ascending=[True, True])
+            .sort_values(["_stars", "_sharpe", "_day_key"], ascending=[False, False, True])
             .drop(columns=["_day_key", "_stars", "_sharpe"], errors="ignore")
             .reset_index(drop=True)
         )
@@ -2161,6 +2453,8 @@ def render_seasonality_muster() -> None:
         )
 
         saved_dfs = st.session_state.get("muster_dataframes", {})
+
+        _notes_all = _load_notes()
 
         if top_month.empty:
             st.info(f"Keine Muster mit ≥{min_wr}% Winrate im {current_month_name} gefunden.")
@@ -2206,6 +2500,10 @@ def render_seasonality_muster() -> None:
                 _rob_val    = str(row.get("Robustheit", "—"))
                 _rob_clr    = {"🟢 Stark": "#4ade80", "✅ Robust": "#a3e635", "⚠️ Sensitiv": "#facc15", "❌ Fragil": "#f87171"}.get(_rob_val, "#6b7fa3")
 
+                # Notiz für dieses Muster laden
+                _nkey = _notes_key(symbol_str, str(row.get("Entry", "")), str(row.get("Exit", "")), richtung)
+                _cur_note = _notes_all.get(_nkey, "")
+
                 col_info, col_btn = st.columns([6, 1])
                 with col_info:
                     st.markdown(
@@ -2249,6 +2547,30 @@ def render_seasonality_muster() -> None:
                             "lookback": lookback,
                         }
                         st.rerun()
+
+                # ── Notiz-Bereich ──────────────────────────────────────────────
+                with st.expander(
+                    f"📝 Fundamentaler Grund {'· ' + _cur_note[:40] + ('…' if len(_cur_note) > 40 else '') if _cur_note else '· kein Grund hinterlegt'}",
+                    expanded=False,
+                ):
+                    if not _cur_note:
+                        st.markdown(
+                            "<div style='color:#475569;font-size:.75rem;font-style:italic;margin-bottom:6px;'>"
+                            "ℹ️ Kein fundamentaler Grund hinterlegt</div>",
+                            unsafe_allow_html=True,
+                        )
+                    _new_note = st.text_area(
+                        "Notiz",
+                        value=_cur_note,
+                        key=f"note_ta_{i}",
+                        height=80,
+                        label_visibility="collapsed",
+                        placeholder="z.B. JP-Fiskaljahresende, US-Optionsverfall, Quarter-End Rebalancing …",
+                    )
+                    if st.button("💾 Speichern", key=f"note_save_{i}"):
+                        _notes_all[_nkey] = _new_note.strip()
+                        _save_notes(_notes_all)
+                        st.success("Notiz gespeichert.")
 
 
 def render_seasonality_lab() -> None:
@@ -2307,13 +2629,13 @@ def render_seasonality_lab() -> None:
         .season-stat {
             text-align: center;
             color: #9fb0c7;
-            font-size: .80rem;
+            font-size: .68rem;
             line-height: 1.15;
         }
         .season-stat strong {
             display: block;
             color: #63c7e8;
-            font-size: 1.08rem;
+            font-size: .90rem;
             line-height: 1.1;
             margin-bottom: 2px;
         }
@@ -3682,11 +4004,22 @@ def optimize_in_sample(
     in_end_year: int,
     min_trades: int,
     max_loss_streak: int,
-) -> tuple[dict | None, pd.DataFrame]:
-    """Optimize only inside the in-sample window. The OOS year is not touched here."""
+) -> tuple[dict | None, dict | None, pd.DataFrame]:
+    """
+    Optimize only inside the in-sample window. The OOS year is not touched here.
+
+    Returns (robust_params, naive_params, results_df).
+    - naive_params:  combo with the single highest Profit Factor (original behavior)
+    - robust_params: combo with the best average PF across its direct neighbours
+                     (±1 step in Cycle Length and ±1 step in Stop Loss %) — Plateau selection
+    Guardrails (min_trades, max_loss_streak) are applied before plateau scoring.
+    """
     rows = []
-    for cycle in cycles:
-        for stop_pct in stop_values:
+    # score_map: (cycle_idx, sl_idx) -> profit_factor for plateau lookup
+    score_map: dict[tuple[int, int], float] = {}
+
+    for c_idx, cycle in enumerate(cycles):
+        for s_idx, stop_pct in enumerate(stop_values):
             test_settings = Settings(
                 cycle_length=int(cycle),
                 smoothing=base_settings.smoothing,
@@ -3717,27 +4050,60 @@ def optimize_in_sample(
                 or pd.isna(metrics["Profit Factor"])
             ):
                 continue
+            pf = float(metrics["Profit Factor"])
+            score_map[(c_idx, s_idx)] = pf
             rows.append({
                 "Cycle Length": int(cycle),
                 "Stop Loss %": float(stop_pct),
                 "Trades": metrics["Trades"],
                 "Winrate": metrics["Winrate"],
-                "Profit Factor": metrics["Profit Factor"],
+                "Profit Factor": pf,
                 "Net Profit": metrics["Net Profit"],
                 "Max DD": metrics["Max DD"],
                 "Expectancy R": metrics["Expectancy R"],
                 "Max Loss Streak": metrics["Max Loss Streak"],
+                "_c_idx": c_idx,
+                "_s_idx": s_idx,
             })
 
     results = pd.DataFrame(rows)
     if results.empty:
-        return None, results
+        return None, None, results
 
     results = results.sort_values(
         ["Profit Factor", "Expectancy R", "Net Profit", "Max DD"],
         ascending=[False, False, False, False],
     ).reset_index(drop=True)
-    return results.iloc[0].to_dict(), results
+
+    # Naive: absolute maximum (original behavior)
+    naive_row = results.iloc[0]
+    naive_params = naive_row.drop(["_c_idx", "_s_idx"]).to_dict()
+
+    # Robust: best neighbourhood average (±1 in Cycle and SL dimensions)
+    n_cycles = len(cycles)
+    n_sl = len(stop_values)
+    best_avg = -np.inf
+    best_robust_row = naive_row  # fallback
+
+    for _, row in results.iterrows():
+        ci, si = int(row["_c_idx"]), int(row["_s_idx"])
+        neighbourhood = [score_map[(ci, si)]]
+        for dc in (-1, 0, 1):
+            for ds in (-1, 0, 1):
+                if dc == 0 and ds == 0:
+                    continue
+                nc, ns = ci + dc, si + ds
+                if 0 <= nc < n_cycles and 0 <= ns < n_sl and (nc, ns) in score_map:
+                    neighbourhood.append(score_map[(nc, ns)])
+        avg = float(np.mean(neighbourhood))
+        if avg > best_avg:
+            best_avg = avg
+            best_robust_row = row
+
+    robust_params = best_robust_row.drop(["_c_idx", "_s_idx"]).to_dict()
+
+    results = results.drop(columns=["_c_idx", "_s_idx"])
+    return robust_params, naive_params, results
 
 
 def evaluate_oos_year(
@@ -3775,6 +4141,65 @@ def evaluate_oos_year(
     return metrics, trades, equity
 
 
+def _build_equity_curve(trades_df: pd.DataFrame, initial_capital: float) -> pd.DataFrame:
+    if trades_df.empty:
+        return pd.DataFrame(columns=["date", "equity"])
+    t = trades_df.sort_values("exit_date").reset_index(drop=True)
+    return pd.DataFrame({"date": t["exit_date"], "equity": initial_capital + t["pnl"].cumsum()})
+
+
+def _wf_pool_stats(trades_df: pd.DataFrame, equity_df: pd.DataFrame) -> dict:
+    """Gepoolte OOS-Statistiken inkl. Wilcoxon und Wilson CI."""
+    if trades_df.empty:
+        return {}
+    pnl = trades_df["pnl"].tolist()
+    wins = [p for p in pnl if p > 0]
+    n, n_wins = len(pnl), len(wins)
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(p for p in pnl if p <= 0))
+    pf = gross_profit / gross_loss if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
+    wr = n_wins / n * 100 if n > 0 else 0.0
+
+    avg_r = float(trades_df["r_multiple"].mean()) if "r_multiple" in trades_df.columns else float("nan")
+
+    max_dd = float("nan")
+    if not equity_df.empty:
+        eq = equity_df["equity"]
+        dd = (eq - eq.cummax()) / eq.cummax() * 100
+        max_dd = float(abs(dd.min()))
+
+    # Wilcoxon Signed-Rank Test (einseitig: Edge > 0)
+    if n >= 8:
+        try:
+            w_stat, w_p = _scipy_stats.wilcoxon(pnl, alternative="greater")
+        except Exception:
+            w_stat, w_p = float("nan"), float("nan")
+    else:
+        w_stat, w_p = float("nan"), float("nan")
+
+    # Wilson 95% CI für Win Rate
+    z = _scipy_stats.norm.ppf(0.975)
+    if n > 0:
+        p_hat = n_wins / n
+        denom = 1 + z**2 / n
+        center = (p_hat + z**2 / (2 * n)) / denom
+        margin = (z * math.sqrt(p_hat * (1 - p_hat) / n + z**2 / (4 * n**2))) / denom
+        wi_lo, wi_hi = (center - margin) * 100, (center + margin) * 100
+    else:
+        wi_lo, wi_hi = 0.0, 100.0
+
+    return {
+        "n_trades": n,
+        "profit_factor": round(pf, 3),
+        "winrate": round(wr, 1),
+        "avg_r": round(avg_r, 3) if not math.isnan(avg_r) else "n/a",
+        "max_dd": round(max_dd, 2) if not math.isnan(max_dd) else "n/a",
+        "wilcoxon_p": round(w_p, 4) if not math.isnan(w_p) else "n/a",
+        "wilson_lo": round(wi_lo, 1),
+        "wilson_hi": round(wi_hi, 1),
+    }
+
+
 def run_walk_forward(
     asset: pd.DataFrame,
     comp: pd.DataFrame,
@@ -3786,106 +4211,132 @@ def run_walk_forward(
     stop_values: list[float],
     min_trades: int,
     max_loss_streak: int,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
-    """Run rolling walk-forward optimization without using the OOS year in-sample."""
-    yearly_rows = []
-    trade_rows = []
-    optimization_rows = []
+    progress_callback=None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    """
+    Run rolling walk-forward optimization without using the OOS year in-sample.
 
-    for oos_year in range(int(wf_start_year), int(wf_end_year) + 1):
-        in_end = oos_year - 1
+    Returns (yearly_robust, yearly_naive, trades_robust, trades_naive,
+             equity_robust, equity_naive, equity_global, summary_robust)
+    - yearly_*:  per-fold results for robust and naive selection
+    - trades_*:  pooled OOS trades for each mode
+    - equity_*:  chained OOS equity curve for each mode
+    - equity_global: full-period IS backtest (global benchmark, Aufgabe 3)
+    - summary_robust: overall stats dict for robust mode
+    """
+    robust_yearly_rows = []
+    naive_yearly_rows  = []
+    robust_trade_rows  = []
+    naive_trade_rows   = []
+    oos_years = list(range(int(wf_start_year), int(wf_end_year) + 1))
+    n_folds   = len(oos_years)
+
+    for fold_i, oos_year in enumerate(oos_years):
+        in_end   = oos_year - 1
         in_start = oos_year - int(in_sample_years)
 
-        best_params, opt_results = optimize_in_sample(
-            asset,
-            comp,
-            base_settings,
-            cycles,
-            stop_values,
-            in_start,
-            in_end,
-            min_trades,
-            max_loss_streak,
+        if progress_callback:
+            progress_callback(fold_i / (n_folds + 1), f"Fold {fold_i+1}/{n_folds}: IS {in_start}–{in_end} → OOS {oos_year}")
+
+        robust_params, naive_params, opt_results = optimize_in_sample(
+            asset, comp, base_settings, cycles, stop_values,
+            in_start, in_end, min_trades, max_loss_streak,
         )
 
-        if not opt_results.empty:
-            opt_results = opt_results.copy()
-            opt_results["OOS Year"] = oos_year
-            opt_results["In Sample"] = f"{in_start}-{in_end}"
-            optimization_rows.append(opt_results)
+        _no_params_row = {
+            "OOS Jahr": oos_year, "In Sample Zeitraum": f"{in_start}-{in_end}",
+            "Cycle Length": np.nan, "Stop Loss %": np.nan, "Trades": 0,
+            "Winrate": np.nan, "Profit Factor": np.nan, "Net Profit": 0.0,
+            "Max DD": np.nan, "Expectancy R": np.nan, "Max Loss Streak": np.nan,
+            "Status": "No valid in-sample params",
+        }
 
-        if best_params is None:
+        if robust_params is None:
+            robust_yearly_rows.append(_no_params_row.copy())
+            naive_yearly_rows.append(_no_params_row.copy())
+            continue
+
+        # Log robustness sacrifice
+        naive_pf  = float(naive_params.get("Profit Factor", 0) or 0)
+        robust_pf = float(robust_params.get("Profit Factor", 0) or 0)
+        sacrifice = (naive_pf - robust_pf) / abs(naive_pf) * 100 if naive_pf != 0 else 0.0
+
+        for mode, params, yearly_rows, trade_rows in [
+            ("robust", robust_params, robust_yearly_rows, robust_trade_rows),
+            ("naive",  naive_params,  naive_yearly_rows,  naive_trade_rows),
+        ]:
+            metrics, trades, _ = evaluate_oos_year(asset, comp, base_settings, params, oos_year)
             yearly_rows.append({
                 "OOS Jahr": oos_year,
                 "In Sample Zeitraum": f"{in_start}-{in_end}",
-                "Cycle Length": np.nan,
-                "Stop Loss %": np.nan,
-                "Trades": 0,
-                "Winrate": np.nan,
-                "Profit Factor": np.nan,
-                "Net Profit": 0.0,
-                "Max DD": np.nan,
-                "Expectancy R": np.nan,
-                "Max Loss Streak": np.nan,
-                "Status": "No valid in-sample params",
+                "Cycle Length": int(params["Cycle Length"]),
+                "Stop Loss %": float(params["Stop Loss %"]),
+                "IS PF": round(float(params.get("Profit Factor", 0) or 0), 3),
+                "Robustheits-Opfer %": round(sacrifice, 1) if mode == "robust" else "-",
+                "Trades": metrics["Trades"],
+                "Winrate": metrics["Winrate"],
+                "Profit Factor": metrics["Profit Factor"],
+                "Net Profit": metrics["Net Profit"],
+                "Max DD": metrics["Max DD"],
+                "Expectancy R": metrics["Expectancy R"],
+                "Max Loss Streak": metrics["Max Loss Streak"],
+                "Status": "OK",
             })
-            continue
+            if not trades.empty:
+                t = trades.copy()
+                t.insert(0, "OOS Jahr", oos_year)
+                trade_rows.append(t[["OOS Jahr", "entry_date", "exit_date", "side", "entry", "exit", "pnl", "r_multiple"]])
 
-        metrics, trades, _ = evaluate_oos_year(asset, comp, base_settings, best_params, oos_year)
-        yearly_rows.append({
-            "OOS Jahr": oos_year,
-            "In Sample Zeitraum": f"{in_start}-{in_end}",
-            "Cycle Length": int(best_params["Cycle Length"]),
-            "Stop Loss %": float(best_params["Stop Loss %"]),
-            "Trades": metrics["Trades"],
-            "Winrate": metrics["Winrate"],
-            "Profit Factor": metrics["Profit Factor"],
-            "Net Profit": metrics["Net Profit"],
-            "Max DD": metrics["Max DD"],
-            "Expectancy R": metrics["Expectancy R"],
-            "Max Loss Streak": metrics["Max Loss Streak"],
-            "Status": "OK",
-        })
+    yearly_robust = pd.DataFrame(robust_yearly_rows)
+    yearly_naive  = pd.DataFrame(naive_yearly_rows)
+    trades_robust = pd.concat(robust_trade_rows, ignore_index=True) if robust_trade_rows else pd.DataFrame(
+        columns=["OOS Jahr", "entry_date", "exit_date", "side", "entry", "exit", "pnl", "r_multiple"])
+    trades_naive  = pd.concat(naive_trade_rows, ignore_index=True) if naive_trade_rows else pd.DataFrame(
+        columns=["OOS Jahr", "entry_date", "exit_date", "side", "entry", "exit", "pnl", "r_multiple"])
 
-        if not trades.empty:
-            oos_trades = trades.copy()
-            oos_trades.insert(0, "OOS Jahr", oos_year)
-            trade_rows.append(oos_trades[["OOS Jahr", "entry_date", "exit_date", "side", "entry", "exit", "pnl", "r_multiple"]])
+    equity_robust = _build_equity_curve(trades_robust, base_settings.initial_capital)
+    equity_naive  = _build_equity_curve(trades_naive,  base_settings.initial_capital)
 
-    yearly = pd.DataFrame(yearly_rows)
-    wf_trades = pd.concat(trade_rows, ignore_index=True) if trade_rows else pd.DataFrame(
-        columns=["OOS Jahr", "entry_date", "exit_date", "side", "entry", "exit", "pnl", "r_multiple"]
+    # ── Aufgabe 3: Globaler IS-Benchmark (kein Fold-Split) ───────────────────
+    if progress_callback:
+        progress_callback(n_folds / (n_folds + 1), "Globaler Benchmark (gesamter Zeitraum)...")
+
+    global_robust_params, _, global_opt = optimize_in_sample(
+        asset, comp, base_settings, cycles, stop_values,
+        wf_start_year, wf_end_year, min_trades, max_loss_streak,
     )
-    optimization = pd.concat(optimization_rows, ignore_index=True) if optimization_rows else pd.DataFrame()
-
-    if wf_trades.empty:
-        equity_curve = pd.DataFrame(columns=["date", "equity"])
-        summary = {
-            "OOS Jahre": len(yearly),
-            "OOS Trades": 0,
-            "Avg Profit Factor": np.nan,
-            "Avg Expectancy R": np.nan,
-            "Walk Forward Winrate": np.nan,
-            "Walk Forward Max DD": np.nan,
-        }
+    if global_robust_params is not None:
+        global_settings = Settings(
+            cycle_length=int(global_robust_params["Cycle Length"]),
+            smoothing=base_settings.smoothing, softness=base_settings.softness,
+            mode=base_settings.mode, trade_direction=base_settings.trade_direction,
+            start_year=int(wf_start_year), end_year=int(wf_end_year),
+            upper=base_settings.upper, lower=base_settings.lower,
+            risk_pct=base_settings.risk_pct, stop_pct=float(global_robust_params["Stop Loss %"]),
+            tp_mode=base_settings.tp_mode, rr=base_settings.rr,
+            fixed_tp_pct=base_settings.fixed_tp_pct, exit_on_zero=base_settings.exit_on_zero,
+            time_exit=base_settings.time_exit, exit_after_bars=base_settings.exit_after_bars,
+            initial_capital=base_settings.initial_capital,
+            commission_pct=base_settings.commission_pct, slippage_pct=base_settings.slippage_pct,
+        )
+        global_df = calculate_oscillator(asset, comp, global_settings)
+        global_trades, _, _ = backtest(global_df, global_settings)
+        equity_global = _build_equity_curve(global_trades, base_settings.initial_capital)
     else:
-        wf_trades = wf_trades.sort_values("exit_date").reset_index(drop=True)
-        equity_curve = pd.DataFrame({
-            "date": wf_trades["exit_date"],
-            "equity": base_settings.initial_capital + wf_trades["pnl"].cumsum(),
-        })
-        dd = equity_curve["equity"] / equity_curve["equity"].cummax() - 1
-        wins = wf_trades[wf_trades["pnl"] > 0]
-        summary = {
-            "OOS Jahre": len(yearly),
-            "OOS Trades": len(wf_trades),
-            "Avg Profit Factor": yearly["Profit Factor"].replace([np.inf, -np.inf], np.nan).mean(),
-            "Avg Expectancy R": yearly["Expectancy R"].mean(),
-            "Walk Forward Winrate": len(wins) / len(wf_trades) * 100,
-            "Walk Forward Max DD": dd.min() * 100,
-        }
+        equity_global = pd.DataFrame(columns=["date", "equity"])
 
-    return yearly, wf_trades, equity_curve, summary
+    # ── Summary für robuste Auswahl ────────────────────────────────────────
+    pool_stats = _wf_pool_stats(trades_robust, equity_robust)
+    summary = {
+        "OOS Jahre":          len(yearly_robust),
+        "OOS Trades":         pool_stats.get("n_trades", 0),
+        "Avg Profit Factor":  yearly_robust["Profit Factor"].replace([np.inf, -np.inf], np.nan).mean() if not yearly_robust.empty else np.nan,
+        "Avg Expectancy R":   yearly_robust["Expectancy R"].mean() if not yearly_robust.empty else np.nan,
+        "Walk Forward Winrate": pool_stats.get("winrate", np.nan),
+        "Walk Forward Max DD":  pool_stats.get("max_dd", np.nan),
+    }
+
+    return yearly_robust, yearly_naive, trades_robust, trades_naive, equity_robust, equity_naive, equity_global, summary
 
 
 def plot_backtest_charts(df: pd.DataFrame, trades: pd.DataFrame, equity: pd.DataFrame, settings: Settings) -> None:
@@ -4516,22 +4967,21 @@ with st.sidebar:
         sl_step = 0.05
         run_sl_scan = False
         run_radar = False
-
-        st.header("Walk Forward Analysis")
-        wf_asset_preset = st.selectbox("WF Asset", list(ASSET_PRESETS.keys()))
-        wf_comp_preset = st.selectbox("WF Comparison Asset", list(COMPARISON_PRESETS.keys()))
-        wf_start_year = st.number_input("Walk Forward Start Year", 1900, 2100, 2015)
-        wf_end_year = st.number_input("Walk Forward End Year", 1900, 2100, 2026)
-        wf_in_sample_years = st.number_input("In Sample Window Years", 1, 50, 20)
-        wf_cycle_from = st.number_input("WF Cycle From", 2, 100, 5)
-        wf_cycle_to = st.number_input("WF Cycle To", 2, 100, 30)
-        wf_cycle_step = st.number_input("WF Cycle Step", 1, 20, 1)
-        wf_sl_from = st.number_input("WF Stop Loss From %", 0.05, 20.0, 0.25, step=0.05)
-        wf_sl_to = st.number_input("WF Stop Loss To %", 0.05, 20.0, 2.00, step=0.05)
-        wf_sl_step = st.number_input("WF Stop Loss Step %", 0.05, 5.0, 0.05, step=0.05)
-        wf_min_trades = st.number_input("WF Min In-Sample Trades", 1, 1000, 30)
-        wf_max_loss_streak = st.number_input("WF Max In-Sample Loss Streak", 0, 100, 5)
-        run_wf = st.button("Run Walk Forward", type="primary")
+        # WFA inputs are rendered inline in the main content area (like Cycle Scanner)
+        wf_asset_preset = list(ASSET_PRESETS.keys())[0]
+        wf_comp_preset = list(COMPARISON_PRESETS.keys())[0]
+        wf_start_year = 2015
+        wf_end_year = 2026
+        wf_in_sample_years = 20
+        wf_cycle_from = 5
+        wf_cycle_to = 30
+        wf_cycle_step = 1
+        wf_sl_from = 0.25
+        wf_sl_to = 2.0
+        wf_sl_step = 0.05
+        wf_min_trades = 30
+        wf_max_loss_streak = 5
+        run_wf = False
     elif test_mode == "TACO Radar":
         scan_assets = []
         scan_comps = []
@@ -4898,73 +5348,334 @@ with st.expander("Info: Wie funktioniert der TACO Backtest?", expanded=True):
     )
 
 if test_mode == "Walk Forward Analysis":
-    st.subheader("Walk Forward Analysis")
+    # ── Inline-Toolbar (wie Cycle Scanner) ───────────────────────────────────
+    st.markdown(
+        "<div style='font-size:.7rem;text-transform:uppercase;letter-spacing:.09em;"
+        "color:#9fb0c7;font-weight:700;margin-bottom:4px;'>Walk Forward Analysis — Assets & Parameter</div>",
+        unsafe_allow_html=True,
+    )
+    _wf_row1 = st.columns([2, 2, 1])
+    with _wf_row1[0]:
+        wf_asset_presets = st.multiselect(
+            "Assets",
+            list(ASSET_PRESETS.keys()),
+            default=["UK100 proxy: FTSE 100 Index (^FTSE)"],
+            key="wf_assets",
+        )
+    with _wf_row1[1]:
+        wf_comp_preset = st.selectbox("Comparison Asset", list(COMPARISON_PRESETS.keys()), key="wf_comp")
+    with _wf_row1[2]:
+        _wf_yc = st.columns(2)
+        wf_start_year = _wf_yc[0].number_input("Start Jahr", 1900, 2100, 2015, key="wf_sy")
+        wf_end_year   = _wf_yc[1].number_input("End Jahr",   1900, 2100, 2026, key="wf_ey")
+
+    _wf_row2 = st.columns([1, 1, 1, 1, 1, 1, 1, 1.4])
+    with _wf_row2[0]:
+        wf_in_sample_years = st.number_input("IS-Fenster (J)", 1, 50, 20, key="wf_is")
+    with _wf_row2[1]:
+        wf_cycle_from = st.number_input("Cycle Von", 2, 100, 5, key="wf_cf")
+    with _wf_row2[2]:
+        wf_cycle_to = st.number_input("Cycle Bis", 2, 100, 30, key="wf_ct")
+    with _wf_row2[3]:
+        wf_cycle_step = st.number_input("Step", 1, 20, 1, key="wf_cs")
+    with _wf_row2[4]:
+        wf_sl_from = st.number_input("SL Von %", 0.05, 20.0, 0.25, step=0.05, key="wf_slf")
+    with _wf_row2[5]:
+        wf_sl_to = st.number_input("SL Bis %", 0.05, 20.0, 2.0, step=0.05, key="wf_slt")
+    with _wf_row2[6]:
+        wf_min_trades = st.number_input("Min Trades", 1, 1000, 30, key="wf_mt")
+    with _wf_row2[7]:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        run_wf = st.button("Run Walk Forward", type="primary", use_container_width=True, key="wf_run")
+
     st.caption(
-        "Realistische Out-of-Sample-Validierung: Jedes Testjahr wird nur mit Parametern gehandelt, "
-        "die aus den vorherigen In-Sample-Jahren bestimmt wurden. Das OOS-Jahr ist nie Teil der Optimierung."
+        "Robuste Auswahl: Plateau-Methode (bester Nachbar-Durchschnitt ±1 Schritt in Cycle+SL). "
+        "Jedes OOS-Jahr wird nur mit IS-optimierten Parametern gehandelt — kein Lookahead."
     )
 
-    if not run_wf:
-        st.info("Waehle links Asset, Comparison, Fenster und Optimierungsbereiche aus. Danach auf Run Walk Forward klicken.")
+    # ── Cache-Helfer ─────────────────────────────────────────────────────────
+    import pickle, json as _json
+
+    # /tmp überlebt Soft-Restarts auf Streamlit Cloud (länger als App-Verzeichnis)
+    _WF_CACHE_FILE = Path("/tmp/taco_wf_cache.pkl")
+
+    def _wf_results_to_json(results: dict) -> str:
+        """Serialisiert Ergebnisse zu JSON (für Download-Button)."""
+        out = {}
+        for asset, res in results.items():
+            out[asset] = {k: v.to_json(date_format="iso") if isinstance(v, pd.DataFrame) else v
+                          for k, v in res.items()}
+        return _json.dumps(out)
+
+    def _wf_results_from_json(raw: str) -> dict:
+        """Deserialisiert JSON zurück zu DataFrames."""
+        data = _json.loads(raw)
+        results = {}
+        for asset, res in data.items():
+            results[asset] = {}
+            for k, v in res.items():
+                if isinstance(v, str):
+                    try:
+                        results[asset][k] = pd.read_json(v)
+                        # Datumsspalten wiederherstellen
+                        for col in ("date", "entry_date", "exit_date"):
+                            if col in results[asset][k].columns:
+                                results[asset][k][col] = pd.to_datetime(results[asset][k][col])
+                    except Exception:
+                        results[asset][k] = v
+                else:
+                    results[asset][k] = v
+        return results
+
+    def _wf_save_tmp(results: dict, label: str) -> None:
+        try:
+            _WF_CACHE_FILE.write_bytes(pickle.dumps({"results": results, "label": label}))
+        except Exception:
+            pass
+
+    def _wf_load_tmp() -> tuple[dict | None, str]:
+        if not _WF_CACHE_FILE.exists():
+            return None, ""
+        try:
+            data = pickle.loads(_WF_CACHE_FILE.read_bytes())
+            return data.get("results"), data.get("label", "")
+        except Exception:
+            return None, ""
+
+    # L1: session_state (überlebt Page-Reload)
+    # L2: /tmp Datei (überlebt Soft-Restart)
+    # L3: JSON-Upload durch User (überlebt Deployment)
+    if "wf_results" not in st.session_state:
+        _cached, _cached_label = _wf_load_tmp()
+        if _cached:
+            st.session_state["wf_results"] = _cached
+            st.session_state["wf_params_label"] = _cached_label
+
+    # JSON-Upload-Widget (immer sichtbar, auch ohne Cache)
+    _upload_col, _info_col = st.columns([1, 3])
+    with _upload_col:
+        _uploaded = st.file_uploader("💾 Ergebnisse laden (.json)", type="json",
+                                     key="wf_upload", label_visibility="collapsed",
+                                     help="Lade eine zuvor gespeicherte WFA-Ergebnis-Datei hoch")
+    if _uploaded is not None and "wf_upload_name" not in st.session_state or \
+       (_uploaded is not None and st.session_state.get("wf_upload_name") != _uploaded.name):
+        try:
+            _loaded = _wf_results_from_json(_uploaded.read().decode())
+            st.session_state["wf_results"] = _loaded
+            st.session_state["wf_params_label"] = f"Geladen aus: {_uploaded.name}"
+            st.session_state["wf_upload_name"] = _uploaded.name
+            _wf_save_tmp(_loaded, st.session_state["wf_params_label"])
+            st.success("✅ Ergebnisse erfolgreich geladen!")
+        except Exception as _e:
+            st.error(f"Fehler beim Laden: {_e}")
+
+    _wf_has_cache = "wf_results" in st.session_state
+
+    if not run_wf and not _wf_has_cache:
+        st.info("Assets und Parameter oben auswaehlen, dann **Run Walk Forward** klicken. "
+                "Oder eine gespeicherte Ergebnis-Datei oben hochladen.")
         st.stop()
 
-    if wf_end_year < wf_start_year:
-        st.error("Walk Forward End Year muss groesser oder gleich Start Year sein.")
-        st.stop()
-    if wf_cycle_to < wf_cycle_from:
-        st.error("WF Cycle To muss groesser oder gleich WF Cycle From sein.")
-        st.stop()
-    if wf_sl_to < wf_sl_from:
-        st.error("WF Stop Loss To muss groesser oder gleich WF Stop Loss From sein.")
-        st.stop()
+    if run_wf:
+        if not wf_asset_presets:
+            st.error("Bitte mindestens ein Asset auswaehlen.")
+            st.stop()
+        if wf_end_year < wf_start_year:
+            st.error("End Jahr muss groesser oder gleich Start Jahr sein.")
+            st.stop()
+        if wf_cycle_to < wf_cycle_from:
+            st.error("Cycle Bis muss groesser oder gleich Cycle Von sein.")
+            st.stop()
+        if wf_sl_to < wf_sl_from:
+            st.error("SL Bis muss groesser oder gleich SL Von sein.")
+            st.stop()
 
-    wf_asset_symbol = ASSET_PRESETS[wf_asset_preset]
-    wf_comp_symbol = COMPARISON_PRESETS[wf_comp_preset]
-    wf_asset_data = load_yahoo(wf_asset_symbol)
-    wf_comp_data = load_yahoo(wf_comp_symbol)
-    if wf_asset_data is None or wf_comp_data is None:
-        st.error("Yahoo-Daten konnten fuer die Walk Forward Analysis nicht geladen werden.")
-        st.stop()
+        wf_cycles = list(range(int(wf_cycle_from), int(wf_cycle_to) + 1, int(wf_cycle_step)))
+        wf_stop_values = np.round(np.arange(float(wf_sl_from), float(wf_sl_to) + float(wf_sl_step) / 2, float(wf_sl_step)), 4).tolist()
+        wf_comp_symbol = COMPARISON_PRESETS[wf_comp_preset]
+        wf_comp_data = load_yahoo(wf_comp_symbol)
+        if wf_comp_data is None:
+            st.error(f"Daten fuer Comparison Asset '{wf_comp_preset}' konnten nicht geladen werden.")
+            st.stop()
 
-    wf_cycles = list(range(int(wf_cycle_from), int(wf_cycle_to) + 1, int(wf_cycle_step)))
-    wf_stop_values = np.round(np.arange(float(wf_sl_from), float(wf_sl_to) + float(wf_sl_step) / 2, float(wf_sl_step)), 4).tolist()
+        _COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899",
+                   "#06b6d4", "#f97316", "#84cc16", "#ef4444", "#a78bfa"]
 
-    with st.spinner("Walk Forward Analysis laeuft. Je breiter Cycle/SL-Range, desto laenger dauert es."):
-        wf_yearly, wf_trades, wf_equity, wf_summary = run_walk_forward(
-            wf_asset_data,
-            wf_comp_data,
-            settings,
-            int(wf_start_year),
-            int(wf_end_year),
-            int(wf_in_sample_years),
-            wf_cycles,
-            wf_stop_values,
-            int(wf_min_trades),
-            int(wf_max_loss_streak),
+        all_asset_results = {}
+        _wf_progress_bar = st.progress(0, text="Starte Walk Forward Analysis...")
+
+        for _ai, _asset_name in enumerate(wf_asset_presets):
+            _asset_symbol = ASSET_PRESETS[_asset_name]
+            _asset_data = load_yahoo(_asset_symbol)
+            if _asset_data is None:
+                st.warning(f"Daten fuer '{_asset_name}' konnten nicht geladen werden — uebersprungen.")
+                continue
+
+            def _wf_progress(frac: float, txt: str, _ai=_ai, _n=len(wf_asset_presets), _name=_asset_name) -> None:
+                overall = (_ai + frac) / _n
+                _wf_progress_bar.progress(min(overall, 1.0), text=f"[{_ai+1}/{_n}] {_name}: {txt}")
+
+            (yr_r, yr_n, tr_r, tr_n,
+             eq_r, eq_n, eq_g, summ) = run_walk_forward(
+                _asset_data, wf_comp_data, settings,
+                int(wf_start_year), int(wf_end_year), int(wf_in_sample_years),
+                wf_cycles, wf_stop_values, int(wf_min_trades), int(wf_max_loss_streak),
+                progress_callback=_wf_progress,
+            )
+            all_asset_results[_asset_name] = {
+                "yearly_r": yr_r, "yearly_n": yr_n,
+                "trades_r": tr_r, "trades_n": tr_n,
+                "equity_r": eq_r, "equity_n": eq_n,
+                "equity_g": eq_g, "summary":  summ,
+            }
+
+        _wf_progress_bar.empty()
+
+        if not all_asset_results:
+            st.error("Keine Ergebnisse — keine Asset-Daten konnten geladen werden.")
+            st.stop()
+
+        # Ergebnisse in Session State UND Datei speichern
+        _wf_label = (
+            f"Assets: {', '.join(a.split(' proxy:')[0] for a in wf_asset_presets)} | "
+            f"Comp: {wf_comp_preset.split(' proxy:')[0]} | "
+            f"IS: {wf_in_sample_years}J | {wf_start_year}–{wf_end_year} | "
+            f"Cycle {wf_cycle_from}–{wf_cycle_to} Step {wf_cycle_step} | "
+            f"SL {wf_sl_from}–{wf_sl_to}%"
+        )
+        st.session_state["wf_results"] = all_asset_results
+        st.session_state["wf_params_label"] = _wf_label
+        _wf_save_tmp(all_asset_results, _wf_label)
+        # JSON für dauerhaften Download bereitstellen
+        st.session_state["wf_json"] = _wf_results_to_json(all_asset_results)
+        st.session_state["wf_json_name"] = f"wfa_ergebnisse_{wf_start_year}_{wf_end_year}.json"
+
+    # Ab hier: gecachte oder frisch berechnete Ergebnisse anzeigen
+    all_asset_results = st.session_state["wf_results"]
+    _COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899",
+               "#06b6d4", "#f97316", "#84cc16", "#ef4444", "#a78bfa"]
+
+    _status_c1, _status_c2 = st.columns([3, 1])
+    _status_c1.caption(f"💾 {st.session_state.get('wf_params_label', '')} — "
+                       "Neu berechnen: 'Run Walk Forward' klicken.")
+    # JSON-Download-Button — immer anzeigen sobald Ergebnisse vorhanden
+    if "wf_json" not in st.session_state and "wf_results" in st.session_state:
+        st.session_state["wf_json"] = _wf_results_to_json(st.session_state["wf_results"])
+        st.session_state["wf_json_name"] = "wfa_ergebnisse.json"
+    if "wf_json" in st.session_state:
+        _status_c2.download_button(
+            "⬇️ Ergebnisse sichern",
+            data=st.session_state["wf_json"],
+            file_name=st.session_state.get("wf_json_name", "wfa_ergebnisse.json"),
+            mime="application/json",
+            help="Datei lokal speichern und beim nächsten Mal oben wieder hochladen",
+            key="wf_dl_results",
         )
 
-    st.subheader("Walk Forward Gesamtauswertung")
-    summary_cols = st.columns(6)
-    for col, (key, value) in zip(summary_cols, wf_summary.items()):
-        col.metric(key, "n/a" if pd.isna(value) else f"{value:,.2f}")
+    # ── Übersichtstabelle alle Assets ─────────────────────────────────────────
+    st.subheader("Übersicht alle Assets (Robuste Auswahl)")
+    _overview_rows = []
+    for _name, _res in all_asset_results.items():
+        _s = _res["summary"]
+        _sr = _wf_pool_stats(_res["trades_r"], _res["equity_r"])
+        _label = _name.split(" proxy:")[0].replace(" proxy", "")
+        _overview_rows.append({
+            "Asset":          _label,
+            "OOS Jahre":      _s.get("OOS Jahre", 0),
+            "OOS Trades":     _s.get("OOS Trades", 0),
+            "Profit Factor":  round(float(_s.get("Avg Profit Factor") or 0), 2),
+            "Win Rate %":     _sr.get("winrate", "n/a"),
+            "Avg R":          _sr.get("avg_r", "n/a"),
+            "Max DD %":       _sr.get("max_dd", "n/a"),
+            "Wilcoxon p":     _sr.get("wilcoxon_p", "n/a"),
+            "Wilson CI":      f"{_sr.get('wilson_lo','?')}–{_sr.get('wilson_hi','?')}%",
+        })
+    st.dataframe(pd.DataFrame(_overview_rows).set_index("Asset"), use_container_width=True)
 
-    if not wf_equity.empty:
-        wf_equity_fig = go.Figure()
-        wf_equity_fig.add_trace(go.Scatter(x=wf_equity["date"], y=wf_equity["equity"], mode="lines", name="Walk Forward Equity"))
-        wf_equity_fig.update_layout(height=360, margin=dict(l=20, r=20, t=30, b=20), yaxis_title="Equity")
-        st.plotly_chart(wf_equity_fig, use_container_width=True)
+    # ── Equity-Chart: alle Assets übereinander ────────────────────────────────
+    st.subheader("Equity-Kurven — Robuste WFA OOS pro Asset")
+    _eq_fig = go.Figure()
+    for _i, (_name, _res) in enumerate(all_asset_results.items()):
+        _eq = _res["equity_r"]
+        if _eq.empty:
+            continue
+        _label = _name.split(" proxy:")[0].replace(" proxy", "")
+        _color = _COLORS[_i % len(_COLORS)]
+        _eq_fig.add_trace(go.Scatter(
+            x=_eq["date"], y=_eq["equity"],
+            mode="lines", name=f"{_label} (robust)",
+            line=dict(color=_color, width=2),
+        ))
+        _eq_g = _res["equity_g"]
+        if not _eq_g.empty:
+            _eq_fig.add_trace(go.Scatter(
+                x=_eq_g["date"], y=_eq_g["equity"],
+                mode="lines", name=f"{_label} (IS-Benchmark)",
+                line=dict(color=_color, width=1.2, dash="dash"),
+                opacity=0.5, showlegend=True,
+            ))
 
-    st.subheader("Walk Forward Jahresergebnisse")
-    st.dataframe(wf_yearly, use_container_width=True)
+    _eq_fig.add_hline(y=settings.initial_capital, line_dash="dot",
+                      line_color="rgba(150,150,150,0.5)", annotation_text="Startkapital")
+    _eq_fig.update_layout(
+        height=460, margin=dict(l=20, r=20, t=30, b=20),
+        yaxis_title="Equity",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=10)),
+    )
+    st.plotly_chart(_eq_fig, use_container_width=True)
 
-    st.subheader("Walk Forward Trades")
-    st.dataframe(wf_trades, use_container_width=True)
+    # ── Detail pro Asset (ausklappbar) ────────────────────────────────────────
+    st.subheader("Detail pro Asset")
+    for _name, _res in all_asset_results.items():
+        _label = _name.split(" proxy:")[0].replace(" proxy", "")
+        with st.expander(f"📊 {_label}"):
+            _sr = _wf_pool_stats(_res["trades_r"], _res["equity_r"])
+            _sn = _wf_pool_stats(_res["trades_n"], _res["equity_n"])
 
-    yearly_csv = wf_yearly.to_csv(index=False).encode("utf-8")
-    trades_csv = wf_trades.to_csv(index=False).encode("utf-8")
-    col_a, col_b = st.columns(2)
-    col_a.download_button("WF Jahresergebnisse als CSV laden", yearly_csv, "taco_walk_forward_years.csv", "text/csv")
-    col_b.download_button("WF Trades als CSV laden", trades_csv, "taco_walk_forward_trades.csv", "text/csv")
+            # Metriken
+            _mc = st.columns(6)
+            _mc[0].metric("OOS Trades",    _sr.get("n_trades", 0))
+            _mc[1].metric("Profit Factor", _sr.get("profit_factor", "n/a"))
+            _mc[2].metric("Win Rate",      f"{_sr.get('winrate', 0):.1f}%")
+            _mc[3].metric("Avg R",         _sr.get("avg_r", "n/a"))
+            _mc[4].metric("Max DD",        f"{_sr.get('max_dd', 'n/a')}%")
+            _wp = _sr.get("wilcoxon_p", "n/a")
+            _sig = ("🟢" if isinstance(_wp, float) and _wp < 0.05
+                    else ("🔴" if isinstance(_wp, float) else "—"))
+            _mc[5].metric("Wilcoxon p", f"{_wp} {_sig}")
+
+            # Überanpassungs-Gap
+            if not _res["equity_r"].empty and not _res["equity_g"].empty:
+                _ic = settings.initial_capital
+                _wr = (_res["equity_r"]["equity"].iloc[-1] / _ic - 1) * 100
+                _wg = (_res["equity_g"]["equity"].iloc[-1] / _ic - 1) * 100
+                _gc1, _gc2, _gc3 = st.columns(3)
+                _gc1.metric("WFA OOS Rendite", f"{_wr:.1f}%")
+                _gc2.metric("IS-Benchmark Rendite", f"{_wg:.1f}%")
+                _gc3.metric("Ueberanpassungs-Gap", f"{_wg - _wr:+.1f}%", delta_color="inverse")
+
+            # Jahresergebnisse
+            _t1, _t2 = st.tabs(["Robust", "Naiv"])
+            with _t1:
+                st.dataframe(_res["yearly_r"], use_container_width=True)
+            with _t2:
+                st.dataframe(_res["yearly_n"], use_container_width=True)
+
+            # Downloads
+            _dc1, _dc2 = st.columns(2)
+            _dc1.download_button(
+                f"CSV Robust ({_label})",
+                _res["yearly_r"].to_csv(index=False).encode(),
+                f"wf_{_label}_robust.csv", "text/csv",
+                key=f"dl_r_{_name}",
+            )
+            _dc2.download_button(
+                f"CSV Naiv ({_label})",
+                _res["yearly_n"].to_csv(index=False).encode(),
+                f"wf_{_label}_naiv.csv", "text/csv",
+                key=f"dl_n_{_name}",
+            )
+
     st.stop()
 
 if test_mode == "TACO Radar":
