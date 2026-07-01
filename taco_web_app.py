@@ -6349,27 +6349,84 @@ Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeiti
 
     if len(coin_trades_all) < 2:
         st.info(f"{'1 Coin gespeichert' if len(coin_trades_all) == 1 else 'Noch keine Coins gespeichert'}. "
-                f"Führe WFA für mindestens 2 Coins durch (z.B. BTC + ETH), dann erscheint hier die Multi-Coin Simulation.")
+                f"Führe WFA für mindestens 2 Coins durch, dann erscheint hier die Multi-Coin Simulation.")
         if coin_trades_all:
             done_ticker = list(coin_trades_all.keys())[0]
             done_name   = coin_trades_all[done_ticker]["symbol_name"]
             st.success(f"✓ Bereits gespeichert: **{done_name}** ({len(coin_trades_all[done_ticker]['trades'])} Trades)")
     else:
-        # Übersicht welche Coins verfügbar
-        st.markdown("**Verfügbare Coins (WFA abgeschlossen):**")
-        avail_cols = st.columns(min(len(coin_trades_all), 4))
-        for ci, (tkr, cdata) in enumerate(coin_trades_all.items()):
-            n_tr = len(cdata["trades"])
-            avail_cols[ci % 4].success(f"✓ **{cdata['symbol_name'].split('—')[0].strip()}**\n{n_tr} Trades")
+        # ── Coin-Ranking Tabelle ─────────────────────────────────────────────
+        st.markdown("### Coin-Ranking nach WFA-Qualität")
+        st.caption("Nur Coins mit ✅ Empfohlen werden automatisch für die Simulation vorausgewählt.")
+
+        ranking_rows = []
+        auto_select  = []
+        for tkr, cdata in coin_trades_all.items():
+            tr = cdata["trades"]
+            name = cdata["symbol_name"].split("—")[0].strip()
+            if tr.empty:
+                ranking_rows.append({"Coin": name, "Ticker": tkr, "Trades": 0,
+                                     "Win-Rate": "—", "Profit Factor": "—",
+                                     "Ø Ret/Trade": "—", "Empfehlung": "❌ Keine Daten"})
+                continue
+            rets  = tr["PnL $"].values
+            n     = len(rets)
+            wr    = (rets > 0).mean() * 100
+            gp    = rets[rets > 0].sum()
+            gl    = abs(rets[rets <= 0].sum())
+            pf    = gp / gl if gl > 0 else float("inf")
+            avg_r = rets.mean()
+            # Qualitätsschwellen
+            qualified = wr >= 45 and pf >= 1.2 and n >= 20
+            if qualified:
+                auto_select.append(tkr)
+                rec = "✅ Empfohlen"
+            else:
+                reasons = []
+                if wr < 45:  reasons.append(f"Win-Rate {wr:.0f}%<45%")
+                if pf < 1.2: reasons.append(f"PF {pf:.2f}<1.2")
+                if n < 20:   reasons.append(f"Nur {n} Trades")
+                rec = "❌ " + " · ".join(reasons)
+            ranking_rows.append({
+                "Coin": name, "Ticker": tkr, "Trades": n,
+                "Win-Rate": f"{wr:.1f}%",
+                "Profit Factor": f"{pf:.2f}",
+                "Ø Ret/Trade ($)": f"{avg_r:.2f}",
+                "Empfehlung": rec,
+            })
+
+        df_rank = pd.DataFrame(ranking_rows).sort_values(
+            "Empfehlung", key=lambda s: s.str.startswith("✅"), ascending=False
+        ).reset_index(drop=True)
+
+        def _color_rec(val):
+            if str(val).startswith("✅"): return "background-color:#22c55e22;color:#22c55e"
+            return "background-color:#ef535022;color:#ef5350"
+
+        st.dataframe(
+            df_rank.drop(columns=["Ticker"]).style.applymap(_color_rec, subset=["Empfehlung"]),
+            use_container_width=True, hide_index=True
+        )
+
+        n_qual = len(auto_select)
+        if n_qual == 0:
+            st.error("Kein Coin hat die Qualitätsschwellen erreicht (Win-Rate ≥45% + PF ≥1.2). "
+                     "Alle Assets per Hand auswählen oder Grids anpassen.")
+        elif n_qual == 1:
+            st.warning(f"Nur 1 Coin qualifiziert — mindestens 2 für Multi-Coin MC nötig. "
+                       f"Du kannst trotzdem weitere manuell hinzufügen.")
+        else:
+            st.success(f"**{n_qual} Coins empfohlen** für den Multi-Coin MC · "
+                       f"Risiko-Tipp: max. {1.0/n_qual:.1f}% pro Coin damit Daily DD sicher bleibt")
 
         # Coin-Auswahl für Multi-Simulation
         all_names = {tkr: cdata["symbol_name"].split("—")[0].strip()
                      for tkr, cdata in coin_trades_all.items()}
         selected_tickers = st.multiselect(
-            "Coins für Multi-Simulation auswählen",
+            "Coins für Simulation auswählen (Empfohlene vorausgewählt)",
             options=list(all_names.keys()),
-            default=list(all_names.keys()),
-            format_func=lambda t: all_names[t],
+            default=[t for t in auto_select if t in all_names] or list(all_names.keys())[:2],
+            format_func=lambda t: f"{'✅' if t in auto_select else '⚠️'} {all_names[t]}",
             key="mc_multi_tickers"
         )
 
