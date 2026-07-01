@@ -5658,7 +5658,10 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             "param_stability": param_stability,
             "base_params":     base_params,
             "grids":           (g_sl, g_ma, g_fm, g_tt, g_to),
+            "full_trades":     tr_full,
         }
+        # Trades auch direkt unter Ticker-Key speichern — MC findet sie ohne exakten Cache-Key
+        st.session_state[f"mc_trades_{_yf_ticker}"] = tr_full
         # Multi-Coin Cache: Trades für diesen Ticker speichern + persistent sichern
         try:
             _mc_tr, _ = _momi_backtest_engine(df_raw.copy(), base_params)
@@ -6189,14 +6192,15 @@ Simuliert **1.000 mögliche Zukunften** deiner Strategie durch zufälliges Misch
 Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — bevor du echtes Geld riskierst.
     """)
 
-    # Trades aus WFA laden (Full-Sample Backtest mit base_params)
+    # Trades aus WFA laden — zuerst einfacher Ticker-Key, dann Cache-Key als Fallback
     mc_trades_raw = None
-    if st.session_state.get("btc_wfa_ran") and "base_params" in st.session_state.get(
-            wfa_cache_key, {}):
-        cached = st.session_state[wfa_cache_key]
-        bp = cached["base_params"]
+    if f"mc_trades_{_yf_ticker}" in st.session_state:
+        mc_trades_raw = st.session_state[f"mc_trades_{_yf_ticker}"]
+    elif "full_trades" in st.session_state.get(wfa_cache_key, {}):
+        mc_trades_raw = st.session_state[wfa_cache_key]["full_trades"]
+    elif st.session_state.get("btc_wfa_ran") and "base_params" in st.session_state.get(wfa_cache_key, {}):
         try:
-            mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), bp)
+            mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), st.session_state[wfa_cache_key]["base_params"])
         except Exception:
             pass
 
