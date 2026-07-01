@@ -5616,11 +5616,13 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
 
     # ── Gesamt-Badge ─────────────────────────────────────────────────────
     if n_ok >= int(min_folds):
-        bc, bt = "#f7931a", f"✅ ROBUST — {n_ok}/{n_tot} Folds bestanden"
-    elif n_ok > 0:
-        bc, bt = "#f0c040", f"⚠️ TEILWEISE ROBUST — {n_ok}/{n_tot} Folds bestanden"
+        bc, bt = "#22c55e", f"✅ ROBUST — {n_ok}/{n_tot} Folds bestanden · Strategie empfohlen"
+    elif n_ok >= 2:
+        bc, bt = "#f0c040", f"⚠️ INSTABIL — nur {n_ok}/{n_tot} Folds bestanden · mit Vorsicht handeln"
+    elif n_ok == 1:
+        bc, bt = "#ef5350", f"❌ NICHT EMPFOHLEN — nur 1/{n_tot} Fold bestanden · Strategie funktioniert auf diesem Asset NICHT zuverlässig"
     else:
-        bc, bt = "#ef5350", f"❌ NICHT ROBUST — 0/{n_tot} Folds bestanden"
+        bc, bt = "#ef5350", f"❌ GESCHEITERT — 0/{n_tot} Folds bestanden · Strategie NICHT für dieses Asset geeignet"
 
     st.markdown(
         f'<div style="background:{bc}22;border:2px solid {bc};border-radius:10px;'
