@@ -5460,89 +5460,88 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
     if run_btn or wfa_cache_key not in st.session_state:
         progress = st.progress(0, text="Walk-Forward läuft …")
         wfa_rows, oos_equities = [], []
-        # Für Stabilitätsanalyse: alle OOS-Ergebnisse je Parameterkombination sammeln
-    param_stability: dict = {}   # key=(sl,tt,to,ma,fm) → list of OOS metrics
+        param_stability: dict = {}
 
-    for fi, fold in enumerate(folds):
-        progress.progress(fi / len(folds), text=f"Fold {fi+1}/{len(folds)} — optimiere IS …")
-
-        df_is  = df_raw[(df_raw.index >= fold["is_start"]) & (df_raw.index < fold["is_end"])].copy()
-        df_oos = df_raw[(df_raw.index >= fold["oos_start"]) & (df_raw.index < fold["oos_end"])].copy()
-
-        if len(df_is) < 30 or len(df_oos) < 5:
-            continue
-
-        # IS Grid Search — teste ALLE Kombinationen und sammle OOS-Ergebnis je Combo
-        best_score, best_p = -np.inf, None
-        adx_grid = g_adx if use_adx else [float(adx_thresh)]
-
-        for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid, g_tt, g_to):
-            p = {**base_params,
-                 "sl_pct":      sl_,
-                 "ma_period":   ma_,
-                 "filter_mode": fm_,
-                 "adx_thresh":  adx_,
-                 "trail_trig":  tt_,
-                 "trail_off":   to_}
-            try:
-                tr_, eq_ = _momi_backtest_engine(df_is.copy(), p)
-            except Exception:
+        for fi, fold in enumerate(folds):
+            progress.progress(fi / len(folds), text=f"Fold {fi+1}/{len(folds)} — optimiere IS …")
+    
+            df_is  = df_raw[(df_raw.index >= fold["is_start"]) & (df_raw.index < fold["is_end"])].copy()
+            df_oos = df_raw[(df_raw.index >= fold["oos_start"]) & (df_raw.index < fold["oos_end"])].copy()
+    
+            if len(df_is) < 30 or len(df_oos) < 5:
                 continue
-            if len(tr_) < int(min_trades):
+    
+            # IS Grid Search — teste ALLE Kombinationen und sammle OOS-Ergebnis je Combo
+            best_score, best_p = -np.inf, None
+            adx_grid = g_adx if use_adx else [float(adx_thresh)]
+    
+            for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid, g_tt, g_to):
+                p = {**base_params,
+                     "sl_pct":      sl_,
+                     "ma_period":   ma_,
+                     "filter_mode": fm_,
+                     "adx_thresh":  adx_,
+                     "trail_trig":  tt_,
+                     "trail_off":   to_}
+                try:
+                    tr_, eq_ = _momi_backtest_engine(df_is.copy(), p)
+                except Exception:
+                    continue
+                if len(tr_) < int(min_trades):
+                    continue
+                m_ = _momi_metrics(tr_, eq_)
+                score = m_[opt_metric]
+                if score > best_score:
+                    best_score, best_p = score, p.copy()
+    
+                # OOS sofort für diese Kombination berechnen → Stabilitätsanalyse
+                try:
+                    tr_oos_, eq_oos_ = _momi_backtest_engine(df_oos.copy(), p)
+                    m_oos_ = _momi_metrics(tr_oos_, eq_oos_)
+                    key = (sl_, tt_, to_, ma_, fm_)
+                    if key not in param_stability:
+                        param_stability[key] = []
+                    param_stability[key].append(m_oos_)
+                except Exception:
+                    pass
+    
+            if best_p is None:
+                wfa_rows.append({"Fold": fi+1,
+                                 "IS": f"{fold['is_start'].date()} – {fold['is_end'].date()}",
+                                 "OOS": f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
+                                 "Bester SL":"–","Bestes MA":"–","Bester FM":"–",
+                                 "IS Trades":0,"IS PF":"–","IS Sharpe":"–",
+                                 "OOS Trades":0,"OOS PF":"–","OOS Ret %":"–","Ø Ret/Trade %":"–","OOS Sharpe":"–",
+                                 "Status":"⚠️ Kein IS-Ergebnis"})
                 continue
-            m_ = _momi_metrics(tr_, eq_)
-            score = m_[opt_metric]
-            if score > best_score:
-                best_score, best_p = score, p.copy()
-
-            # OOS sofort für diese Kombination berechnen → Stabilitätsanalyse
-            try:
-                tr_oos_, eq_oos_ = _momi_backtest_engine(df_oos.copy(), p)
-                m_oos_ = _momi_metrics(tr_oos_, eq_oos_)
-                key = (sl_, tt_, to_, ma_, fm_)
-                if key not in param_stability:
-                    param_stability[key] = []
-                param_stability[key].append(m_oos_)
-            except Exception:
-                pass
-
-        if best_p is None:
-            wfa_rows.append({"Fold": fi+1,
-                             "IS": f"{fold['is_start'].date()} – {fold['is_end'].date()}",
-                             "OOS": f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
-                             "Bester SL":"–","Bestes MA":"–","Bester FM":"–",
-                             "IS Trades":0,"IS PF":"–","IS Sharpe":"–",
-                             "OOS Trades":0,"OOS PF":"–","OOS Ret %":"–","Ø Ret/Trade %":"–","OOS Sharpe":"–",
-                             "Status":"⚠️ Kein IS-Ergebnis"})
-            continue
-
-        tr_is,  eq_is  = _momi_backtest_engine(df_is.copy(),  best_p)
-        tr_oos, eq_oos = _momi_backtest_engine(df_oos.copy(), best_p)
-        m_is  = _momi_metrics(tr_is,  eq_is)
-        m_oos = _momi_metrics(tr_oos, eq_oos)
-
-        oos_equities.append((fi+1, eq_oos))
-
-        ok = m_oos["n"] >= 1 and m_oos["pf"] > 1.0 and m_oos["total_ret"] > 0
-        wfa_rows.append({
-            "Fold":       fi+1,
-            "IS":         f"{fold['is_start'].date()} – {fold['is_end'].date()}",
-            "OOS":        f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
-            "Bester SL":  f"{best_p['sl_pct']}%",
-            "Bestes MA":  f"{best_p['ma_type']} {best_p['ma_period']}",
-            "Bester FM":  best_p['filter_mode'],
-            "IS Trades":  m_is["n"],
-            "IS PF":      m_is["pf"],
-            "IS Sharpe":  m_is["sharpe"],
-            "OOS Trades":    m_oos["n"],
-            "OOS PF":        m_oos["pf"],
-            "OOS Ret %":     m_oos["total_ret"],
-            "Ø Ret/Trade %": m_oos["avg_ret"],
-            "OOS Sharpe":    m_oos["sharpe"],
-            "Status":        "✅ Bestanden" if ok else "❌ Fail",
-        })
-
-        progress.progress(1.0, text="Walk-Forward abgeschlossen ✓")
+    
+            tr_is,  eq_is  = _momi_backtest_engine(df_is.copy(),  best_p)
+            tr_oos, eq_oos = _momi_backtest_engine(df_oos.copy(), best_p)
+            m_is  = _momi_metrics(tr_is,  eq_is)
+            m_oos = _momi_metrics(tr_oos, eq_oos)
+    
+            oos_equities.append((fi+1, eq_oos))
+    
+            ok = m_oos["n"] >= 1 and m_oos["pf"] > 1.0 and m_oos["total_ret"] > 0
+            wfa_rows.append({
+                "Fold":       fi+1,
+                "IS":         f"{fold['is_start'].date()} – {fold['is_end'].date()}",
+                "OOS":        f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
+                "Bester SL":  f"{best_p['sl_pct']}%",
+                "Bestes MA":  f"{best_p['ma_type']} {best_p['ma_period']}",
+                "Bester FM":  best_p['filter_mode'],
+                "IS Trades":  m_is["n"],
+                "IS PF":      m_is["pf"],
+                "IS Sharpe":  m_is["sharpe"],
+                "OOS Trades":    m_oos["n"],
+                "OOS PF":        m_oos["pf"],
+                "OOS Ret %":     m_oos["total_ret"],
+                "Ø Ret/Trade %": m_oos["avg_ret"],
+                "OOS Sharpe":    m_oos["sharpe"],
+                "Status":        "✅ Bestanden" if ok else "❌ Fail",
+            })
+    
+            progress.progress(1.0, text="Walk-Forward abgeschlossen ✓")
         st.session_state[wfa_cache_key] = {
             "wfa_rows":        wfa_rows,
             "oos_equities":    oos_equities,
