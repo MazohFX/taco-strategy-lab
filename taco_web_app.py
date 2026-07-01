@@ -6054,6 +6054,223 @@ So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **
                                    data=df_ens[display_cols].to_csv(index=False).encode(),
                                    file_name="btc_ensemble_wfa.csv", mime="text/csv")
 
+    # ════════════════════════════════════════════════════════════════════════
+    # MONTE CARLO — Prop Trading Challenge Simulator
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("Monte Carlo — Prop Trading Challenge Simulator")
+    st.markdown("""
+Simuliert **1.000 mögliche Zukunften** deiner Strategie durch zufälliges Mischen (Bootstrap) der echten Trade-Ergebnisse.
+Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — bevor du echtes Geld riskierst.
+    """)
+
+    # Trades aus WFA laden (Full-Sample Backtest mit base_params)
+    mc_trades_raw = None
+    if st.session_state.get("btc_wfa_ran") and "base_params" in st.session_state.get(
+            f"btc_wfa_results_{btc_start}_{btc_end}_{is_months}_{oos_months}", {}):
+        cached = st.session_state[f"btc_wfa_results_{btc_start}_{btc_end}_{is_months}_{oos_months}"]
+        bp = cached["base_params"]
+        try:
+            mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), bp)
+        except Exception:
+            pass
+
+    if mc_trades_raw is None or mc_trades_raw.empty:
+        st.info("Erst WFA starten — Monte Carlo nutzt die Trade-Ergebnisse des Full-Sample Backtests.")
+    else:
+        n_real = len(mc_trades_raw)
+        real_rets = mc_trades_raw["PnL $"].values
+        st.success(f"**{n_real} echte Trades** aus dem Full-Sample Backtest geladen · "
+                   f"Win-Rate: {(real_rets > 0).mean()*100:.1f}% · "
+                   f"Ø Trade: {real_rets.mean():.2f}$ · "
+                   f"Trades/Jahr: ~{n_real / max(1, (df_raw.index[-1]-df_raw.index[0]).days / 365):.0f}")
+
+        if n_real < 20:
+            st.warning(f"⚠️ Nur {n_real} Trades — Monte Carlo Ergebnisse haben hohe Unsicherheit. "
+                       f"Mind. 50 Trades empfohlen für verlässliche Aussagen.")
+
+        mc1, mc2, mc3 = st.columns(3)
+        with mc1:
+            st.markdown("**Challenge-Regeln**")
+            challenge_capital  = st.number_input("Startkapital ($)", 10_000, 200_000, 100_000, step=10_000, key="mc_cap")
+            profit_target_pct  = st.number_input("Profit-Ziel (%)", 1.0, 20.0, 8.0, step=0.5, key="mc_pt")
+            max_total_dd_pct   = st.number_input("Max. Total Drawdown (%)", 1.0, 20.0, 10.0, step=0.5, key="mc_tdd")
+            max_daily_dd_pct   = st.number_input("Max. Daily Drawdown (%)", 0.5, 10.0, 5.0, step=0.5, key="mc_ddd")
+        with mc2:
+            st.markdown("**Simulation**")
+            n_sims         = st.number_input("Anzahl Simulationen", 500, 5000, 1000, step=500, key="mc_sims")
+            challenge_days = st.number_input("Challenge-Dauer (Tage)", 14, 90, 30, step=1, key="mc_days")
+            risk_per_trade = st.number_input("Risiko pro Trade (%)", 0.1, 5.0, 1.0, step=0.1, key="mc_risk")
+            trades_per_week = st.number_input("Trades pro Woche", 1, 5, 1, step=1, key="mc_tpw")
+        with mc3:
+            st.markdown("**Info**")
+            n_challenge_trades = int(challenge_days / 7 * trades_per_week)
+            st.metric("Trades während Challenge", n_challenge_trades)
+            st.metric("Trades für stat. Signifikanz", "100+")
+            if n_challenge_trades < 10:
+                st.error(f"⚠️ Nur {n_challenge_trades} Trades in {challenge_days} Tagen — sehr hoher Zufallseinfluss!")
+            else:
+                st.info(f"{n_challenge_trades} Trades in {challenge_days} Tagen")
+
+        run_mc = st.button("▶ Monte Carlo starten", type="primary", key="mc_run_btn")
+        if run_mc:
+            st.session_state["mc_running"] = True
+        if st.session_state.get("mc_running"):
+            st.session_state["mc_running"] = False
+
+            mc_progress = st.progress(0, text="Monte Carlo läuft …")
+
+            # Trade-Returns als % des Kapitals normieren
+            avg_capital  = challenge_capital
+            trade_ret_pct = real_rets / 10_000 * 100  # skaliert auf % des Startkapitals
+
+            n_sims_int   = int(n_sims)
+            results      = []
+            all_paths    = []
+
+            for sim_i in range(n_sims_int):
+                # Bootstrap: ziehe n_challenge_trades mit Zurücklegen
+                sampled = np.random.choice(trade_ret_pct, size=n_challenge_trades, replace=True)
+
+                capital     = float(challenge_capital)
+                peak        = capital
+                daily_start = capital
+                failed      = False
+                fail_reason = ""
+                path        = [capital]
+
+                for t_i, ret_pct in enumerate(sampled):
+                    pnl      = capital * (risk_per_trade / 100) * (ret_pct / np.mean(np.abs(trade_ret_pct[trade_ret_pct != 0]))) if np.mean(np.abs(trade_ret_pct[trade_ret_pct != 0])) > 0 else capital * risk_per_trade / 100 * np.sign(ret_pct)
+                    capital += pnl
+                    path.append(capital)
+                    peak     = max(peak, capital)
+
+                    # Daily DD (vereinfacht: pro Trade als eigener "Tag")
+                    daily_dd_pct = (capital - daily_start) / daily_start * 100
+                    if daily_dd_pct < -max_daily_dd_pct:
+                        failed, fail_reason = True, "Daily DD"
+                        break
+                    daily_start = capital  # nächster "Tag"
+
+                    # Total DD vom Peak
+                    total_dd_pct = (capital - peak) / peak * 100
+                    if total_dd_pct < -max_total_dd_pct:
+                        failed, fail_reason = True, "Total DD"
+                        break
+
+                profit_pct = (capital - challenge_capital) / challenge_capital * 100
+                passed     = not failed and profit_pct >= profit_target_pct
+
+                results.append({
+                    "passed":      passed,
+                    "failed":      failed,
+                    "fail_reason": fail_reason if failed else "",
+                    "final_pct":   profit_pct,
+                    "final_cap":   capital,
+                })
+                if sim_i < 200:  # nur 200 Pfade plotten
+                    all_paths.append(path)
+
+                if sim_i % 100 == 0:
+                    mc_progress.progress(sim_i / n_sims_int, text=f"Simulation {sim_i}/{n_sims_int} …")
+
+            mc_progress.progress(1.0, text="Monte Carlo abgeschlossen ✓")
+
+            df_res   = pd.DataFrame(results)
+            n_passed = df_res["passed"].sum()
+            n_failed = df_res["failed"].sum()
+            n_neither = n_sims_int - n_passed - n_failed  # Zeit abgelaufen ohne Ziel
+            pass_pct  = n_passed / n_sims_int * 100
+            fail_pct  = n_failed / n_sims_int * 100
+
+            # ── Ergebnis-Badge ────────────────────────────────────────────
+            if pass_pct >= 60:
+                bc, bt = "#22c55e", f"✅ GUTE CHANCE — {pass_pct:.1f}% der Simulationen bestanden"
+            elif pass_pct >= 35:
+                bc, bt = "#f0c040", f"⚠️ MÖGLICH — {pass_pct:.1f}% der Simulationen bestanden"
+            else:
+                bc, bt = "#ef5350", f"❌ SCHWIERIG — nur {pass_pct:.1f}% der Simulationen bestanden"
+
+            st.markdown(
+                f'<div style="background:{bc}22;border:2px solid {bc};border-radius:10px;'
+                f'padding:16px 24px;font-weight:800;font-size:1.3rem;color:{bc};margin:16px 0;">'
+                f'{bt}</div>', unsafe_allow_html=True)
+
+            # ── KPI ───────────────────────────────────────────────────────
+            r1,r2,r3,r4,r5 = st.columns(5)
+            r1.metric("Challenge bestanden",  f"{pass_pct:.1f}%", f"{n_passed} von {n_sims_int}")
+            r2.metric("Disqualifiziert",       f"{fail_pct:.1f}%", f"{n_failed} von {n_sims_int}",  delta_color="inverse")
+            r3.metric("Ø Endkapital",          f"${df_res['final_cap'].mean():,.0f}")
+            r4.metric("Bestes Szenario",       f"+{df_res['final_pct'].max():.1f}%")
+            r5.metric("Schlimmstes Szenario",  f"{df_res['final_pct'].min():.1f}%")
+
+            dd_fails  = (df_res["fail_reason"] == "Daily DD").sum()
+            tdd_fails = (df_res["fail_reason"] == "Total DD").sum()
+            st.caption(f"Disqualifiziert durch: Daily DD {dd_fails}x · Total DD {tdd_fails}x · "
+                       f"Ziel nicht erreicht (Zeit) {n_neither}x")
+
+            # ── Pfad-Chart ────────────────────────────────────────────────
+            fig_mc = go.Figure()
+            for path in all_paths:
+                col = "#22c55e" if (path[-1] - challenge_capital) / challenge_capital * 100 >= profit_target_pct else "#ef5350"
+                fig_mc.add_trace(go.Scatter(
+                    y=path, mode="lines",
+                    line=dict(color=col, width=0.5),
+                    opacity=0.15, showlegend=False))
+
+            # Mittelwert-Pfad
+            max_len = max(len(p) for p in all_paths)
+            padded  = [p + [p[-1]] * (max_len - len(p)) for p in all_paths]
+            mean_path = np.mean(padded, axis=0)
+            fig_mc.add_trace(go.Scatter(
+                y=mean_path, mode="lines",
+                line=dict(color="white", width=2.5, dash="dash"),
+                name="Ø Pfad"))
+
+            # Referenzlinien
+            fig_mc.add_hline(y=challenge_capital * (1 + profit_target_pct/100),
+                              line_color="#22c55e", line_dash="dot", line_width=2,
+                              annotation_text=f"Ziel +{profit_target_pct}%", annotation_position="right")
+            fig_mc.add_hline(y=challenge_capital * (1 - max_total_dd_pct/100),
+                              line_color="#ef5350", line_dash="dot", line_width=2,
+                              annotation_text=f"Max DD -{max_total_dd_pct}%", annotation_position="right")
+            fig_mc.add_hline(y=challenge_capital, line_color="white", line_dash="dash", line_width=1)
+
+            fig_mc.update_layout(
+                title=f"Monte Carlo — {n_sims_int} Simulationen · Grün = bestanden · Rot = disqualifiziert",
+                height=450, template="plotly_dark",
+                yaxis_title="Kapital ($)",
+                xaxis_title="Trade #",
+                margin=dict(t=50, b=30, l=70, r=80))
+            st.plotly_chart(fig_mc, use_container_width=True)
+
+            # ── Verteilung der Endergebnisse ──────────────────────────────
+            fig_dist = go.Figure()
+            fig_dist.add_trace(go.Histogram(
+                x=df_res["final_pct"],
+                nbinsx=40,
+                marker_color=["#22c55e" if v >= profit_target_pct else "#ef5350"
+                               for v in df_res["final_pct"]],
+                name="Endkapital-Verteilung"))
+            fig_dist.add_vline(x=profit_target_pct, line_color="#22c55e",
+                                line_dash="dot", annotation_text="Ziel")
+            fig_dist.add_vline(x=0, line_color="white", line_dash="dash")
+            fig_dist.update_layout(
+                title="Verteilung der Endergebnisse (% Gewinn/Verlust)",
+                height=280, template="plotly_dark",
+                xaxis_title="Rendite %", yaxis_title="Anzahl Simulationen",
+                margin=dict(t=40, b=30, l=60, r=20))
+            st.plotly_chart(fig_dist, use_container_width=True)
+
+            # ── Ehrliche Warnung bei wenigen Trades ──────────────────────
+            if n_challenge_trades < 15:
+                st.warning(
+                    f"⚠️ **Statistische Warnung:** Mit nur **{n_challenge_trades} Trades** in {challenge_days} Tagen "
+                    f"ist das Ergebnis stark zufallsabhängig. Ein einzelner großer Verlust kann die Challenge beenden. "
+                    f"Die {pass_pct:.0f}% Erfolgswahrscheinlichkeit hat ein breites Konfidenzintervall — "
+                    f"der echte Wert könnte ±20% davon abweichen. "
+                    f"Für verlässliche MC-Ergebnisse brauchst du mind. 30-50 Trades pro Simulation.")
+
 
 def render_pdh_pdl_strategie() -> None:
     """PDH/PDL Proximity Reversal Strategy — Python-Backtest."""
