@@ -5463,16 +5463,8 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
     if _ens_quick:
         st.session_state["ens_running"] = True
 
-    if not st.session_state.get("btc_wfa_ran"):
-        st.info("Parameter prüfen und WFA starten. BTC-Daten werden automatisch via yfinance geladen.")
-        n_months_total = (btc_end.year - btc_start.year) * 12 + (btc_end.month - btc_start.month)
-        est_folds = max(0, (n_months_total - is_months) // oos_months)
-        st.metric("Geschätzte Anzahl Folds", est_folds,
-                  help=f"Bei {is_months}M IS + {oos_months}M OOS über {n_months_total} Monate Gesamtdaten")
-        return
-
     # ════════════════════════════════════════════════════════════════════════
-    # DATEN LADEN
+    # DATEN LADEN — läuft immer, liefert Trades für Monte Carlo
     # ════════════════════════════════════════════════════════════════════════
     try:
         import yfinance as yf
@@ -5546,11 +5538,20 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
     # ════════════════════════════════════════════════════════════════════════
     # WALK-FORWARD ANALYSE
     # ════════════════════════════════════════════════════════════════════════
+    _wfa_enabled = st.session_state.get("btc_wfa_ran", False)
+
     st.markdown("---")
     st.subheader("Walk-Forward Analyse")
 
-    # Folds generieren
-    is_d   = pd.DateOffset(months=int(is_months))
+    if not _wfa_enabled:
+        n_months_total = (btc_end.year - btc_start.year) * 12 + (btc_end.month - btc_start.month)
+        est_folds = max(0, (n_months_total - is_months) // oos_months)
+        st.info(f"WFA noch nicht gestartet — klicke '🔄 WFA starten'. "
+                f"Geschätzte Folds: **{est_folds}**")
+
+    if _wfa_enabled:
+        # Folds generieren
+        is_d   = pd.DateOffset(months=int(is_months))
     oos_d  = pd.DateOffset(months=int(oos_months))
     folds  = []
     fs     = df_raw.index[0]
@@ -5562,18 +5563,18 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         folds.append({"is_start": fs, "is_end": ie, "oos_start": ie, "oos_end": oe})
         fs = fs + oos_d
 
-    if len(folds) < 2:
-        st.warning("Zu wenig Daten für WFA. Zeitraum verlängern oder IS/OOS-Fenster verkleinern.")
-        return
-
-    st.info(f"**{len(folds)} Folds** · IS {is_months}M / OOS {oos_months}M  "
-            f"· Grid-Größe: {len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)} Kombinationen je Fold")
+        if len(folds) < 2:
+            st.warning("Zu wenig Daten für WFA. Zeitraum verlängern oder IS/OOS-Fenster verkleinern.")
+            _wfa_enabled = False
+        else:
+            st.info(f"**{len(folds)} Folds** · IS {is_months}M / OOS {oos_months}M  "
+                    f"· Grid-Größe: {len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)} Kombinationen je Fold")
 
     wfa_cache_key = (f"btc_wfa_results_{_yf_ticker}_{btc_start}_{btc_end}"
                      f"_{is_months}_{oos_months}_{entry_day}_{exit_day}"
                      f"_{ma_type}_{sl_pct}_{use_trail}_{trail_trig}_{trail_off}")
 
-    if run_btn or wfa_cache_key not in st.session_state:
+    if _wfa_enabled and (run_btn or wfa_cache_key not in st.session_state):
         progress = st.progress(0, text="Walk-Forward läuft …")
         wfa_rows, oos_equities = [], []
         param_stability: dict = {}
@@ -5690,510 +5691,520 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             pass
 
     # Ergebnisse aus Cache laden
-    _cached = st.session_state[wfa_cache_key]
-    wfa_rows        = _cached["wfa_rows"]
-    oos_equities    = _cached["oos_equities"]
-    param_stability = _cached["param_stability"]
-    base_params     = _cached["base_params"]
-    g_sl, g_ma, g_fm, g_tt, g_to = _cached["grids"]
-
-    if not wfa_rows:
-        st.error("Keine WFA-Ergebnisse — Parameter oder Zeitraum anpassen.")
-        return
-
-    wfa_df = pd.DataFrame(wfa_rows)
-    n_ok   = (wfa_df["Status"] == "✅ Bestanden").sum()
-    n_tot  = len(wfa_df)
-
-    # ── Gesamt-Badge ─────────────────────────────────────────────────────
-    if n_ok >= int(min_folds):
-        bc, bt = "#22c55e", f"✅ ROBUST — {n_ok}/{n_tot} Folds bestanden · Strategie empfohlen"
-    elif n_ok >= 2:
-        bc, bt = "#f0c040", f"⚠️ INSTABIL — nur {n_ok}/{n_tot} Folds bestanden · mit Vorsicht handeln"
-    elif n_ok == 1:
-        bc, bt = "#ef5350", f"❌ NICHT EMPFOHLEN — nur 1/{n_tot} Fold bestanden · Strategie funktioniert auf diesem Asset NICHT zuverlässig"
+    if not _wfa_enabled or wfa_cache_key not in st.session_state:
+        _cached = None
     else:
-        bc, bt = "#ef5350", f"❌ GESCHEITERT — 0/{n_tot} Folds bestanden · Strategie NICHT für dieses Asset geeignet"
+        _cached = st.session_state[wfa_cache_key]
+    if _cached is None:
+        wfa_rows, oos_equities, param_stability = [], [], {}
+        base_params_display = base_params
+        g_sl, g_ma, g_fm, g_tt, g_to = [], [], [], [], []
+        _wfa_enabled = False
+    else:
+        wfa_rows        = _cached["wfa_rows"]
+        oos_equities    = _cached["oos_equities"]
+        param_stability = _cached["param_stability"]
+        base_params     = _cached["base_params"]
+        g_sl, g_ma, g_fm, g_tt, g_to = _cached["grids"]
 
-    st.markdown(
-        f'<div style="background:{bc}22;border:2px solid {bc};border-radius:10px;'
-        f'padding:16px 24px;font-weight:800;font-size:1.2rem;color:{bc};margin:16px 0;">'
-        f'{bt}</div>', unsafe_allow_html=True)
+    if _wfa_enabled and not wfa_rows:
+        st.error("Keine WFA-Ergebnisse — Parameter oder Zeitraum anpassen.")
+        _wfa_enabled = False
 
-    # ── KPI-Zusammenfassung über alle OOS-Folds ───────────────────────────
-    oos_pfs   = [r["OOS PF"]    for r in wfa_rows if isinstance(r["OOS PF"],    (int,float))]
-    oos_rets  = [r["OOS Ret %"] for r in wfa_rows if isinstance(r["OOS Ret %"], (int,float))]
-    oos_shs   = [r["OOS Sharpe"] for r in wfa_rows if isinstance(r.get("OOS Sharpe"), (int,float))]
+    if _wfa_enabled:
+        wfa_df = pd.DataFrame(wfa_rows)
+        n_ok   = (wfa_df["Status"] == "✅ Bestanden").sum()
+        n_tot  = len(wfa_df)
 
-    sc1,sc2,sc3,sc4 = st.columns(4)
-    sc1.metric("Ø OOS Profit Factor", f"{np.mean(oos_pfs):.2f}"  if oos_pfs  else "–")
-    sc2.metric("Ø OOS Rendite",       f"{np.mean(oos_rets):.1f}%" if oos_rets else "–")
-    sc3.metric("Ø OOS Sharpe",        f"{np.mean(oos_shs):.2f}"   if oos_shs  else "–")
-    sc4.metric("Bestandene Folds",    f"{n_ok}/{n_tot}")
-
-    # ── Fold-Tabelle ──────────────────────────────────────────────────────
-    st.subheader("Fold-Ergebnisse")
-    def _color_status(v):
-        if v == "✅ Bestanden": return "color:#22c55e;font-weight:700"
-        if v == "❌ Fail":      return "color:#ef5350;font-weight:700"
-        return "color:#f0c040"
-    def _color_num(v):
-        if isinstance(v, (int,float)):
-            return "color:#22c55e" if v > 0 else "color:#ef5350"
-        return ""
-    num_cols = [c for c in ["OOS Ret %","OOS PF","OOS Sharpe","Ø Ret/Trade %"] if c in wfa_df.columns]
-    styled = wfa_df.style\
-        .map(_color_status, subset=["Status"])\
-        .map(_color_num,    subset=num_cols)
-    st.dataframe(styled, use_container_width=True, hide_index=True)
-
-    # ── OOS Rendite Bar-Chart ─────────────────────────────────────────────
-    st.subheader("OOS-Rendite je Fold")
-    fold_labels = [f"Fold {r['Fold']}" for r in wfa_rows]
-    bar_colors  = ["#22c55e" if isinstance(r["OOS Ret %"],(int,float)) and r["OOS Ret %"]>0
-                   else "#ef5350" for r in wfa_rows]
-    bar_vals    = [r["OOS Ret %"] if isinstance(r["OOS Ret %"],(int,float)) else 0 for r in wfa_rows]
-
-    fig_bar = go.Figure(go.Bar(
-        x=fold_labels, y=bar_vals, marker_color=bar_colors,
-        text=[f"{v:.1f}%" for v in bar_vals], textposition="outside",
-        width=0.5))
-    fig_bar.add_hline(y=0, line_color="white", line_width=1, line_dash="dash")
-    fig_bar.update_layout(title="OOS-Rendite je Fold (grün = profitabel)",
-                          height=380, template="plotly_dark",
-                          yaxis_title="Rendite %",
-                          xaxis=dict(tickfont=dict(size=13)),
-                          margin=dict(t=50,b=60,l=60,r=20))
-    st.plotly_chart(fig_bar, use_container_width=True)
-
-    # ── Gestapelte OOS Equity Curves ──────────────────────────────────────
-    if oos_equities:
-        # ── Kombinierte OOS Equity (Folds hintereinander = simulierter Live-Handel) ──
-        st.subheader("Kombinierte OOS Equity Kurve")
-        st.caption("Alle OOS-Folds hintereinander — so hätte sich das Kapital im echten Handel entwickelt (nur blind getestete Perioden, kein IS)")
-
-        # Folds chronologisch sortieren und aneinanderhängen
-        oos_equities_sorted = sorted(oos_equities, key=lambda x: x[1].index[0])
-        combined_vals, combined_idx = [], []
-        running_capital = 10_000.0
-        for fi, eq in oos_equities_sorted:
-            scale = running_capital / eq.iloc[0]
-            scaled = eq * scale
-            combined_vals.extend(scaled.values.tolist())
-            combined_idx.extend(eq.index.tolist())
-            running_capital = scaled.iloc[-1]
-
-        combined_eq = pd.Series(combined_vals, index=combined_idx)
-
-        # Drawdown berechnen
-        roll_max = combined_eq.cummax()
-        drawdown = (combined_eq - roll_max) / roll_max * 100
-
-        fig_combined = go.Figure()
-        fig_combined.add_trace(go.Scatter(
-            x=combined_eq.index, y=combined_eq.values,
-            fill="tozeroy", fillcolor="rgba(247,147,26,0.15)",
-            line=dict(color="#f7931a", width=2.5),
-            name="Equity (OOS kombiniert)"))
-        # Fold-Grenzen als vertikale Linien
-        colors_fold = ["#42a5f5","#00d4aa","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da","#f7931a"]
-        for i, (fi, eq) in enumerate(oos_equities_sorted):
-            fig_combined.add_vline(x=eq.index[0], line_dash="dot",
-                                   line_color=colors_fold[i % len(colors_fold)],
-                                   annotation_text=f"F{fi}", annotation_position="top")
-        fig_combined.add_hline(y=10_000, line_color="white", line_dash="dash", line_width=1)
-        total_ret = (running_capital - 10_000) / 10_000 * 100
-        fig_combined.update_layout(
-            title=f"OOS Equity — 10.000€ Start → {running_capital:,.0f}€ ({total_ret:+.1f}%) | Nur blind getestete Perioden",
-            height=420, template="plotly_dark",
-            yaxis_title="Kapital (€)", xaxis_title="",
-            margin=dict(t=55, b=20, l=70, r=20))
-        st.plotly_chart(fig_combined, use_container_width=True)
-
-        # Drawdown Chart
-        fig_dd = go.Figure(go.Scatter(
-            x=combined_eq.index, y=drawdown.values,
-            fill="tozeroy", fillcolor="rgba(239,83,80,0.2)",
-            line=dict(color="#ef5350", width=1.5), name="Drawdown %"))
-        fig_dd.update_layout(
-            title=f"Drawdown — Max: {drawdown.min():.1f}%",
-            height=200, template="plotly_dark",
-            yaxis_title="DD %", margin=dict(t=40, b=20, l=70, r=20))
-        st.plotly_chart(fig_dd, use_container_width=True)
-
-        # ── Einzelne Folds übereinander (zum Vergleich) ───────────────────
-        with st.expander("Einzelne OOS-Folds im Vergleich"):
-            fig_eq = go.Figure()
-            colors = ["#f7931a","#00d4aa","#42a5f5","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da"]
-            for fi, eq in oos_equities:
-                norm = eq / eq.iloc[0] * 100
-                fig_eq.add_trace(go.Scatter(x=eq.index, y=norm.values,
-                                            name=f"Fold {fi}",
-                                            line=dict(color=colors[(fi-1) % len(colors)], width=1.5)))
-            fig_eq.add_hline(y=100, line_color="white", line_dash="dash", line_width=1)
-            fig_eq.update_layout(title="OOS Equity je Fold (normiert auf 100 = Startkapital)",
-                                 height=350, template="plotly_dark", margin=dict(t=40,b=20))
-            st.plotly_chart(fig_eq, use_container_width=True)
-
-    # ── CSV Download ──────────────────────────────────────────────────────
-    st.download_button("⬇️ WFA-Ergebnis als CSV",
-                       data=wfa_df.to_csv(index=False).encode(),
-                       file_name="btc_weekday_wfa.csv", mime="text/csv")
-
-    # ════════════════════════════════════════════════════════════════════════
-    # PARAMETER-STABILITÄTSANALYSE
-    # ════════════════════════════════════════════════════════════════════════
-    st.markdown("---")
-    st.subheader("Parameter-Stabilitätsanalyse")
-    st.caption("Welche SL / Trailing-Kombinationen liefern konsistent über ALLE Folds gute OOS-Ergebnisse?")
-
-    if param_stability:
-        stab_rows = []
-        for (sl_, tt_, to_, ma_, fm_), results in param_stability.items():
-            if len(results) < 2:
-                continue
-            pfs      = [r["pf"]         for r in results if r["n"] > 0]
-            rets     = [r["total_ret"]   for r in results if r["n"] > 0]
-            sharpes  = [r["sharpe"]      for r in results if r["n"] > 0]
-            trades   = [r["n"]           for r in results]
-            n_pos    = sum(1 for r in rets if r > 0) if rets else 0
-            n_folds  = len(results)
-
-            if not pfs:
-                continue
-
-            stab_rows.append({
-                "SL %":             f"{sl_:.2f}%",
-                "Trail-Trig %":     f"{tt_:.2f}%",
-                "Trail-Off %":      f"{to_:.2f}%",
-                "MA":               f"{ma_}",
-                "Filter":           fm_,
-                "Folds getestet":   n_folds,
-                "Profitable Folds": n_pos,
-                "Konsistenz %":     round(n_pos / n_folds * 100, 0),
-                "Ø OOS PF":         round(np.mean(pfs), 2),
-                "Ø OOS Ret %":      f"{round(np.mean(rets), 2):.2f}%",
-                "Ø OOS Sharpe":     round(np.mean(sharpes), 2),
-                "Min OOS Ret %":    f"{round(np.min(rets), 2):.2f}%",
-                "Max DD Ø":         f"{round(np.mean([r['max_dd'] for r in results]), 2):.2f}%",
-            })
-
-        if stab_rows:
-            df_stab = pd.DataFrame(stab_rows)
-            # Sortierung: erst Konsistenz, dann Ø PF
-            df_stab = df_stab.sort_values(
-                ["Konsistenz %", "Ø OOS PF", "Ø OOS Ret %"],
-                ascending=[False, False, False]
-            ).reset_index(drop=True)
-
-            # Top 3 hervorheben
-            st.markdown("#### 🏆 Top-10 stabilste Setups")
-            top10 = df_stab.head(10).copy()
-
-            def _hl_konsistenz(v):
-                if isinstance(v, (int, float)):
-                    if v >= 80: return "color:#22c55e;font-weight:700"
-                    if v >= 60: return "color:#f0c040"
-                    return "color:#ef5350"
-                return ""
-
-            def _hl_num(v):
-                if isinstance(v, (int, float)):
-                    return "color:#22c55e" if v > 0 else "color:#ef5350"
-                return ""
-
-            styled_stab = top10.style\
-                .map(_hl_konsistenz, subset=["Konsistenz %"])\
-                .map(_hl_num, subset=["Ø OOS PF"])
-            st.dataframe(styled_stab, use_container_width=True, hide_index=True)
-
-            # Heatmap: SL% vs Trail-Trig% → Ø Konsistenz
-            st.markdown("#### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
-            pivot = df_stab.pivot_table(
-                values="Konsistenz %",
-                index="SL %",
-                columns="Trail-Trig %",
-                aggfunc="mean"
-            ).round(0)
-
-            fig_heat = go.Figure(go.Heatmap(
-                z=pivot.values,
-                x=[f"Trail {c}%" for c in pivot.columns],
-                y=[f"SL {r}%" for r in pivot.index],
-                colorscale="RdYlGn",
-                zmin=0, zmax=100,
-                text=pivot.values.round(0).astype(str),
-                texttemplate="%{text}%",
-                showscale=True,
-                colorbar=dict(title="Konsistenz %")
-            ))
-            fig_heat.update_layout(
-                title="Ø Konsistenz je SL% / Trail-Trigger% Kombination",
-                height=350, template="plotly_dark",
-                margin=dict(t=50, b=30, l=80, r=20)
-            )
-            st.plotly_chart(fig_heat, use_container_width=True)
-
-            # Bestes Setup hervorheben
-            best = df_stab.iloc[0]
-            st.success(
-                f"**Stabilstes Setup:** SL {best['SL %']} · "
-                f"Trail-Trigger {best['Trail-Trig %']} · Trail-Abstand {best['Trail-Off %']} · "
-                f"MA {best['MA']} · Filter: {best['Filter']} → "
-                f"**{int(best['Konsistenz %'])}% Konsistenz** · "
-                f"Ø OOS PF {best['Ø OOS PF']} · Ø OOS Ret {best['Ø OOS Ret %']}"
-            )
-
-            # Download
-            st.download_button("⬇️ Stabilitätsanalyse als CSV",
-                               data=df_stab.to_csv(index=False).encode(),
-                               file_name="btc_param_stability.csv", mime="text/csv")
+        # ── Gesamt-Badge ─────────────────────────────────────────────────────
+        if n_ok >= int(min_folds):
+            bc, bt = "#22c55e", f"✅ ROBUST — {n_ok}/{n_tot} Folds bestanden · Strategie empfohlen"
+        elif n_ok >= 2:
+            bc, bt = "#f0c040", f"⚠️ INSTABIL — nur {n_ok}/{n_tot} Folds bestanden · mit Vorsicht handeln"
+        elif n_ok == 1:
+            bc, bt = "#ef5350", f"❌ NICHT EMPFOHLEN — nur 1/{n_tot} Fold bestanden · Strategie funktioniert auf diesem Asset NICHT zuverlässig"
         else:
-            st.info("Zu wenig Daten für Stabilitätsanalyse — mehr Folds oder breiteren Grid verwenden.")
+            bc, bt = "#ef5350", f"❌ GESCHEITERT — 0/{n_tot} Folds bestanden · Strategie NICHT für dieses Asset geeignet"
 
-    # ════════════════════════════════════════════════════════════════════════
-    # ENSEMBLE WFA — N Läufe mit versetzten Startdaten
-    # ════════════════════════════════════════════════════════════════════════
-    st.markdown("---")
-    st.subheader("Ensemble WFA — Mehrfach-Lauf")
-    st.markdown("""
-Führt den WFA **N Mal** durch, jedes Mal mit einem um 1 Monat versetzten Startdatum.
-So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **immer wieder** gewinnen, unabhängig vom Startpunkt.
-    """)
+        st.markdown(
+            f'<div style="background:{bc}22;border:2px solid {bc};border-radius:10px;'
+            f'padding:16px 24px;font-weight:800;font-size:1.2rem;color:{bc};margin:16px 0;">'
+            f'{bt}</div>', unsafe_allow_html=True)
 
-    if "ens_running" not in st.session_state:
-        st.session_state["ens_running"] = False
+        # ── KPI-Zusammenfassung über alle OOS-Folds ───────────────────────────
+        oos_pfs   = [r["OOS PF"]    for r in wfa_rows if isinstance(r["OOS PF"],    (int,float))]
+        oos_rets  = [r["OOS Ret %"] for r in wfa_rows if isinstance(r["OOS Ret %"], (int,float))]
+        oos_shs   = [r["OOS Sharpe"] for r in wfa_rows if isinstance(r.get("OOS Sharpe"), (int,float))]
 
-    ec1, ec2 = st.columns(2)
-    n_runs = ec1.number_input("Anzahl Läufe", min_value=3, max_value=10, value=5, step=1, key="ens_runs")
-    if ec2.button("▶ Ensemble WFA starten", type="primary", key="ens_run_btn"):
-        st.session_state["ens_running"] = True
+        sc1,sc2,sc3,sc4 = st.columns(4)
+        sc1.metric("Ø OOS Profit Factor", f"{np.mean(oos_pfs):.2f}"  if oos_pfs  else "–")
+        sc2.metric("Ø OOS Rendite",       f"{np.mean(oos_rets):.1f}%" if oos_rets else "–")
+        sc3.metric("Ø OOS Sharpe",        f"{np.mean(oos_shs):.2f}"   if oos_shs  else "–")
+        sc4.metric("Bestandene Folds",    f"{n_ok}/{n_tot}")
 
-    if st.session_state["ens_running"]:
-        import datetime as _dt2
-        from dateutil.relativedelta import relativedelta
+        # ── Fold-Tabelle ──────────────────────────────────────────────────────
+        st.subheader("Fold-Ergebnisse")
+        def _color_status(v):
+            if v == "✅ Bestanden": return "color:#22c55e;font-weight:700"
+            if v == "❌ Fail":      return "color:#ef5350;font-weight:700"
+            return "color:#f0c040"
+        def _color_num(v):
+            if isinstance(v, (int,float)):
+                return "color:#22c55e" if v > 0 else "color:#ef5350"
+            return ""
+        num_cols = [c for c in ["OOS Ret %","OOS PF","OOS Sharpe","Ø Ret/Trade %"] if c in wfa_df.columns]
+        styled = wfa_df.style\
+            .map(_color_status, subset=["Status"])\
+            .map(_color_num,    subset=num_cols)
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
-        st.info(f"Starte {n_runs} WFA-Läufe mit versetzten Startdaten …")
-        ens_progress = st.progress(0, text="Ensemble läuft …")
+        # ── OOS Rendite Bar-Chart ─────────────────────────────────────────────
+        st.subheader("OOS-Rendite je Fold")
+        fold_labels = [f"Fold {r['Fold']}" for r in wfa_rows]
+        bar_colors  = ["#22c55e" if isinstance(r["OOS Ret %"],(int,float)) and r["OOS Ret %"]>0
+                       else "#ef5350" for r in wfa_rows]
+        bar_vals    = [r["OOS Ret %"] if isinstance(r["OOS Ret %"],(int,float)) else 0 for r in wfa_rows]
 
-        ensemble_stability: dict = {}  # key=(sl,tt,to,ma,fm) → list of OOS metrics über ALLE Läufe
+        fig_bar = go.Figure(go.Bar(
+            x=fold_labels, y=bar_vals, marker_color=bar_colors,
+            text=[f"{v:.1f}%" for v in bar_vals], textposition="outside",
+            width=0.5))
+        fig_bar.add_hline(y=0, line_color="white", line_width=1, line_dash="dash")
+        fig_bar.update_layout(title="OOS-Rendite je Fold (grün = profitabel)",
+                              height=380, template="plotly_dark",
+                              yaxis_title="Rendite %",
+                              xaxis=dict(tickfont=dict(size=13)),
+                              margin=dict(t=50,b=60,l=60,r=20))
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-        for run_i in range(int(n_runs)):
-            run_start = pd.Timestamp(btc_start) + pd.DateOffset(months=run_i)
-            df_run    = df_raw[df_raw.index >= run_start].copy()
+        # ── Gestapelte OOS Equity Curves ──────────────────────────────────────
+        if oos_equities:
+            # ── Kombinierte OOS Equity (Folds hintereinander = simulierter Live-Handel) ──
+            st.subheader("Kombinierte OOS Equity Kurve")
+            st.caption("Alle OOS-Folds hintereinander — so hätte sich das Kapital im echten Handel entwickelt (nur blind getestete Perioden, kein IS)")
 
-            if len(df_run) < 60:
-                continue
+            # Folds chronologisch sortieren und aneinanderhängen
+            oos_equities_sorted = sorted(oos_equities, key=lambda x: x[1].index[0])
+            combined_vals, combined_idx = [], []
+            running_capital = 10_000.0
+            for fi, eq in oos_equities_sorted:
+                scale = running_capital / eq.iloc[0]
+                scaled = eq * scale
+                combined_vals.extend(scaled.values.tolist())
+                combined_idx.extend(eq.index.tolist())
+                running_capital = scaled.iloc[-1]
 
-            # Folds für diesen Lauf
-            is_d_r  = pd.DateOffset(months=int(is_months))
-            oos_d_r = pd.DateOffset(months=int(oos_months))
-            folds_r, fs_r = [], df_run.index[0]
-            while True:
-                ie_r = fs_r + is_d_r
-                oe_r = ie_r + oos_d_r
-                if oe_r > df_run.index[-1]:
-                    break
-                folds_r.append({"is_start": fs_r, "is_end": ie_r,
-                                 "oos_start": ie_r, "oos_end": oe_r})
-                fs_r = fs_r + oos_d_r
+            combined_eq = pd.Series(combined_vals, index=combined_idx)
 
-            if len(folds_r) < 2:
-                continue
+            # Drawdown berechnen
+            roll_max = combined_eq.cummax()
+            drawdown = (combined_eq - roll_max) / roll_max * 100
 
-            adx_grid_r = g_adx if use_adx else [float(adx_thresh)]
+            fig_combined = go.Figure()
+            fig_combined.add_trace(go.Scatter(
+                x=combined_eq.index, y=combined_eq.values,
+                fill="tozeroy", fillcolor="rgba(247,147,26,0.15)",
+                line=dict(color="#f7931a", width=2.5),
+                name="Equity (OOS kombiniert)"))
+            # Fold-Grenzen als vertikale Linien
+            colors_fold = ["#42a5f5","#00d4aa","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da","#f7931a"]
+            for i, (fi, eq) in enumerate(oos_equities_sorted):
+                fig_combined.add_vline(x=eq.index[0], line_dash="dot",
+                                       line_color=colors_fold[i % len(colors_fold)],
+                                       annotation_text=f"F{fi}", annotation_position="top")
+            fig_combined.add_hline(y=10_000, line_color="white", line_dash="dash", line_width=1)
+            total_ret = (running_capital - 10_000) / 10_000 * 100
+            fig_combined.update_layout(
+                title=f"OOS Equity — 10.000€ Start → {running_capital:,.0f}€ ({total_ret:+.1f}%) | Nur blind getestete Perioden",
+                height=420, template="plotly_dark",
+                yaxis_title="Kapital (€)", xaxis_title="",
+                margin=dict(t=55, b=20, l=70, r=20))
+            st.plotly_chart(fig_combined, use_container_width=True)
 
-            for fold_r in folds_r:
-                df_is_r  = df_run[(df_run.index >= fold_r["is_start"]) & (df_run.index < fold_r["is_end"])].copy()
-                df_oos_r = df_run[(df_run.index >= fold_r["oos_start"]) & (df_run.index < fold_r["oos_end"])].copy()
+            # Drawdown Chart
+            fig_dd = go.Figure(go.Scatter(
+                x=combined_eq.index, y=drawdown.values,
+                fill="tozeroy", fillcolor="rgba(239,83,80,0.2)",
+                line=dict(color="#ef5350", width=1.5), name="Drawdown %"))
+            fig_dd.update_layout(
+                title=f"Drawdown — Max: {drawdown.min():.1f}%",
+                height=200, template="plotly_dark",
+                yaxis_title="DD %", margin=dict(t=40, b=20, l=70, r=20))
+            st.plotly_chart(fig_dd, use_container_width=True)
 
-                if len(df_is_r) < 30 or len(df_oos_r) < 5:
+            # ── Einzelne Folds übereinander (zum Vergleich) ───────────────────
+            with st.expander("Einzelne OOS-Folds im Vergleich"):
+                fig_eq = go.Figure()
+                colors = ["#f7931a","#00d4aa","#42a5f5","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da"]
+                for fi, eq in oos_equities:
+                    norm = eq / eq.iloc[0] * 100
+                    fig_eq.add_trace(go.Scatter(x=eq.index, y=norm.values,
+                                                name=f"Fold {fi}",
+                                                line=dict(color=colors[(fi-1) % len(colors)], width=1.5)))
+                fig_eq.add_hline(y=100, line_color="white", line_dash="dash", line_width=1)
+                fig_eq.update_layout(title="OOS Equity je Fold (normiert auf 100 = Startkapital)",
+                                     height=350, template="plotly_dark", margin=dict(t=40,b=20))
+                st.plotly_chart(fig_eq, use_container_width=True)
+
+        # ── CSV Download ──────────────────────────────────────────────────────
+        st.download_button("⬇️ WFA-Ergebnis als CSV",
+                           data=wfa_df.to_csv(index=False).encode(),
+                           file_name="btc_weekday_wfa.csv", mime="text/csv")
+
+        # ════════════════════════════════════════════════════════════════════════
+        # PARAMETER-STABILITÄTSANALYSE
+        # ════════════════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("Parameter-Stabilitätsanalyse")
+        st.caption("Welche SL / Trailing-Kombinationen liefern konsistent über ALLE Folds gute OOS-Ergebnisse?")
+
+        if param_stability:
+            stab_rows = []
+            for (sl_, tt_, to_, ma_, fm_), results in param_stability.items():
+                if len(results) < 2:
                     continue
+                pfs      = [r["pf"]         for r in results if r["n"] > 0]
+                rets     = [r["total_ret"]   for r in results if r["n"] > 0]
+                sharpes  = [r["sharpe"]      for r in results if r["n"] > 0]
+                trades   = [r["n"]           for r in results]
+                n_pos    = sum(1 for r in rets if r > 0) if rets else 0
+                n_folds  = len(results)
 
-                for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid_r, g_tt, g_to):
-                    p = {**base_params,
-                         "sl_pct":      sl_,
-                         "ma_period":   ma_,
-                         "filter_mode": fm_,
-                         "adx_thresh":  adx_,
-                         "trail_trig":  tt_,
-                         "trail_off":   to_}
-                    try:
-                        tr_is_r, _ = _momi_backtest_engine(df_is_r.copy(), p)
-                        if len(tr_is_r) < int(min_trades):
-                            continue
-                        tr_oos_r, eq_oos_r = _momi_backtest_engine(df_oos_r.copy(), p)
-                        m_oos_r = _momi_metrics(tr_oos_r, eq_oos_r)
-                        key = (sl_, tt_, to_, ma_, fm_)
-                        if key not in ensemble_stability:
-                            ensemble_stability[key] = []
-                        ensemble_stability[key].append(m_oos_r)
-                    except Exception:
-                        continue
-
-            ens_progress.progress((run_i + 1) / int(n_runs),
-                                   text=f"Lauf {run_i+1}/{int(n_runs)} abgeschlossen")
-
-        ens_progress.progress(1.0, text=f"Ensemble abgeschlossen ✓  ({int(n_runs)} Läufe)")
-        st.session_state["ens_running"] = False
-
-        # Auswertung
-        if not ensemble_stability:
-            st.error("Keine Ensemble-Ergebnisse — Grid oder Zeitraum anpassen.")
-        else:
-            # Buy & Hold Referenz für den gesamten Zeitraum
-            bh_start_price = float(df_raw["Close"].iloc[0])
-            bh_end_price   = float(df_raw["Close"].iloc[-1])
-            bh_total_ret   = (bh_end_price / bh_start_price - 1) * 100
-            tested_period  = f"{df_raw.index[0].date()} – {df_raw.index[-1].date()}"
-
-            ens_rows = []
-            ens_raw_params = {}  # key=rank → raw param dict für Backtest
-            for (sl_, tt_, to_, ma_, fm_), results in ensemble_stability.items():
-                if len(results) < 3:
-                    continue
-                pfs    = [r["pf"]        for r in results if r["n"] > 0]
-                rets   = [r["total_ret"] for r in results if r["n"] > 0]
-                sharps = [r["sharpe"]    for r in results if r["n"] > 0]
-                trades_list = [r["n"]    for r in results if r["n"] > 0]
-                avg_ret_list = [r.get("avg_ret", 0) for r in results if r["n"] > 0]
                 if not pfs:
                     continue
-                n_pos = sum(1 for r in rets if r > 0)
-                n_tot = len(results)
-                ens_rows.append({
-                    "_sl": sl_, "_tt": tt_, "_to": to_, "_ma": ma_, "_fm": fm_,
+
+                stab_rows.append({
                     "SL %":             f"{sl_:.2f}%",
                     "Trail-Trig %":     f"{tt_:.2f}%",
                     "Trail-Off %":      f"{to_:.2f}%",
                     "MA":               f"{ma_}",
                     "Filter":           fm_,
-                    "Konsistenz %":     round(n_pos / n_tot * 100, 0),
+                    "Folds getestet":   n_folds,
+                    "Profitable Folds": n_pos,
+                    "Konsistenz %":     round(n_pos / n_folds * 100, 0),
                     "Ø OOS PF":         round(np.mean(pfs), 2),
-                    "Ø OOS Ret %":      round(np.mean(rets), 2),
-                    "Ø Profit/Trade %": round(np.mean(avg_ret_list), 3) if avg_ret_list else 0,
-                    "Ø OOS Sharpe":     round(np.mean(sharps), 2),
-                    "Getestete Folds":  n_tot,
-                    "Zeitraum":         tested_period,
+                    "Ø OOS Ret %":      f"{round(np.mean(rets), 2):.2f}%",
+                    "Ø OOS Sharpe":     round(np.mean(sharpes), 2),
+                    "Min OOS Ret %":    f"{round(np.min(rets), 2):.2f}%",
+                    "Max DD Ø":         f"{round(np.mean([r['max_dd'] for r in results]), 2):.2f}%",
                 })
 
-            if ens_rows:
-                df_ens = pd.DataFrame(ens_rows).sort_values(
-                    ["Konsistenz %", "Ø OOS PF"], ascending=[False, False]
+            if stab_rows:
+                df_stab = pd.DataFrame(stab_rows)
+                # Sortierung: erst Konsistenz, dann Ø PF
+                df_stab = df_stab.sort_values(
+                    ["Konsistenz %", "Ø OOS PF", "Ø OOS Ret %"],
+                    ascending=[False, False, False]
                 ).reset_index(drop=True)
 
-                st.success(f"**Ensemble abgeschlossen** — {len(df_ens)} Kombinationen über {int(n_runs)} Läufe · Zeitraum: {tested_period}")
+                # Top 3 hervorheben
+                st.markdown("#### 🏆 Top-10 stabilste Setups")
+                top10 = df_stab.head(10).copy()
 
-                # ── Top-10 Tabelle ────────────────────────────────────────────
-                st.markdown(f"### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
-                st.caption(f"Zeitraum: **{tested_period}** · Buy & Hold BTC in diesem Zeitraum: **{bh_total_ret:+.1f}%**")
+                def _hl_konsistenz(v):
+                    if isinstance(v, (int, float)):
+                        if v >= 80: return "color:#22c55e;font-weight:700"
+                        if v >= 60: return "color:#f0c040"
+                        return "color:#ef5350"
+                    return ""
 
-                display_cols = ["SL %","Trail-Trig %","Trail-Off %","MA","Filter",
-                                "Konsistenz %","Ø OOS PF","Ø OOS Ret %","Ø Profit/Trade %","Ø OOS Sharpe","Zeitraum"]
-                top10_ens = df_ens.head(10)[display_cols].copy()
-                top10_ens["Ø OOS Ret %"]      = top10_ens["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%")
-                top10_ens["Ø Profit/Trade %"] = top10_ens["Ø Profit/Trade %"].apply(lambda v: f"{v:.3f}%")
+                def _hl_num(v):
+                    if isinstance(v, (int, float)):
+                        return "color:#22c55e" if v > 0 else "color:#ef5350"
+                    return ""
 
-                def _hl_k(v):
-                    if not isinstance(v, (int, float)): return ""
-                    if v >= 80: return "color:#22c55e;font-weight:700"
-                    if v >= 60: return "color:#f0c040"
-                    return "color:#ef5350"
-                st.dataframe(top10_ens.style.map(_hl_k, subset=["Konsistenz %"]),
-                             use_container_width=True, hide_index=True)
+                styled_stab = top10.style\
+                    .map(_hl_konsistenz, subset=["Konsistenz %"])\
+                    .map(_hl_num, subset=["Ø OOS PF"])
+                st.dataframe(styled_stab, use_container_width=True, hide_index=True)
 
-                best_ens = df_ens.iloc[0]
+                # Heatmap: SL% vs Trail-Trig% → Ø Konsistenz
+                st.markdown("#### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
+                pivot = df_stab.pivot_table(
+                    values="Konsistenz %",
+                    index="SL %",
+                    columns="Trail-Trig %",
+                    aggfunc="mean"
+                ).round(0)
+
+                fig_heat = go.Figure(go.Heatmap(
+                    z=pivot.values,
+                    x=[f"Trail {c}%" for c in pivot.columns],
+                    y=[f"SL {r}%" for r in pivot.index],
+                    colorscale="RdYlGn",
+                    zmin=0, zmax=100,
+                    text=pivot.values.round(0).astype(str),
+                    texttemplate="%{text}%",
+                    showscale=True,
+                    colorbar=dict(title="Konsistenz %")
+                ))
+                fig_heat.update_layout(
+                    title="Ø Konsistenz je SL% / Trail-Trigger% Kombination",
+                    height=350, template="plotly_dark",
+                    margin=dict(t=50, b=30, l=80, r=20)
+                )
+                st.plotly_chart(fig_heat, use_container_width=True)
+
+                # Bestes Setup hervorheben
+                best = df_stab.iloc[0]
                 st.success(
-                    f"**Robustestes Setup:** SL {best_ens['SL %']} · "
-                    f"Trail-Trigger {best_ens['Trail-Trig %']} · Trail-Abstand {best_ens['Trail-Off %']} · "
-                    f"MA {best_ens['MA']} · Filter: {best_ens['Filter']} → "
-                    f"**{int(best_ens['Konsistenz %'])}% Konsistenz** · "
-                    f"Ø OOS PF {best_ens['Ø OOS PF']} · Ø OOS Ret {best_ens['Ø OOS Ret %']:.2f}%"
+                    f"**Stabilstes Setup:** SL {best['SL %']} · "
+                    f"Trail-Trigger {best['Trail-Trig %']} · Trail-Abstand {best['Trail-Off %']} · "
+                    f"MA {best['MA']} · Filter: {best['Filter']} → "
+                    f"**{int(best['Konsistenz %'])}% Konsistenz** · "
+                    f"Ø OOS PF {best['Ø OOS PF']} · Ø OOS Ret {best['Ø OOS Ret %']}"
                 )
 
-                # ── Equity Kurve vs Buy & Hold für Top-10 ────────────────────
-                st.markdown("### Equity Kurve vs Buy & Hold — Top-10 Setups")
-                st.caption("Strategie (orange) vs reines BTC halten (blau) über den gesamten Testzeitraum")
+                # Download
+                st.download_button("⬇️ Stabilitätsanalyse als CSV",
+                                   data=df_stab.to_csv(index=False).encode(),
+                                   file_name="btc_param_stability.csv", mime="text/csv")
+            else:
+                st.info("Zu wenig Daten für Stabilitätsanalyse — mehr Folds oder breiteren Grid verwenden.")
 
-                bh_equity = df_raw["Close"] / df_raw["Close"].iloc[0] * 10_000
+        # ════════════════════════════════════════════════════════════════════════
+        # ENSEMBLE WFA — N Läufe mit versetzten Startdaten
+        # ════════════════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("Ensemble WFA — Mehrfach-Lauf")
+        st.markdown("""
+    Führt den WFA **N Mal** durch, jedes Mal mit einem um 1 Monat versetzten Startdatum.
+    So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **immer wieder** gewinnen, unabhängig vom Startpunkt.
+        """)
 
-                for rank, row in df_ens.head(10).iterrows():
-                    p_full = {**base_params,
-                              "sl_pct":      row["_sl"],
-                              "ma_period":   int(row["_ma"]),
-                              "filter_mode": row["_fm"],
-                              "trail_trig":  row["_tt"],
-                              "trail_off":   row["_to"]}
-                    try:
-                        tr_f, eq_f = _momi_backtest_engine(df_raw.copy(), p_full)
-                        m_f = _momi_metrics(tr_f, eq_f)
-                    except Exception:
+        if "ens_running" not in st.session_state:
+            st.session_state["ens_running"] = False
+
+        ec1, ec2 = st.columns(2)
+        n_runs = ec1.number_input("Anzahl Läufe", min_value=3, max_value=10, value=5, step=1, key="ens_runs")
+        if ec2.button("▶ Ensemble WFA starten", type="primary", key="ens_run_btn"):
+            st.session_state["ens_running"] = True
+
+        if st.session_state["ens_running"]:
+            import datetime as _dt2
+            from dateutil.relativedelta import relativedelta
+
+            st.info(f"Starte {n_runs} WFA-Läufe mit versetzten Startdaten …")
+            ens_progress = st.progress(0, text="Ensemble läuft …")
+
+            ensemble_stability: dict = {}  # key=(sl,tt,to,ma,fm) → list of OOS metrics über ALLE Läufe
+
+            for run_i in range(int(n_runs)):
+                run_start = pd.Timestamp(btc_start) + pd.DateOffset(months=run_i)
+                df_run    = df_raw[df_raw.index >= run_start].copy()
+
+                if len(df_run) < 60:
+                    continue
+
+                # Folds für diesen Lauf
+                is_d_r  = pd.DateOffset(months=int(is_months))
+                oos_d_r = pd.DateOffset(months=int(oos_months))
+                folds_r, fs_r = [], df_run.index[0]
+                while True:
+                    ie_r = fs_r + is_d_r
+                    oe_r = ie_r + oos_d_r
+                    if oe_r > df_run.index[-1]:
+                        break
+                    folds_r.append({"is_start": fs_r, "is_end": ie_r,
+                                     "oos_start": ie_r, "oos_end": oe_r})
+                    fs_r = fs_r + oos_d_r
+
+                if len(folds_r) < 2:
+                    continue
+
+                adx_grid_r = g_adx if use_adx else [float(adx_thresh)]
+
+                for fold_r in folds_r:
+                    df_is_r  = df_run[(df_run.index >= fold_r["is_start"]) & (df_run.index < fold_r["is_end"])].copy()
+                    df_oos_r = df_run[(df_run.index >= fold_r["oos_start"]) & (df_run.index < fold_r["oos_end"])].copy()
+
+                    if len(df_is_r) < 30 or len(df_oos_r) < 5:
                         continue
 
-                    total_ret_f = m_f["total_ret"]
-                    label = (f"#{rank+1} · SL {row['SL %']} · Trail {row['Trail-Trig %']} · "
-                             f"MA {row['MA']} · {row['Filter']}")
+                    for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid_r, g_tt, g_to):
+                        p = {**base_params,
+                             "sl_pct":      sl_,
+                             "ma_period":   ma_,
+                             "filter_mode": fm_,
+                             "adx_thresh":  adx_,
+                             "trail_trig":  tt_,
+                             "trail_off":   to_}
+                        try:
+                            tr_is_r, _ = _momi_backtest_engine(df_is_r.copy(), p)
+                            if len(tr_is_r) < int(min_trades):
+                                continue
+                            tr_oos_r, eq_oos_r = _momi_backtest_engine(df_oos_r.copy(), p)
+                            m_oos_r = _momi_metrics(tr_oos_r, eq_oos_r)
+                            key = (sl_, tt_, to_, ma_, fm_)
+                            if key not in ensemble_stability:
+                                ensemble_stability[key] = []
+                            ensemble_stability[key].append(m_oos_r)
+                        except Exception:
+                            continue
 
-                    with st.expander(f"#{rank+1} — Rendite: {total_ret_f:+.1f}% vs Buy&Hold: {bh_total_ret:+.1f}% · {label}"):
-                        # KPI-Zeile
-                        k1,k2,k3,k4,k5 = st.columns(5)
-                        k1.metric("Gesamt-Rendite",  f"{total_ret_f:+.1f}%")
-                        k2.metric("Buy & Hold",      f"{bh_total_ret:+.1f}%")
-                        k3.metric("Outperformance",  f"{total_ret_f - bh_total_ret:+.1f}%")
-                        k4.metric("Trades",          m_f["n"])
-                        k5.metric("Profit Factor",   f"{m_f['pf']:.2f}")
+                ens_progress.progress((run_i + 1) / int(n_runs),
+                                       text=f"Lauf {run_i+1}/{int(n_runs)} abgeschlossen")
 
-                        k6,k7,k8 = st.columns(3)
-                        k6.metric("Win-Rate",        f"{m_f['wr']:.1f}%")
-                        k7.metric("Max Drawdown",    f"{m_f['max_dd']:.1f}%")
-                        k8.metric("Sharpe",          f"{m_f['sharpe']:.2f}")
+            ens_progress.progress(1.0, text=f"Ensemble abgeschlossen ✓  ({int(n_runs)} Läufe)")
+            st.session_state["ens_running"] = False
 
-                        # Chart
-                        fig_vs = go.Figure()
-                        fig_vs.add_trace(go.Scatter(
-                            x=bh_equity.index, y=bh_equity.values,
-                            name="Buy & Hold BTC",
-                            line=dict(color="#4a9eff", width=2),
-                            fill="tozeroy", fillcolor="rgba(74,158,255,0.05)"))
-                        fig_vs.add_trace(go.Scatter(
-                            x=eq_f.index, y=eq_f.values,
-                            name="Strategie",
-                            line=dict(color="#f7931a", width=2.5),
-                            fill="tozeroy", fillcolor="rgba(247,147,26,0.1)"))
-                        fig_vs.add_hline(y=10_000, line_color="white",
-                                         line_dash="dash", line_width=1)
-                        fig_vs.update_layout(
-                            title=f"Setup #{rank+1}: {label}",
-                            height=350, template="plotly_dark",
-                            yaxis_title="Kapital (€)",
-                            legend=dict(orientation="h", y=1.05),
-                            margin=dict(t=50, b=20, l=60, r=20))
-                        st.plotly_chart(fig_vs, use_container_width=True)
+            # Auswertung
+            if not ensemble_stability:
+                st.error("Keine Ensemble-Ergebnisse — Grid oder Zeitraum anpassen.")
+            else:
+                # Buy & Hold Referenz für den gesamten Zeitraum
+                bh_start_price = float(df_raw["Close"].iloc[0])
+                bh_end_price   = float(df_raw["Close"].iloc[-1])
+                bh_total_ret   = (bh_end_price / bh_start_price - 1) * 100
+                tested_period  = f"{df_raw.index[0].date()} – {df_raw.index[-1].date()}"
 
-                # ── Heatmap ───────────────────────────────────────────────────
-                st.markdown("### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
-                pivot_ens = df_ens.copy()
-                pivot_ens["SL_num"] = pivot_ens["SL %"].str.replace("%","").astype(float)
-                pivot_ens["TT_num"] = pivot_ens["Trail-Trig %"].str.replace("%","").astype(float)
-                heat_ens = pivot_ens.pivot_table(
-                    values="Konsistenz %", index="SL_num", columns="TT_num", aggfunc="mean").round(0)
-                fig_heat_ens = go.Figure(go.Heatmap(
-                    z=heat_ens.values,
-                    x=[f"Trail {c}%" for c in heat_ens.columns],
-                    y=[f"SL {r}%"    for r in heat_ens.index],
-                    colorscale="RdYlGn", zmin=0, zmax=100,
-                    text=heat_ens.values.round(0).astype(str),
-                    texttemplate="%{text}%", showscale=True,
-                    colorbar=dict(title="Konsistenz %")))
-                fig_heat_ens.update_layout(
-                    title=f"Ensemble-Konsistenz über {int(n_runs)} Läufe",
-                    height=350, template="plotly_dark",
-                    margin=dict(t=50, b=30, l=80, r=20))
-                st.plotly_chart(fig_heat_ens, use_container_width=True)
+                ens_rows = []
+                ens_raw_params = {}  # key=rank → raw param dict für Backtest
+                for (sl_, tt_, to_, ma_, fm_), results in ensemble_stability.items():
+                    if len(results) < 3:
+                        continue
+                    pfs    = [r["pf"]        for r in results if r["n"] > 0]
+                    rets   = [r["total_ret"] for r in results if r["n"] > 0]
+                    sharps = [r["sharpe"]    for r in results if r["n"] > 0]
+                    trades_list = [r["n"]    for r in results if r["n"] > 0]
+                    avg_ret_list = [r.get("avg_ret", 0) for r in results if r["n"] > 0]
+                    if not pfs:
+                        continue
+                    n_pos = sum(1 for r in rets if r > 0)
+                    n_tot = len(results)
+                    ens_rows.append({
+                        "_sl": sl_, "_tt": tt_, "_to": to_, "_ma": ma_, "_fm": fm_,
+                        "SL %":             f"{sl_:.2f}%",
+                        "Trail-Trig %":     f"{tt_:.2f}%",
+                        "Trail-Off %":      f"{to_:.2f}%",
+                        "MA":               f"{ma_}",
+                        "Filter":           fm_,
+                        "Konsistenz %":     round(n_pos / n_tot * 100, 0),
+                        "Ø OOS PF":         round(np.mean(pfs), 2),
+                        "Ø OOS Ret %":      round(np.mean(rets), 2),
+                        "Ø Profit/Trade %": round(np.mean(avg_ret_list), 3) if avg_ret_list else 0,
+                        "Ø OOS Sharpe":     round(np.mean(sharps), 2),
+                        "Getestete Folds":  n_tot,
+                        "Zeitraum":         tested_period,
+                    })
 
-                st.download_button("⬇️ Ensemble-Ergebnis als CSV",
-                                   data=df_ens[display_cols].to_csv(index=False).encode(),
-                                   file_name="btc_ensemble_wfa.csv", mime="text/csv")
+                if ens_rows:
+                    df_ens = pd.DataFrame(ens_rows).sort_values(
+                        ["Konsistenz %", "Ø OOS PF"], ascending=[False, False]
+                    ).reset_index(drop=True)
+
+                    st.success(f"**Ensemble abgeschlossen** — {len(df_ens)} Kombinationen über {int(n_runs)} Läufe · Zeitraum: {tested_period}")
+
+                    # ── Top-10 Tabelle ────────────────────────────────────────────
+                    st.markdown(f"### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
+                    st.caption(f"Zeitraum: **{tested_period}** · Buy & Hold BTC in diesem Zeitraum: **{bh_total_ret:+.1f}%**")
+
+                    display_cols = ["SL %","Trail-Trig %","Trail-Off %","MA","Filter",
+                                    "Konsistenz %","Ø OOS PF","Ø OOS Ret %","Ø Profit/Trade %","Ø OOS Sharpe","Zeitraum"]
+                    top10_ens = df_ens.head(10)[display_cols].copy()
+                    top10_ens["Ø OOS Ret %"]      = top10_ens["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%")
+                    top10_ens["Ø Profit/Trade %"] = top10_ens["Ø Profit/Trade %"].apply(lambda v: f"{v:.3f}%")
+
+                    def _hl_k(v):
+                        if not isinstance(v, (int, float)): return ""
+                        if v >= 80: return "color:#22c55e;font-weight:700"
+                        if v >= 60: return "color:#f0c040"
+                        return "color:#ef5350"
+                    st.dataframe(top10_ens.style.map(_hl_k, subset=["Konsistenz %"]),
+                                 use_container_width=True, hide_index=True)
+
+                    best_ens = df_ens.iloc[0]
+                    st.success(
+                        f"**Robustestes Setup:** SL {best_ens['SL %']} · "
+                        f"Trail-Trigger {best_ens['Trail-Trig %']} · Trail-Abstand {best_ens['Trail-Off %']} · "
+                        f"MA {best_ens['MA']} · Filter: {best_ens['Filter']} → "
+                        f"**{int(best_ens['Konsistenz %'])}% Konsistenz** · "
+                        f"Ø OOS PF {best_ens['Ø OOS PF']} · Ø OOS Ret {best_ens['Ø OOS Ret %']:.2f}%"
+                    )
+
+                    # ── Equity Kurve vs Buy & Hold für Top-10 ────────────────────
+                    st.markdown("### Equity Kurve vs Buy & Hold — Top-10 Setups")
+                    st.caption("Strategie (orange) vs reines BTC halten (blau) über den gesamten Testzeitraum")
+
+                    bh_equity = df_raw["Close"] / df_raw["Close"].iloc[0] * 10_000
+
+                    for rank, row in df_ens.head(10).iterrows():
+                        p_full = {**base_params,
+                                  "sl_pct":      row["_sl"],
+                                  "ma_period":   int(row["_ma"]),
+                                  "filter_mode": row["_fm"],
+                                  "trail_trig":  row["_tt"],
+                                  "trail_off":   row["_to"]}
+                        try:
+                            tr_f, eq_f = _momi_backtest_engine(df_raw.copy(), p_full)
+                            m_f = _momi_metrics(tr_f, eq_f)
+                        except Exception:
+                            continue
+
+                        total_ret_f = m_f["total_ret"]
+                        label = (f"#{rank+1} · SL {row['SL %']} · Trail {row['Trail-Trig %']} · "
+                                 f"MA {row['MA']} · {row['Filter']}")
+
+                        with st.expander(f"#{rank+1} — Rendite: {total_ret_f:+.1f}% vs Buy&Hold: {bh_total_ret:+.1f}% · {label}"):
+                            # KPI-Zeile
+                            k1,k2,k3,k4,k5 = st.columns(5)
+                            k1.metric("Gesamt-Rendite",  f"{total_ret_f:+.1f}%")
+                            k2.metric("Buy & Hold",      f"{bh_total_ret:+.1f}%")
+                            k3.metric("Outperformance",  f"{total_ret_f - bh_total_ret:+.1f}%")
+                            k4.metric("Trades",          m_f["n"])
+                            k5.metric("Profit Factor",   f"{m_f['pf']:.2f}")
+
+                            k6,k7,k8 = st.columns(3)
+                            k6.metric("Win-Rate",        f"{m_f['wr']:.1f}%")
+                            k7.metric("Max Drawdown",    f"{m_f['max_dd']:.1f}%")
+                            k8.metric("Sharpe",          f"{m_f['sharpe']:.2f}")
+
+                            # Chart
+                            fig_vs = go.Figure()
+                            fig_vs.add_trace(go.Scatter(
+                                x=bh_equity.index, y=bh_equity.values,
+                                name="Buy & Hold BTC",
+                                line=dict(color="#4a9eff", width=2),
+                                fill="tozeroy", fillcolor="rgba(74,158,255,0.05)"))
+                            fig_vs.add_trace(go.Scatter(
+                                x=eq_f.index, y=eq_f.values,
+                                name="Strategie",
+                                line=dict(color="#f7931a", width=2.5),
+                                fill="tozeroy", fillcolor="rgba(247,147,26,0.1)"))
+                            fig_vs.add_hline(y=10_000, line_color="white",
+                                             line_dash="dash", line_width=1)
+                            fig_vs.update_layout(
+                                title=f"Setup #{rank+1}: {label}",
+                                height=350, template="plotly_dark",
+                                yaxis_title="Kapital (€)",
+                                legend=dict(orientation="h", y=1.05),
+                                margin=dict(t=50, b=20, l=60, r=20))
+                            st.plotly_chart(fig_vs, use_container_width=True)
+
+                    # ── Heatmap ───────────────────────────────────────────────────
+                    st.markdown("### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
+                    pivot_ens = df_ens.copy()
+                    pivot_ens["SL_num"] = pivot_ens["SL %"].str.replace("%","").astype(float)
+                    pivot_ens["TT_num"] = pivot_ens["Trail-Trig %"].str.replace("%","").astype(float)
+                    heat_ens = pivot_ens.pivot_table(
+                        values="Konsistenz %", index="SL_num", columns="TT_num", aggfunc="mean").round(0)
+                    fig_heat_ens = go.Figure(go.Heatmap(
+                        z=heat_ens.values,
+                        x=[f"Trail {c}%" for c in heat_ens.columns],
+                        y=[f"SL {r}%"    for r in heat_ens.index],
+                        colorscale="RdYlGn", zmin=0, zmax=100,
+                        text=heat_ens.values.round(0).astype(str),
+                        texttemplate="%{text}%", showscale=True,
+                        colorbar=dict(title="Konsistenz %")))
+                    fig_heat_ens.update_layout(
+                        title=f"Ensemble-Konsistenz über {int(n_runs)} Läufe",
+                        height=350, template="plotly_dark",
+                        margin=dict(t=50, b=30, l=80, r=20))
+                    st.plotly_chart(fig_heat_ens, use_container_width=True)
+
+                    st.download_button("⬇️ Ensemble-Ergebnis als CSV",
+                                       data=df_ens[display_cols].to_csv(index=False).encode(),
+                                       file_name="btc_ensemble_wfa.csv", mime="text/csv")
 
     # ════════════════════════════════════════════════════════════════════════
     # MONTE CARLO — Prop Trading Challenge Simulator
