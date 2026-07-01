@@ -5349,9 +5349,12 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             g_to   = st.multiselect("Trail-Abstand %",[0.1,0.2,0.3,0.4],              default=[0.2,0.3],          key="btc_gto")
 
     run_btn = st.button("🔄 WFA starten", type="primary", use_container_width=True, key="btc_run")
-    if not run_btn:
+    if run_btn:
+        st.session_state["btc_wfa_ran"] = True
+        st.session_state["btc_wfa_params_key"] = str(btc_start) + str(btc_end) + str(is_months) + str(oos_months)
+
+    if not st.session_state.get("btc_wfa_ran"):
         st.info("Parameter prüfen und WFA starten. BTC-Daten werden automatisch via yfinance geladen.")
-        # Vorab-Info zur Fold-Struktur
         n_months_total = (btc_end.year - btc_start.year) * 12 + (btc_end.month - btc_start.month)
         est_folds = max(0, (n_months_total - is_months) // oos_months)
         st.metric("Geschätzte Anzahl Folds", est_folds,
@@ -5367,9 +5370,13 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         st.error("`pip install yfinance` fehlt.")
         return
 
-    with st.spinner("BTC-USD Daily-Daten laden …"):
-        df_raw = yf.download("BTC-USD", start=str(btc_start), end=str(btc_end),
-                             interval="1d", auto_adjust=True, progress=False)
+    cache_key = f"btc_df_{btc_start}_{btc_end}"
+    if cache_key not in st.session_state or run_btn:
+        with st.spinner("BTC-USD Daily-Daten laden …"):
+            st.session_state[cache_key] = yf.download(
+                "BTC-USD", start=str(btc_start), end=str(btc_end),
+                interval="1d", auto_adjust=True, progress=False)
+    df_raw = st.session_state[cache_key]
 
     if df_raw.empty:
         st.error("Keine BTC-Daten geladen.")
@@ -5448,9 +5455,12 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
     st.info(f"**{len(folds)} Folds** · IS {is_months}M / OOS {oos_months}M  "
             f"· Grid-Größe: {len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)} Kombinationen je Fold")
 
-    progress = st.progress(0, text="Walk-Forward läuft …")
-    wfa_rows, oos_equities = [], []
-    # Für Stabilitätsanalyse: alle OOS-Ergebnisse je Parameterkombination sammeln
+    wfa_cache_key = f"btc_wfa_results_{btc_start}_{btc_end}_{is_months}_{oos_months}"
+
+    if run_btn or wfa_cache_key not in st.session_state:
+        progress = st.progress(0, text="Walk-Forward läuft …")
+        wfa_rows, oos_equities = [], []
+        # Für Stabilitätsanalyse: alle OOS-Ergebnisse je Parameterkombination sammeln
     param_stability: dict = {}   # key=(sl,tt,to,ma,fm) → list of OOS metrics
 
     for fi, fold in enumerate(folds):
@@ -5532,7 +5542,22 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             "Status":        "✅ Bestanden" if ok else "❌ Fail",
         })
 
-    progress.progress(1.0, text="Walk-Forward abgeschlossen ✓")
+        progress.progress(1.0, text="Walk-Forward abgeschlossen ✓")
+        st.session_state[wfa_cache_key] = {
+            "wfa_rows":        wfa_rows,
+            "oos_equities":    oos_equities,
+            "param_stability": param_stability,
+            "base_params":     base_params,
+            "grids":           (g_sl, g_ma, g_fm, g_tt, g_to),
+        }
+
+    # Ergebnisse aus Cache laden
+    _cached = st.session_state[wfa_cache_key]
+    wfa_rows        = _cached["wfa_rows"]
+    oos_equities    = _cached["oos_equities"]
+    param_stability = _cached["param_stability"]
+    base_params     = _cached["base_params"]
+    g_sl, g_ma, g_fm, g_tt, g_to = _cached["grids"]
 
     if not wfa_rows:
         st.error("Keine WFA-Ergebnisse — Parameter oder Zeitraum anpassen.")
