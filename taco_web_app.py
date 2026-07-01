@@ -5359,7 +5359,7 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         min_trades  = st.number_input("Min. IS-Trades", 5, 50, 10, key="btc_mint")
         opt_metric  = st.selectbox("Optimierungsziel", ["pf","sharpe","wr"], format_func=lambda x: {"pf":"Profit Factor","sharpe":"Sharpe","wr":"Win-Rate"}[x], key="btc_om")
     with wc3:
-        min_folds   = st.number_input("Min. Folds für ✅ ROBUST", 2, 8, 3, key="btc_mf")
+        min_folds   = st.number_input("Min. Folds für ✅ ROBUST", 2, 8, 4, key="btc_mf")
         st.markdown(" ")
 
     # ── Grid-Suchraum ─────────────────────────────────────────────────────
