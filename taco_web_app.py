@@ -5974,6 +5974,15 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         if "ens_running" not in st.session_state:
             st.session_state["ens_running"] = False
 
+        # Status-Badge: Ensemble bereits gelaufen?
+        _ens_status_key = f"ens_results_{_yf_ticker}"
+        if _ens_status_key in st.session_state:
+            _es = st.session_state[_ens_status_key]
+            st.success(f"✅ Ensemble bereits gelaufen — {_es['n_runs']} Läufe · Zeitraum: {_es['tested_period']} · "
+                       f"Ergebnisse werden unten angezeigt. Neu starten um zu aktualisieren.")
+        else:
+            st.info("⏳ Ensemble noch nicht gestartet — klicke '▶ Ensemble WFA starten'.")
+
         ec1, ec2 = st.columns(2)
         n_runs = ec1.number_input("Anzahl Läufe", min_value=3, max_value=10, value=5, step=1, key="ens_runs")
         if ec2.button("▶ Ensemble WFA starten", type="primary", key="ens_run_btn"):
@@ -6560,7 +6569,7 @@ Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeiti
             return "background-color:#ef535022;color:#ef5350"
 
         st.dataframe(
-            df_rank.drop(columns=["Ticker"]).style.applymap(_color_rec, subset=["Empfehlung"]),
+            df_rank.drop(columns=["Ticker"]).style.map(_color_rec, subset=["Empfehlung"]),
             use_container_width=True, hide_index=True
         )
 
