@@ -5233,10 +5233,34 @@ def render_yen_momi_strategie() -> None:
 
 
 _WFA_COIN_CACHE_FILE = "wfa_coin_cache.json"
+_GIST_DESCRIPTION   = "TACO Lab WFA Coin Cache"
+_GIST_FILENAME      = "taco_wfa_cache.json"
+
+def _gist_token():
+    try:
+        return st.secrets.get("GITHUB_GIST_TOKEN")
+    except Exception:
+        return None
+
+def _find_gist_id(token: str) -> str | None:
+    import requests
+    try:
+        r = requests.get(
+            "https://api.github.com/gists",
+            headers={"Authorization": f"token {token}"},
+            timeout=10
+        )
+        if r.status_code == 200:
+            for g in r.json():
+                if g.get("description") == _GIST_DESCRIPTION:
+                    return g["id"]
+    except Exception:
+        pass
+    return None
 
 def _save_coin_cache(coin_dict: dict) -> None:
-    """Speichert wfa_coin_trades persistent als JSON-Datei."""
-    import json
+    """Speichert wfa_coin_trades in GitHub Gist (überlebt Reboots) + lokaler Fallback."""
+    import json, requests
     serializable = {}
     for tkr, cdata in coin_dict.items():
         serializable[tkr] = {
@@ -5244,20 +5268,65 @@ def _save_coin_cache(coin_dict: dict) -> None:
             "symbol_name":  cdata["symbol_name"],
             "base_params":  cdata["base_params"],
         }
+    content = json.dumps(serializable)
+
+    # GitHub Gist speichern
+    token = _gist_token()
+    if token:
+        try:
+            headers = {"Authorization": f"token {token}",
+                       "Accept": "application/vnd.github.v3+json"}
+            gist_id = _find_gist_id(token)
+            payload = {"description": _GIST_DESCRIPTION,
+                       "public": False,
+                       "files": {_GIST_FILENAME: {"content": content}}}
+            if gist_id:
+                requests.patch(f"https://api.github.com/gists/{gist_id}",
+                               headers=headers, json=payload, timeout=15)
+            else:
+                requests.post("https://api.github.com/gists",
+                              headers=headers, json=payload, timeout=15)
+        except Exception:
+            pass
+
+    # Lokaler Fallback (funktioniert zumindest innerhalb einer Session)
     try:
         with open(_WFA_COIN_CACHE_FILE, "w") as f:
-            json.dump(serializable, f)
+            f.write(content)
     except Exception:
         pass
 
 def _load_coin_cache() -> dict:
-    """Lädt wfa_coin_trades aus JSON-Datei (falls vorhanden)."""
-    import json
-    try:
-        with open(_WFA_COIN_CACHE_FILE, "r") as f:
-            raw = json.load(f)
-        result = {}
-        for tkr, cdata in raw.items():
+    """Lädt wfa_coin_trades — zuerst GitHub Gist, dann lokale Datei."""
+    import json, requests
+
+    raw = None
+
+    # 1. Versuch: GitHub Gist
+    token = _gist_token()
+    if token:
+        try:
+            gist_id = _find_gist_id(token)
+            if gist_id:
+                r = requests.get(f"https://api.github.com/gists/{gist_id}",
+                                 headers={"Authorization": f"token {token}"},
+                                 timeout=10)
+                if r.status_code == 200:
+                    raw = json.loads(r.json()["files"][_GIST_FILENAME]["content"])
+        except Exception:
+            pass
+
+    # 2. Fallback: lokale JSON-Datei
+    if raw is None:
+        try:
+            with open(_WFA_COIN_CACHE_FILE, "r") as f:
+                raw = json.load(f)
+        except Exception:
+            return {}
+
+    result = {}
+    for tkr, cdata in raw.items():
+        try:
             df = pd.read_json(cdata["trades_json"], orient="records")
             if "Entry-Datum" in df.columns:
                 df["Entry-Datum"] = pd.to_datetime(df["Entry-Datum"])
@@ -5268,9 +5337,9 @@ def _load_coin_cache() -> dict:
                 "symbol_name": cdata["symbol_name"],
                 "base_params": cdata["base_params"],
             }
-        return result
-    except Exception:
-        return {}
+        except Exception:
+            continue
+    return result
 
 def render_btc_wfa() -> None:
     """Crypto WeekdayMA WFA — Sonntag Entry / Montag Exit auf BTC-USD Daily."""
@@ -6507,9 +6576,20 @@ Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeiti
     _cc1.caption(f"💾 {len(coin_trades_all)} Coin(s) gespeichert — Daten überleben Seiten-Reload automatisch")
     if _cc2.button("🗑️ Cache leeren", key="mmc_clear_cache", help="Alle gespeicherten Coin-Daten löschen"):
         st.session_state["wfa_coin_trades"] = {}
-        import os
+        import os, requests as _req
         try: os.remove(_WFA_COIN_CACHE_FILE)
         except Exception: pass
+        # Auch Gist leeren
+        _tkn = _gist_token()
+        if _tkn:
+            try:
+                _gid = _find_gist_id(_tkn)
+                if _gid:
+                    _req.patch(f"https://api.github.com/gists/{_gid}",
+                               headers={"Authorization": f"token {_tkn}"},
+                               json={"files": {_GIST_FILENAME: {"content": "{}"}}},
+                               timeout=10)
+            except Exception: pass
         st.rerun()
 
     if len(coin_trades_all) < 2:
