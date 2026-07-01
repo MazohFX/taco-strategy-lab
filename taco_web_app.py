@@ -6089,28 +6089,25 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
             st.warning(f"⚠️ Nur {n_real} Trades — Monte Carlo Ergebnisse haben hohe Unsicherheit. "
                        f"Mind. 50 Trades empfohlen für verlässliche Aussagen.")
 
-        mc1, mc2, mc3 = st.columns(3)
+        st.info("ℹ️ Kein Zeitlimit — die Simulation läuft bis das Profit-Ziel erreicht **oder** "
+                "die Drawdown-Grenze verletzt wird. Genau wie moderne Prop Firms.")
+
+        mc1, mc2 = st.columns(2)
         with mc1:
-            st.markdown("**Challenge-Regeln**")
-            challenge_capital  = st.number_input("Startkapital ($)", 10_000, 200_000, 100_000, step=10_000, key="mc_cap")
-            profit_target_pct  = st.number_input("Profit-Ziel (%)", 1.0, 20.0, 8.0, step=0.5, key="mc_pt")
-            max_total_dd_pct   = st.number_input("Max. Total Drawdown (%)", 1.0, 20.0, 10.0, step=0.5, key="mc_tdd")
-            max_daily_dd_pct   = st.number_input("Max. Daily Drawdown (%)", 0.5, 10.0, 5.0, step=0.5, key="mc_ddd")
+            st.markdown("**Challenge-Regeln (Prop Firm)**")
+            challenge_capital = st.number_input("Startkapital ($)", 10_000, 200_000, 100_000, step=10_000, key="mc_cap")
+            profit_target_pct = st.number_input("Profit-Ziel (%)", 1.0, 20.0, 8.0, step=0.5, key="mc_pt",
+                                                 help="FTMO: 8% Phase 1 / 5% Phase 2")
+            max_total_dd_pct  = st.number_input("Max. Total Drawdown (%)", 1.0, 20.0, 10.0, step=0.5, key="mc_tdd",
+                                                 help="FTMO: 10% — vom Startkapital")
+            max_daily_dd_pct  = st.number_input("Max. Daily Drawdown (%)", 0.5, 10.0, 5.0, step=0.5, key="mc_ddd",
+                                                 help="FTMO: 5% — vom Equity zu Tagesbeginn")
         with mc2:
             st.markdown("**Simulation**")
             n_sims         = st.number_input("Anzahl Simulationen", 500, 5000, 1000, step=500, key="mc_sims")
-            challenge_days = st.number_input("Challenge-Dauer (Tage)", 14, 90, 30, step=1, key="mc_days")
+            max_trades_sim = st.number_input("Max. Trades pro Simulation", 10, 500, 100, step=10, key="mc_maxt",
+                                              help="Sicherheitsnetz: nach X Trades ohne Ergebnis gilt die Sim als 'nicht bestanden'")
             risk_per_trade = st.number_input("Risiko pro Trade (%)", 0.1, 5.0, 1.0, step=0.1, key="mc_risk")
-            trades_per_week = st.number_input("Trades pro Woche", 1, 5, 1, step=1, key="mc_tpw")
-        with mc3:
-            st.markdown("**Info**")
-            n_challenge_trades = int(challenge_days / 7 * trades_per_week)
-            st.metric("Trades während Challenge", n_challenge_trades)
-            st.metric("Trades für stat. Signifikanz", "100+")
-            if n_challenge_trades < 10:
-                st.error(f"⚠️ Nur {n_challenge_trades} Trades in {challenge_days} Tagen — sehr hoher Zufallseinfluss!")
-            else:
-                st.info(f"{n_challenge_trades} Trades in {challenge_days} Tagen")
 
         run_mc = st.button("▶ Monte Carlo starten", type="primary", key="mc_run_btn")
         if run_mc:
@@ -6120,46 +6117,62 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
 
             mc_progress = st.progress(0, text="Monte Carlo läuft …")
 
-            # Trade-Returns als % des Kapitals normieren
-            avg_capital  = challenge_capital
-            trade_ret_pct = real_rets / 10_000 * 100  # skaliert auf % des Startkapitals
+            # Trade-Returns normieren: Vorzeichen erhalten, Größe auf risk_per_trade skalieren
+            win_mask  = real_rets > 0
+            avg_win   = real_rets[win_mask].mean()   if win_mask.any()  else 1
+            avg_loss  = real_rets[~win_mask].mean()  if (~win_mask).any() else -1
+            # Normierte Returns: +1 = avg Win, -1 = avg Loss (skaliert auf risk %)
+            norm_rets = np.where(real_rets > 0,
+                                  real_rets / avg_win,
+                                 -real_rets / avg_loss)
 
-            n_sims_int   = int(n_sims)
-            results      = []
-            all_paths    = []
+            n_sims_int = int(n_sims)
+            results, all_paths, trades_to_finish = [], [], []
 
             for sim_i in range(n_sims_int):
-                # Bootstrap: ziehe n_challenge_trades mit Zurücklegen
-                sampled = np.random.choice(trade_ret_pct, size=n_challenge_trades, replace=True)
-
                 capital     = float(challenge_capital)
                 peak        = capital
-                daily_start = capital
+                day_start   = capital
                 failed      = False
                 fail_reason = ""
                 path        = [capital]
+                n_trades    = 0
 
-                for t_i, ret_pct in enumerate(sampled):
-                    pnl      = capital * (risk_per_trade / 100) * (ret_pct / np.mean(np.abs(trade_ret_pct[trade_ret_pct != 0]))) if np.mean(np.abs(trade_ret_pct[trade_ret_pct != 0])) > 0 else capital * risk_per_trade / 100 * np.sign(ret_pct)
+                while True:
+                    # Bootstrap: einen zufälligen normierten Return ziehen
+                    idx     = np.random.randint(len(norm_rets))
+                    nr      = norm_rets[idx]
+                    # PnL = Kapital × Risiko% × normierter Return
+                    pnl     = capital * (risk_per_trade / 100) * nr
                     capital += pnl
+                    peak    =  max(peak, capital)
                     path.append(capital)
-                    peak     = max(peak, capital)
+                    n_trades += 1
 
-                    # Daily DD (vereinfacht: pro Trade als eigener "Tag")
-                    daily_dd_pct = (capital - daily_start) / daily_start * 100
-                    if daily_dd_pct < -max_daily_dd_pct:
+                    # Daily DD (jeder Trade = ein Tag bei Weekly-Strategie)
+                    daily_dd = (capital - day_start) / day_start * 100
+                    if daily_dd < -max_daily_dd_pct:
                         failed, fail_reason = True, "Daily DD"
                         break
-                    daily_start = capital  # nächster "Tag"
+                    day_start = capital
 
                     # Total DD vom Peak
-                    total_dd_pct = (capital - peak) / peak * 100
-                    if total_dd_pct < -max_total_dd_pct:
+                    total_dd = (capital - peak) / peak * 100
+                    if total_dd < -max_total_dd_pct:
                         failed, fail_reason = True, "Total DD"
                         break
 
+                    # Ziel erreicht?
+                    profit_pct = (capital - challenge_capital) / challenge_capital * 100
+                    if profit_pct >= profit_target_pct:
+                        break
+
+                    # Sicherheitsnetz
+                    if n_trades >= int(max_trades_sim):
+                        break
+
                 profit_pct = (capital - challenge_capital) / challenge_capital * 100
-                passed     = not failed and profit_pct >= profit_target_pct
+                passed = not failed and profit_pct >= profit_target_pct
 
                 results.append({
                     "passed":      passed,
@@ -6167,8 +6180,10 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
                     "fail_reason": fail_reason if failed else "",
                     "final_pct":   profit_pct,
                     "final_cap":   capital,
+                    "n_trades":    n_trades,
                 })
-                if sim_i < 200:  # nur 200 Pfade plotten
+                trades_to_finish.append(n_trades)
+                if sim_i < 200:
                     all_paths.append(path)
 
                 if sim_i % 100 == 0:
@@ -6176,14 +6191,15 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
 
             mc_progress.progress(1.0, text="Monte Carlo abgeschlossen ✓")
 
-            df_res   = pd.DataFrame(results)
-            n_passed = df_res["passed"].sum()
-            n_failed = df_res["failed"].sum()
-            n_neither = n_sims_int - n_passed - n_failed  # Zeit abgelaufen ohne Ziel
+            df_res    = pd.DataFrame(results)
+            n_passed  = df_res["passed"].sum()
+            n_failed  = df_res["failed"].sum()
+            n_timeout = n_sims_int - n_passed - n_failed
             pass_pct  = n_passed / n_sims_int * 100
             fail_pct  = n_failed / n_sims_int * 100
+            avg_trades_win = df_res.loc[df_res["passed"], "n_trades"].mean() if n_passed > 0 else 0
 
-            # ── Ergebnis-Badge ────────────────────────────────────────────
+            # ── Badge ─────────────────────────────────────────────────────
             if pass_pct >= 60:
                 bc, bt = "#22c55e", f"✅ GUTE CHANCE — {pass_pct:.1f}% der Simulationen bestanden"
             elif pass_pct >= 35:
@@ -6196,80 +6212,78 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
                 f'padding:16px 24px;font-weight:800;font-size:1.3rem;color:{bc};margin:16px 0;">'
                 f'{bt}</div>', unsafe_allow_html=True)
 
-            # ── KPI ───────────────────────────────────────────────────────
-            r1,r2,r3,r4,r5 = st.columns(5)
-            r1.metric("Challenge bestanden",  f"{pass_pct:.1f}%", f"{n_passed} von {n_sims_int}")
-            r2.metric("Disqualifiziert",       f"{fail_pct:.1f}%", f"{n_failed} von {n_sims_int}",  delta_color="inverse")
-            r3.metric("Ø Endkapital",          f"${df_res['final_cap'].mean():,.0f}")
-            r4.metric("Bestes Szenario",       f"+{df_res['final_pct'].max():.1f}%")
-            r5.metric("Schlimmstes Szenario",  f"{df_res['final_pct'].min():.1f}%")
+            # ── KPIs ──────────────────────────────────────────────────────
+            r1,r2,r3,r4,r5,r6 = st.columns(6)
+            r1.metric("Bestanden",         f"{pass_pct:.1f}%",   f"{n_passed}/{n_sims_int}")
+            r2.metric("Disqualifiziert",   f"{fail_pct:.1f}%",   f"{n_failed}/{n_sims_int}", delta_color="inverse")
+            r3.metric("Ø Trades bis Ziel", f"{avg_trades_win:.0f} Trades" if avg_trades_win > 0 else "–")
+            r4.metric("Ø Wochen bis Ziel", f"{avg_trades_win:.0f} Wo." if avg_trades_win > 0 else "–",
+                      help="Bei 1 Trade/Woche = direkt in Wochen")
+            r5.metric("Bestes Szenario",   f"+{df_res['final_pct'].max():.1f}%")
+            r6.metric("Schlimmstes",       f"{df_res['final_pct'].min():.1f}%")
 
             dd_fails  = (df_res["fail_reason"] == "Daily DD").sum()
             tdd_fails = (df_res["fail_reason"] == "Total DD").sum()
-            st.caption(f"Disqualifiziert durch: Daily DD {dd_fails}x · Total DD {tdd_fails}x · "
-                       f"Ziel nicht erreicht (Zeit) {n_neither}x")
+            st.caption(f"Disqualifiziert: Daily DD {dd_fails}x · Total DD {tdd_fails}x · "
+                       f"Max-Trades ohne Ergebnis {n_timeout}x")
 
             # ── Pfad-Chart ────────────────────────────────────────────────
             fig_mc = go.Figure()
             for path in all_paths:
-                col = "#22c55e" if (path[-1] - challenge_capital) / challenge_capital * 100 >= profit_target_pct else "#ef5350"
+                ok  = (path[-1] - challenge_capital) / challenge_capital * 100 >= profit_target_pct
                 fig_mc.add_trace(go.Scatter(
                     y=path, mode="lines",
-                    line=dict(color=col, width=0.5),
-                    opacity=0.15, showlegend=False))
+                    line=dict(color="#22c55e" if ok else "#ef5350", width=0.5),
+                    opacity=0.12, showlegend=False))
 
-            # Mittelwert-Pfad
-            max_len = max(len(p) for p in all_paths)
-            padded  = [p + [p[-1]] * (max_len - len(p)) for p in all_paths]
+            max_len   = max(len(p) for p in all_paths)
+            padded    = [p + [p[-1]] * (max_len - len(p)) for p in all_paths]
             mean_path = np.mean(padded, axis=0)
-            fig_mc.add_trace(go.Scatter(
-                y=mean_path, mode="lines",
-                line=dict(color="white", width=2.5, dash="dash"),
-                name="Ø Pfad"))
-
-            # Referenzlinien
+            fig_mc.add_trace(go.Scatter(y=mean_path, mode="lines",
+                                         line=dict(color="white", width=2.5, dash="dash"), name="Ø Pfad"))
             fig_mc.add_hline(y=challenge_capital * (1 + profit_target_pct/100),
                               line_color="#22c55e", line_dash="dot", line_width=2,
                               annotation_text=f"Ziel +{profit_target_pct}%", annotation_position="right")
             fig_mc.add_hline(y=challenge_capital * (1 - max_total_dd_pct/100),
                               line_color="#ef5350", line_dash="dot", line_width=2,
-                              annotation_text=f"Max DD -{max_total_dd_pct}%", annotation_position="right")
+                              annotation_text=f"Ruin -{max_total_dd_pct}%", annotation_position="right")
             fig_mc.add_hline(y=challenge_capital, line_color="white", line_dash="dash", line_width=1)
-
             fig_mc.update_layout(
-                title=f"Monte Carlo — {n_sims_int} Simulationen · Grün = bestanden · Rot = disqualifiziert",
+                title=f"Monte Carlo — {n_sims_int} Simulationen (kein Zeitlimit) · Grün = bestanden · Rot = disqualifiziert",
                 height=450, template="plotly_dark",
-                yaxis_title="Kapital ($)",
-                xaxis_title="Trade #",
-                margin=dict(t=50, b=30, l=70, r=80))
+                yaxis_title="Kapital ($)", xaxis_title="Trade #",
+                margin=dict(t=50, b=30, l=70, r=100))
             st.plotly_chart(fig_mc, use_container_width=True)
 
-            # ── Verteilung der Endergebnisse ──────────────────────────────
-            fig_dist = go.Figure()
-            fig_dist.add_trace(go.Histogram(
-                x=df_res["final_pct"],
-                nbinsx=40,
+            # ── Histogramm Endergebnis ────────────────────────────────────
+            fig_dist = go.Figure(go.Histogram(
+                x=df_res["final_pct"], nbinsx=40,
                 marker_color=["#22c55e" if v >= profit_target_pct else "#ef5350"
-                               for v in df_res["final_pct"]],
-                name="Endkapital-Verteilung"))
+                               for v in df_res["final_pct"]]))
             fig_dist.add_vline(x=profit_target_pct, line_color="#22c55e",
                                 line_dash="dot", annotation_text="Ziel")
             fig_dist.add_vline(x=0, line_color="white", line_dash="dash")
-            fig_dist.update_layout(
-                title="Verteilung der Endergebnisse (% Gewinn/Verlust)",
-                height=280, template="plotly_dark",
-                xaxis_title="Rendite %", yaxis_title="Anzahl Simulationen",
-                margin=dict(t=40, b=30, l=60, r=20))
+            fig_dist.update_layout(title="Verteilung Endergebnis %",
+                                    height=260, template="plotly_dark",
+                                    xaxis_title="Rendite %", yaxis_title="Anzahl",
+                                    margin=dict(t=40,b=30,l=60,r=20))
             st.plotly_chart(fig_dist, use_container_width=True)
 
-            # ── Ehrliche Warnung bei wenigen Trades ──────────────────────
-            if n_challenge_trades < 15:
-                st.warning(
-                    f"⚠️ **Statistische Warnung:** Mit nur **{n_challenge_trades} Trades** in {challenge_days} Tagen "
-                    f"ist das Ergebnis stark zufallsabhängig. Ein einzelner großer Verlust kann die Challenge beenden. "
-                    f"Die {pass_pct:.0f}% Erfolgswahrscheinlichkeit hat ein breites Konfidenzintervall — "
-                    f"der echte Wert könnte ±20% davon abweichen. "
-                    f"Für verlässliche MC-Ergebnisse brauchst du mind. 30-50 Trades pro Simulation.")
+            # ── Trades bis Ziel Histogramm ────────────────────────────────
+            if n_passed > 0:
+                won_trades = df_res.loc[df_res["passed"], "n_trades"]
+                fig_tw = go.Figure(go.Histogram(x=won_trades, nbinsx=20,
+                                                 marker_color="#f7931a"))
+                fig_tw.update_layout(
+                    title=f"Wie viele Trades bis Ziel? (Ø {avg_trades_win:.0f} Trades = ~{avg_trades_win:.0f} Wochen)",
+                    height=220, template="plotly_dark",
+                    xaxis_title="Trades bis Ziel", yaxis_title="Anzahl",
+                    margin=dict(t=40,b=30,l=60,r=20))
+                st.plotly_chart(fig_tw, use_container_width=True)
+
+            if n_real < 30:
+                st.warning(f"⚠️ Nur {n_real} echte Trades — Konfidenzintervall der {pass_pct:.0f}% ist breit (±15-20%). "
+                           f"Mind. 50 Trades für verlässliche Aussagen.")
 
 
 def render_pdh_pdl_strategie() -> None:
