@@ -5281,6 +5281,7 @@ def render_btc_wfa() -> None:
     if "wfa_coin_trades" not in st.session_state:
         st.session_state["wfa_coin_trades"] = _load_coin_cache()
 
+    # btc_wfa_ran + mc_trades aus persistentem Coin-Cache wiederherstellen (überlebt App-Neustart)
     _symbol_map_early = {
         "BTC — Bitcoin":       ("BTC-USD",  _dt.date(2018, 1, 1)),
         "ETH — Ethereum":      ("ETH-USD",  _dt.date(2018, 1, 1)),
@@ -5296,6 +5297,14 @@ def render_btc_wfa() -> None:
         _early_key = "BTC — Bitcoin"
     selected_name = _early_key
     _yf_ticker, _default_start = _symbol_map_early[selected_name]
+
+    # Wenn WFA-Ergebnis für diesen Ticker im JSON-Cache vorhanden → Session-State wiederherstellen
+    _coin_cache_for_ticker = st.session_state.get("wfa_coin_trades", {}).get(_yf_ticker)
+    if _coin_cache_for_ticker and not _coin_cache_for_ticker["trades"].empty:
+        if not st.session_state.get("btc_wfa_ran"):
+            st.session_state["btc_wfa_ran"] = True
+        if f"mc_trades_{_yf_ticker}" not in st.session_state:
+            st.session_state[f"mc_trades_{_yf_ticker}"] = _coin_cache_for_ticker["trades"]
 
     st.header(f"{selected_name.split('—')[0].strip()} WeekdayMA — Walk-Forward Analyse")
 
