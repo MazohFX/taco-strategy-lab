@@ -5232,10 +5232,54 @@ def render_yen_momi_strategie() -> None:
                                    file_name="momi_wfa.csv", mime="text/csv")
 
 
+_WFA_COIN_CACHE_FILE = "wfa_coin_cache.json"
+
+def _save_coin_cache(coin_dict: dict) -> None:
+    """Speichert wfa_coin_trades persistent als JSON-Datei."""
+    import json
+    serializable = {}
+    for tkr, cdata in coin_dict.items():
+        serializable[tkr] = {
+            "trades_json":  cdata["trades"].to_json(orient="records", date_format="iso"),
+            "symbol_name":  cdata["symbol_name"],
+            "base_params":  cdata["base_params"],
+        }
+    try:
+        with open(_WFA_COIN_CACHE_FILE, "w") as f:
+            json.dump(serializable, f)
+    except Exception:
+        pass
+
+def _load_coin_cache() -> dict:
+    """Lädt wfa_coin_trades aus JSON-Datei (falls vorhanden)."""
+    import json
+    try:
+        with open(_WFA_COIN_CACHE_FILE, "r") as f:
+            raw = json.load(f)
+        result = {}
+        for tkr, cdata in raw.items():
+            df = pd.read_json(cdata["trades_json"], orient="records")
+            if "Entry-Datum" in df.columns:
+                df["Entry-Datum"] = pd.to_datetime(df["Entry-Datum"])
+            if "Exit-Datum" in df.columns:
+                df["Exit-Datum"] = pd.to_datetime(df["Exit-Datum"])
+            result[tkr] = {
+                "trades":      df,
+                "symbol_name": cdata["symbol_name"],
+                "base_params": cdata["base_params"],
+            }
+        return result
+    except Exception:
+        return {}
+
 def render_btc_wfa() -> None:
     """Crypto WeekdayMA WFA — Sonntag Entry / Montag Exit auf BTC-USD Daily."""
     import datetime as _dt
     from itertools import product as _prod
+
+    # Coin-Cache aus Datei laden falls session_state noch leer
+    if "wfa_coin_trades" not in st.session_state:
+        st.session_state["wfa_coin_trades"] = _load_coin_cache()
 
     _symbol_map_early = {
         "BTC — Bitcoin":       ("BTC-USD",  _dt.date(2018, 1, 1)),
@@ -5585,7 +5629,7 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             "base_params":     base_params,
             "grids":           (g_sl, g_ma, g_fm, g_tt, g_to),
         }
-        # Multi-Coin Cache: Trades für diesen Ticker speichern
+        # Multi-Coin Cache: Trades für diesen Ticker speichern + persistent sichern
         try:
             _mc_tr, _ = _momi_backtest_engine(df_raw.copy(), base_params)
             if "wfa_coin_trades" not in st.session_state:
@@ -5595,6 +5639,7 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
                 "symbol_name":  selected_name,
                 "base_params":  base_params,
             }
+            _save_coin_cache(st.session_state["wfa_coin_trades"])
         except Exception:
             pass
 
@@ -6346,6 +6391,16 @@ Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeiti
     """)
 
     coin_trades_all = st.session_state.get("wfa_coin_trades", {})
+
+    # Cache-Verwaltung
+    _cc1, _cc2 = st.columns([4, 1])
+    _cc1.caption(f"💾 {len(coin_trades_all)} Coin(s) gespeichert — Daten überleben Seiten-Reload automatisch")
+    if _cc2.button("🗑️ Cache leeren", key="mmc_clear_cache", help="Alle gespeicherten Coin-Daten löschen"):
+        st.session_state["wfa_coin_trades"] = {}
+        import os
+        try: os.remove(_WFA_COIN_CACHE_FILE)
+        except Exception: pass
+        st.rerun()
 
     if len(coin_trades_all) < 2:
         st.info(f"{'1 Coin gespeichert' if len(coin_trades_all) == 1 else 'Noch keine Coins gespeichert'}. "
