@@ -4791,12 +4791,14 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
                 position, trail_active = 0, False
 
         if position == 0 and row["entry_signal"]:
-            entry_price  = c
-            sl_price     = c * (1 - sl_pct / 100)
-            qty          = (capital * 0.10) / c
-            trail_high   = c
-            trail_active = False
-            position     = 1
+            entry_price    = c
+            sl_price       = c * (1 - sl_pct / 100)
+            risk_per_trade = capital * (params.get("risk_pct", 1.0) / 100)
+            risk_per_unit  = entry_price - sl_price
+            qty            = (risk_per_trade / risk_per_unit) if risk_per_unit > 0 else 0
+            trail_high     = c
+            trail_active   = False
+            position       = 1
 
         equity_curve.append(capital)
 
@@ -4955,12 +4957,14 @@ def render_yen_momi_strategie() -> None:
                 position, trail_active = 0, False
 
         if position == 0 and row["entry_signal"]:
-            entry_price  = c
-            sl_price     = c * (1 - sl_pct / 100)
-            qty          = (capital * 0.10) / c
-            trail_high   = c
-            trail_active = False
-            position     = 1
+            entry_price    = c
+            sl_price       = c * (1 - sl_pct / 100)
+            risk_per_trade = capital * (params.get("risk_pct", 1.0) / 100)
+            risk_per_unit  = entry_price - sl_price
+            qty            = (risk_per_trade / risk_per_unit) if risk_per_unit > 0 else 0
+            trail_high     = c
+            trail_active   = False
+            position       = 1
 
         equity_curve.append(capital)
 
@@ -5311,6 +5315,9 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         use_trail  = st.checkbox("Trailing Stop", True, key="btc_tr")
         trail_trig = st.number_input("Trail-Trigger %", 0.1, 10.0, 0.2, step=0.1, key="btc_tt")
         trail_off  = st.number_input("Trail-Abstand %", 0.1, 10.0, 0.2, step=0.1, key="btc_to")
+        st.markdown("---")
+        risk_pct   = st.number_input("Risiko pro Trade %", 0.1, 5.0, 1.0, step=0.1, key="btc_risk",
+                                     help="1% = bei 100.000€ Konto riskierst du 1.000€ pro Trade (basierend auf SL-Abstand)")
 
     # ── WFA-Konfiguration ─────────────────────────────────────────────────
     st.markdown("---")
@@ -5391,6 +5398,7 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         "use_trail":   use_trail,
         "trail_trig":  float(trail_trig),
         "trail_off":   float(trail_off),
+        "risk_pct":    float(risk_pct),
     }
 
     with st.spinner("Full-Sample Backtest …"):
@@ -5593,18 +5601,72 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
 
     # ── Gestapelte OOS Equity Curves ──────────────────────────────────────
     if oos_equities:
-        st.subheader("OOS Equity Kurven je Fold")
-        fig_eq = go.Figure()
-        colors = ["#f7931a","#00d4aa","#42a5f5","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da"]
-        for fi, eq in oos_equities:
-            norm = eq / eq.iloc[0] * 100  # normiert auf 100 Startbasis
-            fig_eq.add_trace(go.Scatter(x=eq.index, y=norm.values,
-                                        name=f"Fold {fi}",
-                                        line=dict(color=colors[(fi-1) % len(colors)], width=1.5)))
-        fig_eq.add_hline(y=100, line_color="white", line_dash="dash", line_width=1)
-        fig_eq.update_layout(title="OOS Equity je Fold (normiert auf 100)",
-                             height=350, template="plotly_dark", margin=dict(t=40,b=20))
-        st.plotly_chart(fig_eq, use_container_width=True)
+        # ── Kombinierte OOS Equity (Folds hintereinander = simulierter Live-Handel) ──
+        st.subheader("Kombinierte OOS Equity Kurve")
+        st.caption("Alle OOS-Folds hintereinander — so hätte sich das Kapital im echten Handel entwickelt (nur blind getestete Perioden, kein IS)")
+
+        # Folds chronologisch sortieren und aneinanderhängen
+        oos_equities_sorted = sorted(oos_equities, key=lambda x: x[1].index[0])
+        combined_vals, combined_idx = [], []
+        running_capital = 10_000.0
+        for fi, eq in oos_equities_sorted:
+            scale = running_capital / eq.iloc[0]
+            scaled = eq * scale
+            combined_vals.extend(scaled.values.tolist())
+            combined_idx.extend(eq.index.tolist())
+            running_capital = scaled.iloc[-1]
+
+        combined_eq = pd.Series(combined_vals, index=combined_idx)
+
+        # Drawdown berechnen
+        roll_max = combined_eq.cummax()
+        drawdown = (combined_eq - roll_max) / roll_max * 100
+
+        fig_combined = go.Figure()
+        fig_combined.add_trace(go.Scatter(
+            x=combined_eq.index, y=combined_eq.values,
+            fill="tozeroy", fillcolor="rgba(247,147,26,0.15)",
+            line=dict(color="#f7931a", width=2.5),
+            name="Equity (OOS kombiniert)"))
+        # Fold-Grenzen als vertikale Linien
+        colors_fold = ["#42a5f5","#00d4aa","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da","#f7931a"]
+        for i, (fi, eq) in enumerate(oos_equities_sorted):
+            fig_combined.add_vline(x=eq.index[0], line_dash="dot",
+                                   line_color=colors_fold[i % len(colors_fold)],
+                                   annotation_text=f"F{fi}", annotation_position="top")
+        fig_combined.add_hline(y=10_000, line_color="white", line_dash="dash", line_width=1)
+        total_ret = (running_capital - 10_000) / 10_000 * 100
+        fig_combined.update_layout(
+            title=f"OOS Equity — 10.000€ Start → {running_capital:,.0f}€ ({total_ret:+.1f}%) | Nur blind getestete Perioden",
+            height=420, template="plotly_dark",
+            yaxis_title="Kapital (€)", xaxis_title="",
+            margin=dict(t=55, b=20, l=70, r=20))
+        st.plotly_chart(fig_combined, use_container_width=True)
+
+        # Drawdown Chart
+        fig_dd = go.Figure(go.Scatter(
+            x=combined_eq.index, y=drawdown.values,
+            fill="tozeroy", fillcolor="rgba(239,83,80,0.2)",
+            line=dict(color="#ef5350", width=1.5), name="Drawdown %"))
+        fig_dd.update_layout(
+            title=f"Drawdown — Max: {drawdown.min():.1f}%",
+            height=200, template="plotly_dark",
+            yaxis_title="DD %", margin=dict(t=40, b=20, l=70, r=20))
+        st.plotly_chart(fig_dd, use_container_width=True)
+
+        # ── Einzelne Folds übereinander (zum Vergleich) ───────────────────
+        with st.expander("Einzelne OOS-Folds im Vergleich"):
+            fig_eq = go.Figure()
+            colors = ["#f7931a","#00d4aa","#42a5f5","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da"]
+            for fi, eq in oos_equities:
+                norm = eq / eq.iloc[0] * 100
+                fig_eq.add_trace(go.Scatter(x=eq.index, y=norm.values,
+                                            name=f"Fold {fi}",
+                                            line=dict(color=colors[(fi-1) % len(colors)], width=1.5)))
+            fig_eq.add_hline(y=100, line_color="white", line_dash="dash", line_width=1)
+            fig_eq.update_layout(title="OOS Equity je Fold (normiert auf 100 = Startkapital)",
+                                 height=350, template="plotly_dark", margin=dict(t=40,b=20))
+            st.plotly_chart(fig_eq, use_container_width=True)
 
     # ── CSV Download ──────────────────────────────────────────────────────
     st.download_button("⬇️ WFA-Ergebnis als CSV",
