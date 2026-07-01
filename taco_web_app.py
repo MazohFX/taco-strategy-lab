@@ -6092,15 +6092,25 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
                         ["Konsistenz %", "Ø OOS PF"], ascending=[False, False]
                     ).reset_index(drop=True)
 
+                    # Ergebnisse persistent im Session-State speichern
+                    _ens_cache_key = f"ens_results_{_yf_ticker}"
+                    display_cols_ens = ["SL %","Trail-Trig %","Trail-Off %","MA","Filter",
+                                        "Konsistenz %","Ø OOS PF","Ø OOS Ret %","Ø Profit/Trade %","Ø OOS Sharpe","Zeitraum"]
+                    st.session_state[_ens_cache_key] = {
+                        "df_ens":       df_ens,
+                        "bh_total_ret": bh_total_ret,
+                        "tested_period": tested_period,
+                        "n_runs":       int(n_runs),
+                        "display_cols": display_cols_ens,
+                    }
+
                     st.success(f"**Ensemble abgeschlossen** — {len(df_ens)} Kombinationen über {int(n_runs)} Läufe · Zeitraum: {tested_period}")
 
                     # ── Top-10 Tabelle ────────────────────────────────────────────
                     st.markdown(f"### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
                     st.caption(f"Zeitraum: **{tested_period}** · Buy & Hold BTC in diesem Zeitraum: **{bh_total_ret:+.1f}%**")
 
-                    display_cols = ["SL %","Trail-Trig %","Trail-Off %","MA","Filter",
-                                    "Konsistenz %","Ø OOS PF","Ø OOS Ret %","Ø Profit/Trade %","Ø OOS Sharpe","Zeitraum"]
-                    top10_ens = df_ens.head(10)[display_cols].copy()
+                    top10_ens = df_ens.head(10)[display_cols_ens].copy()
                     top10_ens["Ø OOS Ret %"]      = top10_ens["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%")
                     top10_ens["Ø Profit/Trade %"] = top10_ens["Ø Profit/Trade %"].apply(lambda v: f"{v:.3f}%")
 
@@ -6202,8 +6212,46 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
                     st.plotly_chart(fig_heat_ens, use_container_width=True)
 
                     st.download_button("⬇️ Ensemble-Ergebnis als CSV",
-                                       data=df_ens[display_cols].to_csv(index=False).encode(),
+                                       data=df_ens[display_cols_ens].to_csv(index=False).encode(),
                                        file_name="btc_ensemble_wfa.csv", mime="text/csv")
+
+        # ── Gespeicherte Ensemble-Ergebnisse anzeigen (auch nach Reload) ──────
+        _ens_cache_key = f"ens_results_{_yf_ticker}"
+        if not st.session_state.get("ens_running") and _ens_cache_key in st.session_state:
+            _ec = st.session_state[_ens_cache_key]
+            _df_ens_c   = _ec["df_ens"]
+            _bh_ret_c   = _ec["bh_total_ret"]
+            _period_c   = _ec["tested_period"]
+            _n_runs_c   = _ec["n_runs"]
+            _dcols_c    = _ec["display_cols"]
+            st.markdown("---")
+            st.markdown(f"### 🏆 Top-10 Ensemble-Setups ({_n_runs_c} Läufe) — gespeichertes Ergebnis")
+            st.caption(f"Zeitraum: **{_period_c}** · Buy & Hold: **{_bh_ret_c:+.1f}%**")
+
+            _t10 = _df_ens_c.head(10)[_dcols_c].copy()
+            _t10["Ø OOS Ret %"]      = _t10["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%" if isinstance(v, (int,float)) else v)
+            _t10["Ø Profit/Trade %"] = _t10["Ø Profit/Trade %"].apply(lambda v: f"{v:.3f}%" if isinstance(v, (int,float)) else v)
+
+            def _hl_k2(v):
+                if not isinstance(v, (int, float)): return ""
+                if v >= 80: return "color:#22c55e;font-weight:700"
+                if v >= 60: return "color:#f0c040"
+                return "color:#ef5350"
+            st.dataframe(_t10.style.map(_hl_k2, subset=["Konsistenz %"]),
+                         use_container_width=True, hide_index=True)
+
+            _best_c = _df_ens_c.iloc[0]
+            st.success(
+                f"**Robustestes Setup:** SL {_best_c['SL %']} · "
+                f"Trail-Trigger {_best_c['Trail-Trig %']} · Trail-Abstand {_best_c['Trail-Off %']} · "
+                f"MA {_best_c['MA']} · Filter: {_best_c['Filter']} → "
+                f"**{int(_best_c['Konsistenz %'])}% Konsistenz** · "
+                f"Ø OOS PF {_best_c['Ø OOS PF']} · Ø OOS Ret {_best_c['Ø OOS Ret %']:.2f}%"
+            )
+            st.download_button("⬇️ Ensemble als CSV (gespeichert)",
+                               data=_df_ens_c[_dcols_c].to_csv(index=False).encode(),
+                               file_name="btc_ensemble_wfa.csv", mime="text/csv",
+                               key="ens_dl_cached")
 
     # ════════════════════════════════════════════════════════════════════════
     # MONTE CARLO — Prop Trading Challenge Simulator
