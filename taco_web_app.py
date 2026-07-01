@@ -5376,10 +5376,18 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             g_tt   = st.multiselect("Trail-Trigger %",[0.1,0.2,0.3,0.5],              default=[0.2,0.3],          key="btc_gtt")
             g_to   = st.multiselect("Trail-Abstand %",[0.1,0.2,0.3,0.4],              default=[0.2,0.3],          key="btc_gto")
 
-    run_btn = st.button("🔄 WFA starten", type="primary", use_container_width=True, key="btc_run")
+    _btn_col1, _btn_col2 = st.columns([1, 1])
+    with _btn_col1:
+        run_btn = st.button("🔄 WFA starten", type="primary", use_container_width=True, key="btc_run")
+    with _btn_col2:
+        _ens_quick = st.button("⚡ Ensemble WFA starten (5×)", use_container_width=True, key="btc_ens_quick",
+                               help="Startet direkt den 5-fachen Durchlauf — WFA muss einmal zuvor gelaufen sein",
+                               disabled=not st.session_state.get("btc_wfa_ran", False))
     if run_btn:
         st.session_state["btc_wfa_ran"] = True
         st.session_state["btc_wfa_params_key"] = str(btc_start) + str(btc_end) + str(is_months) + str(oos_months)
+    if _ens_quick:
+        st.session_state["ens_running"] = True
 
     if not st.session_state.get("btc_wfa_ran"):
         st.info("Parameter prüfen und WFA starten. BTC-Daten werden automatisch via yfinance geladen.")
