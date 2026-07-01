@@ -5784,6 +5784,172 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         else:
             st.info("Zu wenig Daten für Stabilitätsanalyse — mehr Folds oder breiteren Grid verwenden.")
 
+    # ════════════════════════════════════════════════════════════════════════
+    # ENSEMBLE WFA — N Läufe mit versetzten Startdaten
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("Ensemble WFA — Mehrfach-Lauf")
+    st.markdown("""
+Führt den WFA **N Mal** durch, jedes Mal mit einem um 1 Monat versetzten Startdatum.
+So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **immer wieder** gewinnen, unabhängig vom Startpunkt.
+    """)
+
+    with st.expander("Ensemble WFA starten", expanded=False):
+        ec1, ec2 = st.columns(2)
+        n_runs    = ec1.number_input("Anzahl Läufe", min_value=3, max_value=10, value=5, step=1, key="ens_runs")
+        ens_start = ec2.button("▶ Ensemble WFA starten", type="primary", key="ens_run_btn")
+
+    if ens_start:
+        import datetime as _dt2
+        from dateutil.relativedelta import relativedelta
+
+        st.info(f"Starte {n_runs} WFA-Läufe mit versetzten Startdaten …")
+        ens_progress = st.progress(0, text="Ensemble läuft …")
+
+        ensemble_stability: dict = {}  # key=(sl,tt,to,ma,fm) → list of OOS metrics über ALLE Läufe
+
+        for run_i in range(int(n_runs)):
+            run_start = pd.Timestamp(btc_start) + pd.DateOffset(months=run_i)
+            df_run    = df_raw[df_raw.index >= run_start].copy()
+
+            if len(df_run) < 60:
+                continue
+
+            # Folds für diesen Lauf
+            is_d_r  = pd.DateOffset(months=int(is_months))
+            oos_d_r = pd.DateOffset(months=int(oos_months))
+            folds_r, fs_r = [], df_run.index[0]
+            while True:
+                ie_r = fs_r + is_d_r
+                oe_r = ie_r + oos_d_r
+                if oe_r > df_run.index[-1]:
+                    break
+                folds_r.append({"is_start": fs_r, "is_end": ie_r,
+                                 "oos_start": ie_r, "oos_end": oe_r})
+                fs_r = fs_r + oos_d_r
+
+            if len(folds_r) < 2:
+                continue
+
+            adx_grid_r = g_adx if use_adx else [float(adx_thresh)]
+
+            for fold_r in folds_r:
+                df_is_r  = df_run[(df_run.index >= fold_r["is_start"]) & (df_run.index < fold_r["is_end"])].copy()
+                df_oos_r = df_run[(df_run.index >= fold_r["oos_start"]) & (df_run.index < fold_r["oos_end"])].copy()
+
+                if len(df_is_r) < 30 or len(df_oos_r) < 5:
+                    continue
+
+                for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid_r, g_tt, g_to):
+                    p = {**base_params,
+                         "sl_pct":      sl_,
+                         "ma_period":   ma_,
+                         "filter_mode": fm_,
+                         "adx_thresh":  adx_,
+                         "trail_trig":  tt_,
+                         "trail_off":   to_}
+                    try:
+                        tr_is_r, _ = _momi_backtest_engine(df_is_r.copy(), p)
+                        if len(tr_is_r) < int(min_trades):
+                            continue
+                        tr_oos_r, eq_oos_r = _momi_backtest_engine(df_oos_r.copy(), p)
+                        m_oos_r = _momi_metrics(tr_oos_r, eq_oos_r)
+                        key = (sl_, tt_, to_, ma_, fm_)
+                        if key not in ensemble_stability:
+                            ensemble_stability[key] = []
+                        ensemble_stability[key].append(m_oos_r)
+                    except Exception:
+                        continue
+
+            ens_progress.progress((run_i + 1) / int(n_runs),
+                                   text=f"Lauf {run_i+1}/{int(n_runs)} abgeschlossen")
+
+        ens_progress.progress(1.0, text=f"Ensemble abgeschlossen ✓  ({int(n_runs)} Läufe)")
+
+        # Auswertung
+        if not ensemble_stability:
+            st.error("Keine Ensemble-Ergebnisse — Grid oder Zeitraum anpassen.")
+        else:
+            ens_rows = []
+            for (sl_, tt_, to_, ma_, fm_), results in ensemble_stability.items():
+                if len(results) < 3:
+                    continue
+                pfs    = [r["pf"]        for r in results if r["n"] > 0]
+                rets   = [r["total_ret"] for r in results if r["n"] > 0]
+                sharps = [r["sharpe"]    for r in results if r["n"] > 0]
+                if not pfs:
+                    continue
+                n_pos  = sum(1 for r in rets if r > 0)
+                n_tot  = len(results)
+                ens_rows.append({
+                    "SL %":             f"{sl_:.2f}%",
+                    "Trail-Trig %":     f"{tt_:.2f}%",
+                    "Trail-Off %":      f"{to_:.2f}%",
+                    "MA":               f"{ma_}",
+                    "Filter":           fm_,
+                    "Getestete Folds":  n_tot,
+                    "Profitable Folds": n_pos,
+                    "Konsistenz %":     round(n_pos / n_tot * 100, 0),
+                    "Ø OOS PF":         round(np.mean(pfs), 2),
+                    "Ø OOS Ret %":      f"{round(np.mean(rets), 2):.2f}%",
+                    "Ø OOS Sharpe":     round(np.mean(sharps), 2),
+                })
+
+            if ens_rows:
+                df_ens = pd.DataFrame(ens_rows).sort_values(
+                    ["Konsistenz %", "Ø OOS PF"], ascending=[False, False]
+                ).reset_index(drop=True)
+
+                st.success(f"**Ensemble abgeschlossen** — {int(n_rows := len(df_ens))} Kombinationen über {int(n_runs)} Läufe analysiert")
+
+                st.markdown(f"#### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
+                st.caption("Diese Parameter haben über ALLE Läufe mit versetzten Startdaten konsistent funktioniert — das ist das robusteste Ergebnis.")
+
+                top10_ens = df_ens.head(10)
+                def _hl_k(v):
+                    if not isinstance(v, (int, float)): return ""
+                    if v >= 80: return "color:#22c55e;font-weight:700"
+                    if v >= 60: return "color:#f0c040"
+                    return "color:#ef5350"
+                st.dataframe(top10_ens.style.map(_hl_k, subset=["Konsistenz %"]),
+                             use_container_width=True, hide_index=True)
+
+                best_ens = df_ens.iloc[0]
+                st.success(
+                    f"**Robustestes Setup (Ensemble):** "
+                    f"SL {best_ens['SL %']} · "
+                    f"Trail-Trigger {best_ens['Trail-Trig %']} · "
+                    f"Trail-Abstand {best_ens['Trail-Off %']} · "
+                    f"MA {best_ens['MA']} · Filter: {best_ens['Filter']} → "
+                    f"**{int(best_ens['Konsistenz %'])}% Konsistenz** über {int(n_runs)} Läufe · "
+                    f"Ø OOS PF {best_ens['Ø OOS PF']} · Ø OOS Ret {best_ens['Ø OOS Ret %']}"
+                )
+
+                # Heatmap Ensemble
+                pivot_ens = df_ens.copy()
+                pivot_ens["SL_num"]  = pivot_ens["SL %"].str.replace("%","").astype(float)
+                pivot_ens["TT_num"]  = pivot_ens["Trail-Trig %"].str.replace("%","").astype(float)
+                heat_ens = pivot_ens.pivot_table(
+                    values="Konsistenz %", index="SL_num", columns="TT_num", aggfunc="mean").round(0)
+                fig_heat_ens = go.Figure(go.Heatmap(
+                    z=heat_ens.values,
+                    x=[f"Trail {c}%" for c in heat_ens.columns],
+                    y=[f"SL {r}%"    for r in heat_ens.index],
+                    colorscale="RdYlGn", zmin=0, zmax=100,
+                    text=heat_ens.values.round(0).astype(str),
+                    texttemplate="%{text}%", showscale=True,
+                    colorbar=dict(title="Konsistenz %")
+                ))
+                fig_heat_ens.update_layout(
+                    title=f"Ensemble-Konsistenz: SL% × Trail-Trigger% (über {int(n_runs)} Läufe)",
+                    height=350, template="plotly_dark",
+                    margin=dict(t=50, b=30, l=80, r=20))
+                st.plotly_chart(fig_heat_ens, use_container_width=True)
+
+                st.download_button("⬇️ Ensemble-Ergebnis als CSV",
+                                   data=df_ens.to_csv(index=False).encode(),
+                                   file_name="btc_ensemble_wfa.csv", mime="text/csv")
+
 
 def render_pdh_pdl_strategie() -> None:
     """PDH/PDL Proximity Reversal Strategy — Python-Backtest."""
