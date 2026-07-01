@@ -5549,19 +5549,18 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         st.info(f"WFA noch nicht gestartet — klicke '🔄 WFA starten'. "
                 f"Geschätzte Folds: **{est_folds}**")
 
+    folds = []
     if _wfa_enabled:
-        # Folds generieren
-        is_d   = pd.DateOffset(months=int(is_months))
-    oos_d  = pd.DateOffset(months=int(oos_months))
-    folds  = []
-    fs     = df_raw.index[0]
-    while True:
-        ie = fs + is_d
-        oe = ie + oos_d
-        if oe > df_raw.index[-1]:
-            break
-        folds.append({"is_start": fs, "is_end": ie, "oos_start": ie, "oos_end": oe})
-        fs = fs + oos_d
+        is_d  = pd.DateOffset(months=int(is_months))
+        oos_d = pd.DateOffset(months=int(oos_months))
+        fs    = df_raw.index[0]
+        while True:
+            ie = fs + is_d
+            oe = ie + oos_d
+            if oe > df_raw.index[-1]:
+                break
+            folds.append({"is_start": fs, "is_end": ie, "oos_start": ie, "oos_end": oe})
+            fs = fs + oos_d
 
         if len(folds) < 2:
             st.warning("Zu wenig Daten für WFA. Zeitraum verlängern oder IS/OOS-Fenster verkleinern.")
