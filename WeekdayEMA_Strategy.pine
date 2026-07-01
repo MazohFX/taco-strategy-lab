@@ -1,0 +1,247 @@
+//@version=6
+// ============================================================
+// WeekdayMA Strategy — Long-only, zeitbasierter Entry/Exit
+// Entry: Wochentag + Uhrzeit + MA-Filter (EMA/SMA) + optionaler ADX-Trendfilter
+// Exit:  zeitbasiert ODER Stop-Loss ODER Trailing-Stop (was zuerst eintritt)
+//
+// WICHTIG: 15m, 30m oder 1H Chart verwenden damit die
+// eingestellte Uhrzeit als eigene Bar existiert.
+// ============================================================
+strategy(
+    title             = "WeekdayMA Long Strategy",
+    shorttitle        = "WD-MA",
+    overlay           = true,
+    default_qty_type  = strategy.percent_of_equity,
+    default_qty_value = 100,
+    pyramiding        = 0)
+
+// ============================================================
+// INPUTS
+// ============================================================
+
+i_entryDay    = input.string("Montag",    "Entry-Tag",           options=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"], group="Entry")
+i_entryHour   = input.int(15,             "Entry-Stunde (0-23)", minval=0, maxval=23, group="Entry")
+i_entryMinute = input.int(0,              "Entry-Minute (0-59)", minval=0, maxval=59, group="Entry")
+
+i_exitDay     = input.string("Mittwoch",  "Exit-Tag",            options=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"], group="Exit")
+i_exitHour    = input.int(17,             "Exit-Stunde (0-23)",  minval=0, maxval=23, group="Exit")
+i_exitMinute  = input.int(0,              "Exit-Minute (0-59)",  minval=0, maxval=59, group="Exit")
+
+// MA-Typ: EMA oder SMA wählbar -> ermöglicht direkten Vergleich
+i_maType      = input.string("EMA", "MA-Typ", options=["EMA","SMA"], group="Indikator")
+i_maChoice    = input.string("20",  "MA-Periode", options=["20","50","100","200"], group="Indikator")
+
+i_filterMode  = input.string(
+     "Close > MA",
+     "MA-Filter Modus",
+     options=[
+         "Close > MA",
+         "Crossover (letzte 5 Bars)",
+         "MA steigt",
+         "Kein Filter (nur Zeit)"
+     ],
+     tooltip="Close > MA: Kurs muss über MA liegen\nCrossover letzte 5 Bars: Crossover in letzten N Kerzen\nMA steigt: MA muss aufwaerts zeigen\nKein Filter: rein zeitbasiert",
+     group="Indikator")
+
+i_lookback    = input.int(5, "Crossover Lookback (Bars)", minval=1, maxval=20,
+     tooltip="Nur relevant bei 'Crossover (letzte 5 Bars)'",
+     group="Indikator")
+
+i_tz          = input.string("Europe/Berlin", "Zeitzone", options=["Europe/Berlin","America/New_York","UTC"], group="Zeitzone")
+
+// --- ADX-Trendstärkefilter ---
+i_useAdx    = input.bool(true, "ADX-Trendfilter aktivieren", group="Trendfilter")
+i_adxLen    = input.int(14, "ADX-Länge", minval=1, group="Trendfilter")
+i_adxThresh = input.float(20.0, "ADX-Schwelle (min.)", minval=1.0, step=1.0,
+     tooltip="Nur traden wenn ADX über diesem Wert liegt -> filtert Seitwärtsphasen", group="Trendfilter")
+
+// --- Stop-Loss (fix in Prozent) ---
+i_useSL   = input.bool(true, "Stop-Loss aktivieren", group="Risk Management")
+i_slPct   = input.float(1.5, "Stop-Loss (%)", minval=0.1, step=0.1, group="Risk Management")
+
+// --- Trailing-Stop (ersetzt fixen Take-Profit) ---
+i_useTrail      = input.bool(true, "Trailing-Stop aktivieren", group="Risk Management")
+i_trailTrigPct  = input.float(0.5, "Trailing-Trigger (% im Plus)", minval=0.1, step=0.1,
+     tooltip="Ab diesem Gewinn beginnt der Trailing-Stop zu greifen", group="Risk Management")
+i_trailOffPct   = input.float(0.4, "Trailing-Abstand (%)", minval=0.1, step=0.1,
+     tooltip="Abstand des Trailing-Stops zum höchsten erreichten Kurs", group="Risk Management")
+
+// ============================================================
+// ZEIT-MAPPING
+// ============================================================
+
+dayNameToConst(d) =>
+    switch d
+        "Montag"     => dayofweek.monday
+        "Dienstag"   => dayofweek.tuesday
+        "Mittwoch"   => dayofweek.wednesday
+        "Donnerstag" => dayofweek.thursday
+        "Freitag"    => dayofweek.friday
+        "Samstag"    => dayofweek.saturday
+        "Sonntag"    => dayofweek.sunday
+        =>              dayofweek.monday
+
+entryDayConst = dayNameToConst(i_entryDay)
+exitDayConst  = dayNameToConst(i_exitDay)
+
+barDOW    = dayofweek(time, i_tz)
+barHour   = hour(time,      i_tz)
+barMinute = minute(time,    i_tz)
+
+// ============================================================
+// MA-BERECHNUNG (EMA oder SMA, Periode wählbar)
+// ============================================================
+
+maLength = switch i_maChoice
+    "20"  => 20
+    "50"  => 50
+    "100" => 100
+    "200" => 200
+    =>       20
+
+maValue = i_maType == "EMA" ? ta.ema(close, maLength) : ta.sma(close, maLength)
+
+// ============================================================
+// MA-FILTER (4 Modi)
+// ============================================================
+
+filterCloseAbove = close > maValue
+
+crossoverEvent   = ta.crossover(close, maValue)
+barsSinceCross   = ta.barssince(crossoverEvent)
+filterLookback   = barsSinceCross <= i_lookback
+
+filterMaRising    = maValue > maValue[1]
+
+filterNone        = true
+
+maFilterOk = switch i_filterMode
+    "Close > MA"                => filterCloseAbove
+    "Crossover (letzte 5 Bars)" => filterLookback
+    "MA steigt"                 => filterMaRising
+    "Kein Filter (nur Zeit)"    => filterNone
+    =>                              filterCloseAbove
+
+// Warmup-Schutz: genug Historie fuer den MA abwarten
+maReady = bar_index >= maLength * 3
+
+// ============================================================
+// ADX-TRENDFILTER
+// ============================================================
+
+[diPlus, diMinus, adxValue] = ta.dmi(i_adxLen, i_adxLen)
+adxFilterOk = i_useAdx ? adxValue > i_adxThresh : true
+
+// ============================================================
+// DAILY CHART ERKENNUNG
+// ============================================================
+
+// Auf Daily-Charts gibt es keine Uhrzeit-Bars → nur Wochentag prüfen
+isDaily = timeframe.isdaily or timeframe.isweekly
+
+// ============================================================
+// ENTRY-LOGIK
+// ============================================================
+
+entryTimeMatch = isDaily
+     ? barDOW == entryDayConst
+     : barDOW == entryDayConst and barHour == i_entryHour and barMinute == i_entryMinute
+entryCondition = entryTimeMatch and maFilterOk and adxFilterOk and maReady and strategy.position_size == 0
+
+if entryCondition
+    // SL als Preis-Level relativ zum Entry-Close
+    slPrice = i_useSL ? close * (1 - i_slPct / 100) : na
+
+    // Trailing-Stop in Ticks umrechnen (Pine erwartet trail_points/trail_offset in Ticks)
+    trailTrigTicks = (close * i_trailTrigPct / 100) / syminfo.mintick
+    trailOffTicks  = (close * i_trailOffPct  / 100) / syminfo.mintick
+
+    strategy.entry(id="Long", direction=strategy.long)
+
+    if i_useTrail
+        strategy.exit(id="Exit", from_entry="Long", stop=slPrice,
+             trail_points=trailTrigTicks, trail_offset=trailOffTicks,
+             comment_loss="SL", comment_trailing="Trail")
+    else
+        strategy.exit(id="Exit", from_entry="Long", stop=slPrice, comment_loss="SL")
+
+// ============================================================
+// EXIT-LOGIK (zeitbasiert, zusätzlich zu SL/Trail oben)
+// ============================================================
+
+exitTimeMatch = isDaily
+     ? barDOW == exitDayConst
+     : barDOW == exitDayConst and barHour == i_exitHour and barMinute == i_exitMinute
+
+if exitTimeMatch and strategy.position_size > 0
+    strategy.close(id="Long", comment="Time Exit")
+
+// ============================================================
+// VISUALISIERUNG
+// ============================================================
+
+maColor = switch i_maChoice
+    "20"  => color.orange
+    "50"  => color.yellow
+    "100" => color.aqua
+    "200" => color.purple
+    =>       color.orange
+
+plot(maValue, title="MA", color=maColor, linewidth=2)
+
+if entryCondition
+    label.new(x=bar_index, y=low, text="Long Entry",
+         style=label.style_label_up, color=color.new(color.green, 0),
+         textcolor=color.white, size=size.small)
+
+if exitTimeMatch and strategy.position_size > 0
+    label.new(x=bar_index, y=high, text="Time Exit",
+         style=label.style_label_down, color=color.new(color.red, 0),
+         textcolor=color.white, size=size.small)
+
+plotchar(entryTimeMatch, title="Entry-Zeitfenster", char="*",
+     color=color.new(color.blue, 40), location=location.belowbar, size=size.tiny)
+
+// ============================================================
+// INFO-TABELLE
+// ============================================================
+
+var table t = table.new(position.top_right, 2, 9,
+     bgcolor=color.new(color.black, 70),
+     border_color=color.new(color.gray, 50), border_width=1)
+
+if barstate.islast
+    table.cell(t, 0, 0, "Parameter",      text_color=color.gray,  bgcolor=color.new(color.black, 60))
+    table.cell(t, 1, 0, "Wert",           text_color=color.gray,  bgcolor=color.new(color.black, 60))
+
+    table.cell(t, 0, 1, "Entry-Fenster",  text_color=color.white, bgcolor=color.new(color.black, 60))
+    table.cell(t, 1, 1, entryTimeMatch ? "AKTIV" : "-",
+         text_color=entryTimeMatch ? color.green : color.gray,
+         bgcolor=color.new(color.black, 60))
+
+    table.cell(t, 0, 2, "MA-Filter",      text_color=color.white, bgcolor=color.new(color.black, 60))
+    table.cell(t, 1, 2, maFilterOk ? "OK" : "-",
+         text_color=maFilterOk ? color.green : color.gray,
+         bgcolor=color.new(color.black, 60))
+
+    table.cell(t, 0, 3, "ADX",            text_color=color.white,  bgcolor=color.new(color.black, 60))
+    table.cell(t, 1, 3, str.tostring(adxValue, "#.#") + (adxFilterOk ? " OK" : " zu schwach"),
+         text_color=adxFilterOk ? color.green : color.red, bgcolor=color.new(color.black, 60))
+
+    table.cell(t, 0, 4, "MA-Typ",         text_color=color.white,  bgcolor=color.new(color.black, 60))
+    table.cell(t, 1, 4, i_maType + " " + i_maChoice, text_color=color.yellow, bgcolor=color.new(color.black, 60))
+
+    table.cell(t, 0, 5, "Filter-Modus",   text_color=color.white,  bgcolor=color.new(color.black, 60))
+    table.cell(t, 1, 5, i_filterMode,     text_color=color.yellow, bgcolor=color.new(color.black, 60))
+
+    table.cell(t, 0, 6, "SL / Trail",     text_color=color.white,  bgcolor=color.new(color.black, 60))
+    table.cell(t, 1, 6, (i_useSL ? "-" + str.tostring(i_slPct) + "%" : "off") + " / " + (i_useTrail ? "ab +" + str.tostring(i_trailTrigPct) + "%" : "off"),
+         text_color=color.yellow, bgcolor=color.new(color.black, 60))
+
+    table.cell(t, 0, 7, "Zeitzone",       text_color=color.white,  bgcolor=color.new(color.black, 60))
+    table.cell(t, 1, 7, i_tz,             text_color=color.yellow, bgcolor=color.new(color.black, 60))
+
+    table.cell(t, 0, 8, "Position",       text_color=color.white,  bgcolor=color.new(color.black, 60))
+    table.cell(t, 1, 8, strategy.position_size > 0 ? "Long offen" : "Keine",
+         text_color=strategy.position_size > 0 ? color.green : color.gray,
+         bgcolor=color.new(color.black, 60))

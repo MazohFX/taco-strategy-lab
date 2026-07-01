@@ -5420,6 +5420,27 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             g_tt   = st.multiselect("Trail-Trigger %",[0.1,0.2,0.3,0.5],              default=[0.2,0.3],          key="btc_gtt")
             g_to   = st.multiselect("Trail-Abstand %",[0.1,0.2,0.3,0.4],              default=[0.2,0.3],          key="btc_gto")
 
+        st.markdown("---")
+        _opt_days = st.checkbox("Entry/Exit-Tag mit optimieren", value=False, key="btc_opt_days",
+                                help="WFA testet automatisch verschiedene Wochentag-Kombinationen — erhöht die Laufzeit deutlich")
+        if _opt_days:
+            _dow_opts = {"Montag":0,"Dienstag":1,"Mittwoch":2,"Donnerstag":3,"Freitag":4,"Samstag":5,"Sonntag":6}
+            gd1, gd2 = st.columns(2)
+            g_entry_days = gd1.multiselect("Entry-Tag testen",
+                                            list(_dow_opts.keys()), default=["Freitag","Samstag","Sonntag"],
+                                            key="btc_g_eday")
+            g_exit_days  = gd2.multiselect("Exit-Tag testen",
+                                            list(_dow_opts.keys()), default=["Montag","Dienstag"],
+                                            key="btc_g_xday")
+            g_entry_dows = [_dow_opts[d] for d in g_entry_days]
+            g_exit_dows  = [_dow_opts[d] for d in g_exit_days]
+            n_day_combos = len(g_entry_dows) * len(g_exit_dows)
+            n_total = len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)*n_day_combos
+            st.caption(f"⚠️ {n_day_combos} Tag-Kombinationen × Grid = **{n_total} Kombinationen je Fold** — kann mehrere Minuten dauern")
+        else:
+            g_entry_dows = [day_map_full[entry_day]]
+            g_exit_dows  = [day_map_full[exit_day]]
+
     _btn_col1, _btn_col2 = st.columns([1, 1])
     with _btn_col1:
         run_btn = st.button("🔄 WFA starten", type="primary", use_container_width=True, key="btc_run")
@@ -5557,14 +5578,19 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             best_score, best_p = -np.inf, None
             adx_grid = g_adx if use_adx else [float(adx_thresh)]
     
-            for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid, g_tt, g_to):
+            for sl_, ma_, fm_, adx_, tt_, to_, ed_, xd_ in _prod(
+                    g_sl, g_ma, g_fm, adx_grid, g_tt, g_to, g_entry_dows, g_exit_dows):
+                if ed_ == xd_:
+                    continue  # Entry- und Exit-Tag müssen verschieden sein
                 p = {**base_params,
                      "sl_pct":      sl_,
                      "ma_period":   ma_,
                      "filter_mode": fm_,
                      "adx_thresh":  adx_,
                      "trail_trig":  tt_,
-                     "trail_off":   to_}
+                     "trail_off":   to_,
+                     "entry_dow":   ed_,
+                     "exit_dow":    xd_}
                 try:
                     tr_, eq_ = _momi_backtest_engine(df_is.copy(), p)
                 except Exception:
@@ -5605,6 +5631,7 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             oos_equities.append((fi+1, eq_oos))
     
             ok = m_oos["n"] >= 1 and m_oos["pf"] > 1.0 and m_oos["total_ret"] > 0
+            _dow_names = {0:"Mo",1:"Di",2:"Mi",3:"Do",4:"Fr",5:"Sa",6:"So"}
             wfa_rows.append({
                 "Fold":       fi+1,
                 "IS":         f"{fold['is_start'].date()} – {fold['is_end'].date()}",
@@ -5612,6 +5639,7 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
                 "Bester SL":  f"{best_p['sl_pct']}%",
                 "Bestes MA":  f"{best_p['ma_type']} {best_p['ma_period']}",
                 "Bester FM":  best_p['filter_mode'],
+                "Entry→Exit": f"{_dow_names.get(best_p['entry_dow'],'?')}→{_dow_names.get(best_p['exit_dow'],'?')}",
                 "IS Trades":  m_is["n"],
                 "IS PF":      m_is["pf"],
                 "IS Sharpe":  m_is["sharpe"],
