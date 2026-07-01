@@ -5877,9 +5877,10 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             # Fold-Grenzen als vertikale Linien
             colors_fold = ["#42a5f5","#00d4aa","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da","#f7931a"]
             for i, (fi, eq) in enumerate(oos_equities_sorted):
-                fig_combined.add_vline(x=eq.index[0], line_dash="dot",
-                                       line_color=colors_fold[i % len(colors_fold)],
-                                       annotation_text=f"F{fi}", annotation_position="top")
+                _fold_color = colors_fold[i % len(colors_fold)]
+                fig_combined.add_vline(x=eq.index[0], line_dash="dot", line_color=_fold_color)
+                fig_combined.add_annotation(x=eq.index[0], y=1, yref="paper", yanchor="bottom",
+                                            text=f"F{fi}", showarrow=False, font=dict(color=_fold_color))
             fig_combined.add_hline(y=10_000, line_color="white", line_dash="dash", line_width=1)
             total_ret = (running_capital - 10_000) / 10_000 * 100
             fig_combined.update_layout(
@@ -6885,6 +6886,1217 @@ Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeiti
                     st.plotly_chart(fig_mmc, use_container_width=True)
 
 
+def render_dax_ema_wfa() -> None:
+    """DAX EMA Strategie — Montag Entry / Mittwoch Exit auf GER40 Daily (Approximation der H4 Pine-Script-Logik)."""
+    import datetime as _dt
+    from itertools import product as _prod
+
+    _dax_ticker = "^GDAXI"
+    selected_name = "DAX — Germany 40 (GER40)"
+
+    if not st.session_state.get("dax_wfa_ran") and f"dax_mc_trades_{_dax_ticker}" in st.session_state:
+        st.session_state["dax_wfa_ran"] = True
+
+    st.header("DAX EMA Strategie — Walk-Forward Analyse")
+
+    with st.expander("ℹ️ Was wird hier getestet und wie funktioniert es?", expanded=False):
+        st.markdown("""
+**Strategie:** Long-only Wochentag-Momentum auf DAX/GER40 (Daily-Daten via Yahoo Finance, `^GDAXI`)
+- **Entry:** Jeden Montag-Schlusskurs, wenn Kurs über dem EMA liegt (MA-Filter, optional) und der Trend stark genug ist (ADX-Filter, optional)
+- **Exit:** Mittwoch-Schlusskurs (zeitbasiert) — oder früher durch Stop-Loss / Trailing-Stop
+- **Vorlage:** basiert auf deiner Pine-Script-Strategie "WD-MA" (WeekdayMA Long Strategy), auf TradingView mit H4-Bars getestet
+
+---
+
+**Wichtig — Daily-Approximation statt H4:**
+
+Dein TradingView-Test lief auf H4-Bars mit exakter Uhrzeit (Montag 10:00 UTC Entry / Mittwoch 22:00 UTC Exit) über 18 Jahre Historie.
+Yahoo Finance liefert für Intraday-Daten (1h/4h) nur ca. 2 Jahre Historie zurück — zu wenig für eine robuste Walk-Forward-Analyse.
+
+Diese Python-Version nutzt daher **Daily-Daten** (wie die Crypto-WeekdayMA-Strategie): Entry = Montag-Schlusskurs, Exit = Mittwoch-Schlusskurs.
+Das ignoriert die exakte Uhrzeit, ermöglicht aber einen WFA/Ensemble/Monte-Carlo-Test über die volle DAX-Historie.
+**Grundregel:** Die Robustheitsaussage (stabil über viele Folds ja/nein) bleibt aussagekräftig — die exakten Trade-Level unterscheiden sich von TradingView.
+
+---
+
+**Walk-Forward Analyse (WFA) — wie es funktioniert:**
+
+Der gesamte Zeitraum wird in mehrere **Folds** aufgeteilt. Jeder Fold besteht aus zwei Phasen:
+
+```
+Fold 1: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
+Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
+... usw.
+```
+
+- **In-Sample (IS):** Das System testet hunderte Parameter-Kombinationen und findet die beste für diesen Zeitraum
+- **Out-of-Sample (OOS):** Diese beste Kombination wird auf dem **nächsten, unbekannten** Zeitraum getestet — ohne Anpassung
+- ✅ **Stabil über viele Folds → ROBUST** — echte Edge, kein Zufall
+- ❌ **Instabil → OVERFITTED** — funktioniert nur auf den Trainingsdaten
+        """)
+
+    st.caption(f"Strategie: Montag-Entry / Mittwoch-Exit auf {_dax_ticker} (DAX) · Daily-Daten via yfinance · Rollierender IS/OOS-Test")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SIDEBAR — Strategie-Parameter (vorausgefüllt mit TradingView-Bestresultat)
+    # ════════════════════════════════════════════════════════════════════════
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("DAX WFA: Parameter")
+        dax_start = st.date_input("Daten ab", _dt.date(2000, 1, 1), key="dax_start")
+        dax_end   = st.date_input("Daten bis", _dt.date.today(), key="dax_end")
+
+    # ── Strategie-Parameter ──────────────────────────────────────────────
+    st.subheader("Strategie-Parameter")
+    pc1, pc2, pc3 = st.columns(3)
+    with pc1:
+        st.markdown("**Entry / Exit**")
+        day_map_full = {"Montag":0,"Dienstag":1,"Mittwoch":2,"Donnerstag":3,"Freitag":4,"Samstag":5,"Sonntag":6}
+        entry_day  = st.selectbox("Entry-Tag", list(day_map_full.keys()), index=0, key="dax_ed")  # Montag
+        entry_hour = st.number_input("Entry-Stunde (nur bei Intraday relevant)", 0, 23, 10, key="dax_eh")
+        exit_day   = st.selectbox("Exit-Tag",   list(day_map_full.keys()), index=2, key="dax_xd")  # Mittwoch
+        exit_hour  = st.number_input("Exit-Stunde (nur bei Intraday relevant)",  0, 23, 22, key="dax_xh")
+        st.caption("Auf Daily-Daten zählt nur der Wochentag — Stunde wird ignoriert.")
+    with pc2:
+        st.markdown("**MA & Filter**")
+        ma_type     = st.selectbox("MA-Typ",      ["EMA","SMA"], index=0,                key="dax_mt")
+        ma_period   = st.selectbox("MA-Periode",  [20, 50, 100, 200], index=3,           key="dax_mp")
+        filter_mode = st.selectbox("Filter-Modus",["Kein Filter (nur Zeit)","Close > MA","MA steigt"], index=0, key="dax_fm")
+        use_adx     = st.checkbox("ADX-Filter", False, key="dax_adx")
+        adx_thresh  = st.number_input("ADX-Schwelle", 5, 50, 20, key="dax_adxt")
+    with pc3:
+        st.markdown("**Risk Management**")
+        use_sl     = st.checkbox("Stop-Loss", True, key="dax_sl")
+        sl_pct     = st.number_input("SL %", 0.1, 20.0, 1.5, step=0.1, key="dax_slp")
+        use_trail  = st.checkbox("Trailing Stop", True, key="dax_tr")
+        trail_trig = st.number_input("Trail-Trigger %", 0.1, 10.0, 0.1, step=0.1, key="dax_tt")
+        trail_off  = st.number_input("Trail-Abstand %", 0.1, 10.0, 0.1, step=0.1, key="dax_to")
+        st.markdown("---")
+        risk_pct   = st.number_input("Risiko pro Trade %", 0.1, 5.0, 1.0, step=0.1, key="dax_risk",
+                                     help="1% = bei 100.000€ Konto riskierst du 1.000€ pro Trade (basierend auf SL-Abstand)")
+
+    # ── WFA-Konfiguration ─────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Walk-Forward Konfiguration")
+    wc1, wc2, wc3 = st.columns(3)
+    with wc1:
+        is_months  = st.number_input("IS-Fenster (Monate)", 6, 36, 18, key="dax_is")
+        oos_months = st.number_input("OOS-Fenster (Monate)", 3, 18, 12, key="dax_oos")
+    with wc2:
+        min_trades  = st.number_input("Min. IS-Trades", 5, 50, 10, key="dax_mint")
+        opt_metric  = st.selectbox("Optimierungsziel", ["pf","sharpe","wr"], format_func=lambda x: {"pf":"Profit Factor","sharpe":"Sharpe","wr":"Win-Rate"}[x], key="dax_om")
+    with wc3:
+        min_folds   = st.number_input("Min. Folds für ✅ ROBUST", 2, 8, 4, key="dax_mf")
+        st.markdown(" ")
+
+    # ── Grid-Suchraum ─────────────────────────────────────────────────────
+    with st.expander("Grid-Suchraum (IS-Optimierung)"):
+        gc1, gc2, gc3 = st.columns(3)
+        with gc1:
+            g_sl   = st.multiselect("SL %",           [0.5,1.0,1.5,1.8,2.0,2.5,3.0], default=[1.0,1.5,2.0],      key="dax_gsl")
+            g_ma   = st.multiselect("MA-Periode",      [20,50,100,200],                default=[100,200],          key="dax_gma")
+        with gc2:
+            g_fm   = st.multiselect("Filter-Modus",   ["Kein Filter (nur Zeit)","Close > MA","MA steigt"],
+                                     default=["Kein Filter (nur Zeit)","Close > MA"],   key="dax_gfm")
+            g_adx  = st.multiselect("ADX-Schwelle",   [15,20,25,30],                  default=[20],               key="dax_gadx")
+        with gc3:
+            g_tt   = st.multiselect("Trail-Trigger %",[0.1,0.2,0.3,0.5],              default=[0.1,0.2],          key="dax_gtt")
+            g_to   = st.multiselect("Trail-Abstand %",[0.1,0.2,0.3,0.4],              default=[0.1,0.2],          key="dax_gto")
+
+        st.markdown("---")
+        _opt_days = st.checkbox("Entry/Exit-Tag mit optimieren", value=False, key="dax_opt_days",
+                                help="WFA testet automatisch verschiedene Wochentag-Kombinationen — erhöht die Laufzeit deutlich")
+        if _opt_days:
+            _dow_opts = {"Montag":0,"Dienstag":1,"Mittwoch":2,"Donnerstag":3,"Freitag":4,"Samstag":5,"Sonntag":6}
+            gd1, gd2 = st.columns(2)
+            g_entry_days = gd1.multiselect("Entry-Tag testen",
+                                            list(_dow_opts.keys()), default=["Montag","Dienstag"],
+                                            key="dax_g_eday")
+            g_exit_days  = gd2.multiselect("Exit-Tag testen",
+                                            list(_dow_opts.keys()), default=["Mittwoch","Donnerstag"],
+                                            key="dax_g_xday")
+            g_entry_dows = [_dow_opts[d] for d in g_entry_days]
+            g_exit_dows  = [_dow_opts[d] for d in g_exit_days]
+            n_day_combos = len(g_entry_dows) * len(g_exit_dows)
+            n_total = len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)*n_day_combos
+            st.caption(f"⚠️ {n_day_combos} Tag-Kombinationen × Grid = **{n_total} Kombinationen je Fold** — kann mehrere Minuten dauern")
+        else:
+            g_entry_dows = [day_map_full[entry_day]]
+            g_exit_dows  = [day_map_full[exit_day]]
+
+    _btn_col1, _btn_col2 = st.columns([1, 1])
+    with _btn_col1:
+        run_btn = st.button("🔄 WFA starten", type="primary", use_container_width=True, key="dax_run")
+    with _btn_col2:
+        _ens_quick = st.button("⚡ Ensemble WFA starten (5×)", use_container_width=True, key="dax_ens_quick",
+                               help="Startet direkt den 5-fachen Durchlauf — WFA muss einmal zuvor gelaufen sein",
+                               disabled=not st.session_state.get("dax_wfa_ran", False))
+    if run_btn:
+        st.session_state["dax_wfa_ran"] = True
+        st.session_state["dax_wfa_params_key"] = str(dax_start) + str(dax_end) + str(is_months) + str(oos_months)
+    if _ens_quick:
+        st.session_state["dax_ens_running"] = True
+
+    # ════════════════════════════════════════════════════════════════════════
+    # DATEN LADEN — läuft immer, liefert Trades für Monte Carlo
+    # ════════════════════════════════════════════════════════════════════════
+    try:
+        import yfinance as yf
+    except ImportError:
+        st.error("`pip install yfinance` fehlt.")
+        return
+
+    cache_key = f"dax_df_{_dax_ticker}_{dax_start}_{dax_end}"
+    if cache_key not in st.session_state or run_btn:
+        with st.spinner(f"{_dax_ticker} Daily-Daten laden …"):
+            st.session_state[cache_key] = yf.download(
+                _dax_ticker, start=str(dax_start), end=str(dax_end),
+                interval="1d", auto_adjust=True, progress=False)
+    df_raw = st.session_state[cache_key]
+
+    if df_raw.empty:
+        st.error("Keine DAX-Daten geladen.")
+        return
+    if isinstance(df_raw.columns, pd.MultiIndex):
+        df_raw.columns = df_raw.columns.get_level_values(0)
+    df_raw.index = pd.to_datetime(df_raw.index).tz_localize(None)
+
+    st.success(f"✓ {len(df_raw)} Daily-Bars geladen ({df_raw.index[0].date()} → {df_raw.index[-1].date()})")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # FULL-SAMPLE BACKTEST (zur Orientierung)
+    # ════════════════════════════════════════════════════════════════════════
+    base_params = {
+        "entry_dow":   day_map_full[entry_day],
+        "exit_dow":    day_map_full[exit_day],
+        "entry_hour":  int(entry_hour),
+        "entry_min":   0,
+        "exit_hour":   int(exit_hour),
+        "exit_min":    0,
+        "ma_type":     ma_type,
+        "ma_period":   int(ma_period),
+        "filter_mode": filter_mode,
+        "use_adx":     use_adx,
+        "adx_thresh":  float(adx_thresh),
+        "sl_pct":      float(sl_pct)  if use_sl    else 999.0,
+        "use_trail":   use_trail,
+        "trail_trig":  float(trail_trig),
+        "trail_off":   float(trail_off),
+        "risk_pct":    float(risk_pct),
+    }
+
+    with st.spinner("Full-Sample Backtest …"):
+        tr_full, eq_full = _momi_backtest_engine(df_raw.copy(), base_params)
+        m_full = _momi_metrics(tr_full, eq_full)
+
+    # Sofort speichern — MC findet Trades auch ohne WFA-Lauf
+    if not tr_full.empty:
+        st.session_state[f"dax_mc_trades_{_dax_ticker}"] = tr_full
+
+    st.markdown("---")
+    st.subheader("Full-Sample Ergebnis (zur Orientierung, KEIN WFA)")
+    fc1,fc2,fc3,fc4,fc5 = st.columns(5)
+    fc1.metric("Rendite",       f"{m_full['total_ret']:.1f}%")
+    fc2.metric("Trades",         m_full['n'])
+    fc3.metric("Win-Rate",      f"{m_full['wr']:.1f}%")
+    fc4.metric("Profit Factor", f"{m_full['pf']:.2f}")
+    fc5.metric("Sharpe",        f"{m_full['sharpe']:.2f}")
+
+    fig_full = go.Figure()
+    fig_full.add_trace(go.Scatter(x=eq_full.index, y=eq_full.values,
+                                  line=dict(color="#f7931a", width=2), name="Equity (Full)"))
+    fig_full.update_layout(title="Full-Sample Equity Curve", height=250,
+                           template="plotly_dark", margin=dict(t=35,b=15))
+    st.plotly_chart(fig_full, use_container_width=True)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # WALK-FORWARD ANALYSE
+    # ════════════════════════════════════════════════════════════════════════
+    _wfa_enabled = st.session_state.get("dax_wfa_ran", False)
+
+    st.markdown("---")
+    st.subheader("Walk-Forward Analyse")
+
+    if not _wfa_enabled:
+        n_months_total = (dax_end.year - dax_start.year) * 12 + (dax_end.month - dax_start.month)
+        est_folds = max(0, (n_months_total - is_months) // oos_months)
+        st.info(f"WFA noch nicht gestartet — klicke '🔄 WFA starten'. "
+                f"Geschätzte Folds: **{est_folds}**")
+
+    folds = []
+    if _wfa_enabled:
+        is_d  = pd.DateOffset(months=int(is_months))
+        oos_d = pd.DateOffset(months=int(oos_months))
+        fs    = df_raw.index[0]
+        while True:
+            ie = fs + is_d
+            oe = ie + oos_d
+            if oe > df_raw.index[-1]:
+                break
+            folds.append({"is_start": fs, "is_end": ie, "oos_start": ie, "oos_end": oe})
+            fs = fs + oos_d
+
+        if len(folds) < 2:
+            st.warning("Zu wenig Daten für WFA. Zeitraum verlängern oder IS/OOS-Fenster verkleinern.")
+            _wfa_enabled = False
+        else:
+            st.info(f"**{len(folds)} Folds** · IS {is_months}M / OOS {oos_months}M  "
+                    f"· Grid-Größe: {len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)} Kombinationen je Fold")
+
+    wfa_cache_key = (f"dax_wfa_results_{_dax_ticker}_{dax_start}_{dax_end}"
+                     f"_{is_months}_{oos_months}_{entry_day}_{exit_day}"
+                     f"_{ma_type}_{sl_pct}_{use_trail}_{trail_trig}_{trail_off}")
+
+    if _wfa_enabled and (run_btn or wfa_cache_key not in st.session_state):
+        progress = st.progress(0, text="Walk-Forward läuft …")
+        wfa_rows, oos_equities = [], []
+        param_stability: dict = {}
+
+        for fi, fold in enumerate(folds):
+            progress.progress(fi / len(folds), text=f"Fold {fi+1}/{len(folds)} — optimiere IS …")
+
+            df_is  = df_raw[(df_raw.index >= fold["is_start"]) & (df_raw.index < fold["is_end"])].copy()
+            df_oos = df_raw[(df_raw.index >= fold["oos_start"]) & (df_raw.index < fold["oos_end"])].copy()
+
+            if len(df_is) < 30 or len(df_oos) < 5:
+                continue
+
+            # IS Grid Search — teste ALLE Kombinationen und sammle OOS-Ergebnis je Combo
+            best_score, best_p = -np.inf, None
+            adx_grid = g_adx if use_adx else [float(adx_thresh)]
+
+            for sl_, ma_, fm_, adx_, tt_, to_, ed_, xd_ in _prod(
+                    g_sl, g_ma, g_fm, adx_grid, g_tt, g_to, g_entry_dows, g_exit_dows):
+                if ed_ == xd_:
+                    continue  # Entry- und Exit-Tag müssen verschieden sein
+                p = {**base_params,
+                     "sl_pct":      sl_,
+                     "ma_period":   ma_,
+                     "filter_mode": fm_,
+                     "adx_thresh":  adx_,
+                     "trail_trig":  tt_,
+                     "trail_off":   to_,
+                     "entry_dow":   ed_,
+                     "exit_dow":    xd_}
+                try:
+                    tr_, eq_ = _momi_backtest_engine(df_is.copy(), p)
+                except Exception:
+                    continue
+                if len(tr_) < int(min_trades):
+                    continue
+                m_ = _momi_metrics(tr_, eq_)
+                score = m_[opt_metric]
+                if score > best_score:
+                    best_score, best_p = score, p.copy()
+
+                # OOS sofort für diese Kombination berechnen → Stabilitätsanalyse
+                try:
+                    tr_oos_, eq_oos_ = _momi_backtest_engine(df_oos.copy(), p)
+                    m_oos_ = _momi_metrics(tr_oos_, eq_oos_)
+                    key = (sl_, tt_, to_, ma_, fm_)
+                    if key not in param_stability:
+                        param_stability[key] = []
+                    param_stability[key].append(m_oos_)
+                except Exception:
+                    pass
+
+            if best_p is None:
+                wfa_rows.append({"Fold": fi+1,
+                                 "IS": f"{fold['is_start'].date()} – {fold['is_end'].date()}",
+                                 "OOS": f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
+                                 "Bester SL":"–","Bestes MA":"–","Bester FM":"–",
+                                 "IS Trades":0,"IS PF":"–","IS Sharpe":"–",
+                                 "OOS Trades":0,"OOS PF":"–","OOS Ret %":"–","Ø Ret/Trade %":"–","OOS Sharpe":"–",
+                                 "Status":"⚠️ Kein IS-Ergebnis"})
+                continue
+
+            tr_is,  eq_is  = _momi_backtest_engine(df_is.copy(),  best_p)
+            tr_oos, eq_oos = _momi_backtest_engine(df_oos.copy(), best_p)
+            m_is  = _momi_metrics(tr_is,  eq_is)
+            m_oos = _momi_metrics(tr_oos, eq_oos)
+
+            oos_equities.append((fi+1, eq_oos))
+
+            ok = m_oos["n"] >= 1 and m_oos["pf"] > 1.0 and m_oos["total_ret"] > 0
+            _dow_names = {0:"Mo",1:"Di",2:"Mi",3:"Do",4:"Fr",5:"Sa",6:"So"}
+            wfa_rows.append({
+                "Fold":       fi+1,
+                "IS":         f"{fold['is_start'].date()} – {fold['is_end'].date()}",
+                "OOS":        f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
+                "Bester SL":  f"{best_p['sl_pct']}%",
+                "Bestes MA":  f"{best_p['ma_type']} {best_p['ma_period']}",
+                "Bester FM":  best_p['filter_mode'],
+                "Entry→Exit": f"{_dow_names.get(best_p['entry_dow'],'?')}→{_dow_names.get(best_p['exit_dow'],'?')}",
+                "IS Trades":  m_is["n"],
+                "IS PF":      m_is["pf"],
+                "IS Sharpe":  m_is["sharpe"],
+                "OOS Trades":    m_oos["n"],
+                "OOS PF":        m_oos["pf"],
+                "OOS Ret %":     m_oos["total_ret"],
+                "Ø Ret/Trade %": m_oos["avg_ret"],
+                "OOS Sharpe":    m_oos["sharpe"],
+                "Status":        "✅ Bestanden" if ok else "❌ Fail",
+            })
+
+            progress.progress(1.0, text="Walk-Forward abgeschlossen ✓")
+        st.session_state[wfa_cache_key] = {
+            "wfa_rows":        wfa_rows,
+            "oos_equities":    oos_equities,
+            "param_stability": param_stability,
+            "base_params":     base_params,
+            "grids":           (g_sl, g_ma, g_fm, g_tt, g_to),
+            "full_trades":     tr_full,
+        }
+        # Trades auch direkt unter Ticker-Key speichern — MC findet sie ohne exakten Cache-Key
+        st.session_state[f"dax_mc_trades_{_dax_ticker}"] = tr_full
+
+    # Ergebnisse aus Cache laden
+    if not _wfa_enabled or wfa_cache_key not in st.session_state:
+        _cached = None
+    else:
+        _cached = st.session_state[wfa_cache_key]
+    if _cached is None:
+        wfa_rows, oos_equities, param_stability = [], [], {}
+        base_params_display = base_params
+        g_sl, g_ma, g_fm, g_tt, g_to = [], [], [], [], []
+        _wfa_enabled = False
+    else:
+        wfa_rows        = _cached["wfa_rows"]
+        oos_equities    = _cached["oos_equities"]
+        param_stability = _cached["param_stability"]
+        base_params     = _cached["base_params"]
+        g_sl, g_ma, g_fm, g_tt, g_to = _cached["grids"]
+
+    if _wfa_enabled and not wfa_rows:
+        st.error("Keine WFA-Ergebnisse — Parameter oder Zeitraum anpassen.")
+        _wfa_enabled = False
+
+    if _wfa_enabled:
+        wfa_df = pd.DataFrame(wfa_rows)
+        n_ok   = (wfa_df["Status"] == "✅ Bestanden").sum()
+        n_tot  = len(wfa_df)
+
+        # ── Gesamt-Badge ─────────────────────────────────────────────────────
+        if n_ok >= int(min_folds):
+            bc, bt = "#22c55e", f"✅ ROBUST — {n_ok}/{n_tot} Folds bestanden · Strategie empfohlen"
+        elif n_ok >= 2:
+            bc, bt = "#f0c040", f"⚠️ INSTABIL — nur {n_ok}/{n_tot} Folds bestanden · mit Vorsicht handeln"
+        elif n_ok == 1:
+            bc, bt = "#ef5350", f"❌ NICHT EMPFOHLEN — nur 1/{n_tot} Fold bestanden · Strategie funktioniert auf diesem Asset NICHT zuverlässig"
+        else:
+            bc, bt = "#ef5350", f"❌ GESCHEITERT — 0/{n_tot} Folds bestanden · Strategie NICHT für dieses Asset geeignet"
+
+        st.markdown(
+            f'<div style="background:{bc}22;border:2px solid {bc};border-radius:10px;'
+            f'padding:16px 24px;font-weight:800;font-size:1.2rem;color:{bc};margin:16px 0;">'
+            f'{bt}</div>', unsafe_allow_html=True)
+
+        # ── KPI-Zusammenfassung über alle OOS-Folds ───────────────────────────
+        oos_pfs   = [r["OOS PF"]    for r in wfa_rows if isinstance(r["OOS PF"],    (int,float))]
+        oos_rets  = [r["OOS Ret %"] for r in wfa_rows if isinstance(r["OOS Ret %"], (int,float))]
+        oos_shs   = [r["OOS Sharpe"] for r in wfa_rows if isinstance(r.get("OOS Sharpe"), (int,float))]
+
+        sc1,sc2,sc3,sc4 = st.columns(4)
+        sc1.metric("Ø OOS Profit Factor", f"{np.mean(oos_pfs):.2f}"  if oos_pfs  else "–")
+        sc2.metric("Ø OOS Rendite",       f"{np.mean(oos_rets):.1f}%" if oos_rets else "–")
+        sc3.metric("Ø OOS Sharpe",        f"{np.mean(oos_shs):.2f}"   if oos_shs  else "–")
+        sc4.metric("Bestandene Folds",    f"{n_ok}/{n_tot}")
+
+        # ── Fold-Tabelle ──────────────────────────────────────────────────────
+        st.subheader("Fold-Ergebnisse")
+        def _color_status(v):
+            if v == "✅ Bestanden": return "color:#22c55e;font-weight:700"
+            if v == "❌ Fail":      return "color:#ef5350;font-weight:700"
+            return "color:#f0c040"
+        def _color_num(v):
+            if isinstance(v, (int,float)):
+                return "color:#22c55e" if v > 0 else "color:#ef5350"
+            return ""
+        num_cols = [c for c in ["OOS Ret %","OOS PF","OOS Sharpe","Ø Ret/Trade %"] if c in wfa_df.columns]
+        styled = wfa_df.style\
+            .map(_color_status, subset=["Status"])\
+            .map(_color_num,    subset=num_cols)
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        # ── OOS Rendite Bar-Chart ─────────────────────────────────────────────
+        st.subheader("OOS-Rendite je Fold")
+        fold_labels = [f"Fold {r['Fold']}" for r in wfa_rows]
+        bar_colors  = ["#22c55e" if isinstance(r["OOS Ret %"],(int,float)) and r["OOS Ret %"]>0
+                       else "#ef5350" for r in wfa_rows]
+        bar_vals    = [r["OOS Ret %"] if isinstance(r["OOS Ret %"],(int,float)) else 0 for r in wfa_rows]
+
+        fig_bar = go.Figure(go.Bar(
+            x=fold_labels, y=bar_vals, marker_color=bar_colors,
+            text=[f"{v:.1f}%" for v in bar_vals], textposition="outside",
+            width=0.5))
+        fig_bar.add_hline(y=0, line_color="white", line_width=1, line_dash="dash")
+        fig_bar.update_layout(title="OOS-Rendite je Fold (grün = profitabel)",
+                              height=380, template="plotly_dark",
+                              yaxis_title="Rendite %",
+                              xaxis=dict(tickfont=dict(size=13)),
+                              margin=dict(t=50,b=60,l=60,r=20))
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+        # ── Gestapelte OOS Equity Curves ──────────────────────────────────────
+        if oos_equities:
+            # ── Kombinierte OOS Equity (Folds hintereinander = simulierter Live-Handel) ──
+            st.subheader("Kombinierte OOS Equity Kurve")
+            st.caption("Alle OOS-Folds hintereinander — so hätte sich das Kapital im echten Handel entwickelt (nur blind getestete Perioden, kein IS)")
+
+            # Folds chronologisch sortieren und aneinanderhängen
+            oos_equities_sorted = sorted(oos_equities, key=lambda x: x[1].index[0])
+            combined_vals, combined_idx = [], []
+            running_capital = 10_000.0
+            for fi, eq in oos_equities_sorted:
+                scale = running_capital / eq.iloc[0]
+                scaled = eq * scale
+                combined_vals.extend(scaled.values.tolist())
+                combined_idx.extend(eq.index.tolist())
+                running_capital = scaled.iloc[-1]
+
+            combined_eq = pd.Series(combined_vals, index=combined_idx)
+
+            # Drawdown berechnen
+            roll_max = combined_eq.cummax()
+            drawdown = (combined_eq - roll_max) / roll_max * 100
+
+            fig_combined = go.Figure()
+            fig_combined.add_trace(go.Scatter(
+                x=combined_eq.index, y=combined_eq.values,
+                fill="tozeroy", fillcolor="rgba(247,147,26,0.15)",
+                line=dict(color="#f7931a", width=2.5),
+                name="Equity (OOS kombiniert)"))
+            # Fold-Grenzen als vertikale Linien
+            colors_fold = ["#42a5f5","#00d4aa","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da","#f7931a"]
+            for i, (fi, eq) in enumerate(oos_equities_sorted):
+                _fold_color = colors_fold[i % len(colors_fold)]
+                fig_combined.add_vline(x=eq.index[0], line_dash="dot", line_color=_fold_color)
+                fig_combined.add_annotation(x=eq.index[0], y=1, yref="paper", yanchor="bottom",
+                                            text=f"F{fi}", showarrow=False, font=dict(color=_fold_color))
+            fig_combined.add_hline(y=10_000, line_color="white", line_dash="dash", line_width=1)
+            total_ret = (running_capital - 10_000) / 10_000 * 100
+            fig_combined.update_layout(
+                title=f"OOS Equity — 10.000€ Start → {running_capital:,.0f}€ ({total_ret:+.1f}%) | Nur blind getestete Perioden",
+                height=420, template="plotly_dark",
+                yaxis_title="Kapital (€)", xaxis_title="",
+                margin=dict(t=55, b=20, l=70, r=20))
+            st.plotly_chart(fig_combined, use_container_width=True)
+
+            # Drawdown Chart
+            fig_dd = go.Figure(go.Scatter(
+                x=combined_eq.index, y=drawdown.values,
+                fill="tozeroy", fillcolor="rgba(239,83,80,0.2)",
+                line=dict(color="#ef5350", width=1.5), name="Drawdown %"))
+            fig_dd.update_layout(
+                title=f"Drawdown — Max: {drawdown.min():.1f}%",
+                height=200, template="plotly_dark",
+                yaxis_title="DD %", margin=dict(t=40, b=20, l=70, r=20))
+            st.plotly_chart(fig_dd, use_container_width=True)
+
+            # ── Einzelne Folds übereinander (zum Vergleich) ───────────────────
+            with st.expander("Einzelne OOS-Folds im Vergleich"):
+                fig_eq = go.Figure()
+                colors = ["#f7931a","#00d4aa","#42a5f5","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da"]
+                for fi, eq in oos_equities:
+                    norm = eq / eq.iloc[0] * 100
+                    fig_eq.add_trace(go.Scatter(x=eq.index, y=norm.values,
+                                                name=f"Fold {fi}",
+                                                line=dict(color=colors[(fi-1) % len(colors)], width=1.5)))
+                fig_eq.add_hline(y=100, line_color="white", line_dash="dash", line_width=1)
+                fig_eq.update_layout(title="OOS Equity je Fold (normiert auf 100 = Startkapital)",
+                                     height=350, template="plotly_dark", margin=dict(t=40,b=20))
+                st.plotly_chart(fig_eq, use_container_width=True)
+
+        # ── CSV Download ──────────────────────────────────────────────────────
+        st.download_button("⬇️ WFA-Ergebnis als CSV",
+                           data=wfa_df.to_csv(index=False).encode(),
+                           file_name="dax_ema_wfa.csv", mime="text/csv")
+
+        # ════════════════════════════════════════════════════════════════════════
+        # PARAMETER-STABILITÄTSANALYSE
+        # ════════════════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("Parameter-Stabilitätsanalyse")
+        st.caption("Welche SL / Trailing-Kombinationen liefern konsistent über ALLE Folds gute OOS-Ergebnisse?")
+
+        if param_stability:
+            stab_rows = []
+            for (sl_, tt_, to_, ma_, fm_), results in param_stability.items():
+                if len(results) < 2:
+                    continue
+                pfs      = [r["pf"]         for r in results if r["n"] > 0]
+                rets     = [r["total_ret"]   for r in results if r["n"] > 0]
+                sharpes  = [r["sharpe"]      for r in results if r["n"] > 0]
+                trades   = [r["n"]           for r in results]
+                n_pos    = sum(1 for r in rets if r > 0) if rets else 0
+                n_folds  = len(results)
+
+                if not pfs:
+                    continue
+
+                stab_rows.append({
+                    "SL %":             f"{sl_:.2f}%",
+                    "Trail-Trig %":     f"{tt_:.2f}%",
+                    "Trail-Off %":      f"{to_:.2f}%",
+                    "MA":               f"{ma_}",
+                    "Filter":           fm_,
+                    "Folds getestet":   n_folds,
+                    "Profitable Folds": n_pos,
+                    "Konsistenz %":     round(n_pos / n_folds * 100, 0),
+                    "Ø OOS PF":         round(np.mean(pfs), 2),
+                    "Ø OOS Ret %":      f"{round(np.mean(rets), 2):.2f}%",
+                    "Ø OOS Sharpe":     round(np.mean(sharpes), 2),
+                    "Min OOS Ret %":    f"{round(np.min(rets), 2):.2f}%",
+                    "Max DD Ø":         f"{round(np.mean([r['max_dd'] for r in results]), 2):.2f}%",
+                })
+
+            if stab_rows:
+                df_stab = pd.DataFrame(stab_rows)
+                # Sortierung: erst Konsistenz, dann Ø PF
+                df_stab = df_stab.sort_values(
+                    ["Konsistenz %", "Ø OOS PF", "Ø OOS Ret %"],
+                    ascending=[False, False, False]
+                ).reset_index(drop=True)
+
+                # Top 3 hervorheben
+                st.markdown("#### 🏆 Top-10 stabilste Setups")
+                top10 = df_stab.head(10).copy()
+
+                def _hl_konsistenz(v):
+                    if isinstance(v, (int, float)):
+                        if v >= 80: return "color:#22c55e;font-weight:700"
+                        if v >= 60: return "color:#f0c040"
+                        return "color:#ef5350"
+                    return ""
+
+                def _hl_num(v):
+                    if isinstance(v, (int, float)):
+                        return "color:#22c55e" if v > 0 else "color:#ef5350"
+                    return ""
+
+                styled_stab = top10.style\
+                    .map(_hl_konsistenz, subset=["Konsistenz %"])\
+                    .map(_hl_num, subset=["Ø OOS PF"])
+                st.dataframe(styled_stab, use_container_width=True, hide_index=True)
+
+                # Heatmap: SL% vs Trail-Trig% → Ø Konsistenz
+                st.markdown("#### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
+                pivot = df_stab.pivot_table(
+                    values="Konsistenz %",
+                    index="SL %",
+                    columns="Trail-Trig %",
+                    aggfunc="mean"
+                ).round(0)
+
+                fig_heat = go.Figure(go.Heatmap(
+                    z=pivot.values,
+                    x=[f"Trail {c}%" for c in pivot.columns],
+                    y=[f"SL {r}%" for r in pivot.index],
+                    colorscale="RdYlGn",
+                    zmin=0, zmax=100,
+                    text=pivot.values.round(0).astype(str),
+                    texttemplate="%{text}%",
+                    showscale=True,
+                    colorbar=dict(title="Konsistenz %")
+                ))
+                fig_heat.update_layout(
+                    title="Ø Konsistenz je SL% / Trail-Trigger% Kombination",
+                    height=350, template="plotly_dark",
+                    margin=dict(t=50, b=30, l=80, r=20)
+                )
+                st.plotly_chart(fig_heat, use_container_width=True)
+
+                # Bestes Setup hervorheben
+                best = df_stab.iloc[0]
+                st.success(
+                    f"**Stabilstes Setup:** SL {best['SL %']} · "
+                    f"Trail-Trigger {best['Trail-Trig %']} · Trail-Abstand {best['Trail-Off %']} · "
+                    f"MA {best['MA']} · Filter: {best['Filter']} → "
+                    f"**{int(best['Konsistenz %'])}% Konsistenz** · "
+                    f"Ø OOS PF {best['Ø OOS PF']} · Ø OOS Ret {best['Ø OOS Ret %']}"
+                )
+
+                # Download
+                st.download_button("⬇️ Stabilitätsanalyse als CSV",
+                                   data=df_stab.to_csv(index=False).encode(),
+                                   file_name="dax_param_stability.csv", mime="text/csv")
+            else:
+                st.info("Zu wenig Daten für Stabilitätsanalyse — mehr Folds oder breiteren Grid verwenden.")
+
+        # ════════════════════════════════════════════════════════════════════════
+        # ENSEMBLE WFA — N Läufe mit versetzten Startdaten
+        # ════════════════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("Ensemble WFA — Mehrfach-Lauf")
+        st.markdown("""
+    Führt den WFA **N Mal** durch, jedes Mal mit einem um 1 Monat versetzten Startdatum.
+    So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **immer wieder** gewinnen, unabhängig vom Startpunkt.
+        """)
+
+        if "dax_ens_running" not in st.session_state:
+            st.session_state["dax_ens_running"] = False
+
+        # Status-Badge: Ensemble bereits gelaufen?
+        _ens_status_key = f"dax_ens_results_{_dax_ticker}"
+        if _ens_status_key in st.session_state:
+            _es = st.session_state[_ens_status_key]
+            st.success(f"✅ Ensemble bereits gelaufen — {_es['n_runs']} Läufe · Zeitraum: {_es['tested_period']} · "
+                       f"Ergebnisse werden unten angezeigt. Neu starten um zu aktualisieren.")
+        else:
+            st.info("⏳ Ensemble noch nicht gestartet — klicke '▶ Ensemble WFA starten'.")
+
+        ec1, ec2 = st.columns(2)
+        n_runs = ec1.number_input("Anzahl Läufe", min_value=3, max_value=10, value=5, step=1, key="dax_ens_runs")
+        if ec2.button("▶ Ensemble WFA starten", type="primary", key="dax_ens_run_btn"):
+            st.session_state["dax_ens_running"] = True
+
+        if st.session_state["dax_ens_running"]:
+            st.info(f"Starte {n_runs} WFA-Läufe mit versetzten Startdaten …")
+            ens_progress = st.progress(0, text="Ensemble läuft …")
+
+            ensemble_stability: dict = {}  # key=(sl,tt,to,ma,fm) → list of OOS metrics über ALLE Läufe
+
+            for run_i in range(int(n_runs)):
+                run_start = pd.Timestamp(dax_start) + pd.DateOffset(months=run_i)
+                df_run    = df_raw[df_raw.index >= run_start].copy()
+
+                if len(df_run) < 60:
+                    continue
+
+                # Folds für diesen Lauf
+                is_d_r  = pd.DateOffset(months=int(is_months))
+                oos_d_r = pd.DateOffset(months=int(oos_months))
+                folds_r, fs_r = [], df_run.index[0]
+                while True:
+                    ie_r = fs_r + is_d_r
+                    oe_r = ie_r + oos_d_r
+                    if oe_r > df_run.index[-1]:
+                        break
+                    folds_r.append({"is_start": fs_r, "is_end": ie_r,
+                                     "oos_start": ie_r, "oos_end": oe_r})
+                    fs_r = fs_r + oos_d_r
+
+                if len(folds_r) < 2:
+                    continue
+
+                adx_grid_r = g_adx if use_adx else [float(adx_thresh)]
+
+                for fold_r in folds_r:
+                    df_is_r  = df_run[(df_run.index >= fold_r["is_start"]) & (df_run.index < fold_r["is_end"])].copy()
+                    df_oos_r = df_run[(df_run.index >= fold_r["oos_start"]) & (df_run.index < fold_r["oos_end"])].copy()
+
+                    if len(df_is_r) < 30 or len(df_oos_r) < 5:
+                        continue
+
+                    for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid_r, g_tt, g_to):
+                        p = {**base_params,
+                             "sl_pct":      sl_,
+                             "ma_period":   ma_,
+                             "filter_mode": fm_,
+                             "adx_thresh":  adx_,
+                             "trail_trig":  tt_,
+                             "trail_off":   to_}
+                        try:
+                            tr_is_r, _ = _momi_backtest_engine(df_is_r.copy(), p)
+                            if len(tr_is_r) < int(min_trades):
+                                continue
+                            tr_oos_r, eq_oos_r = _momi_backtest_engine(df_oos_r.copy(), p)
+                            m_oos_r = _momi_metrics(tr_oos_r, eq_oos_r)
+                            key = (sl_, tt_, to_, ma_, fm_)
+                            if key not in ensemble_stability:
+                                ensemble_stability[key] = []
+                            ensemble_stability[key].append(m_oos_r)
+                        except Exception:
+                            continue
+
+                ens_progress.progress((run_i + 1) / int(n_runs),
+                                       text=f"Lauf {run_i+1}/{int(n_runs)} abgeschlossen")
+
+            ens_progress.progress(1.0, text=f"Ensemble abgeschlossen ✓  ({int(n_runs)} Läufe)")
+            st.session_state["dax_ens_running"] = False
+
+            # Auswertung
+            if not ensemble_stability:
+                st.error("Keine Ensemble-Ergebnisse — Grid oder Zeitraum anpassen.")
+            else:
+                # Buy & Hold Referenz für den gesamten Zeitraum
+                bh_start_price = float(df_raw["Close"].iloc[0])
+                bh_end_price   = float(df_raw["Close"].iloc[-1])
+                bh_total_ret   = (bh_end_price / bh_start_price - 1) * 100
+                tested_period  = f"{df_raw.index[0].date()} – {df_raw.index[-1].date()}"
+
+                ens_rows = []
+                for (sl_, tt_, to_, ma_, fm_), results in ensemble_stability.items():
+                    if len(results) < 3:
+                        continue
+                    pfs    = [r["pf"]        for r in results if r["n"] > 0]
+                    rets   = [r["total_ret"] for r in results if r["n"] > 0]
+                    sharps = [r["sharpe"]    for r in results if r["n"] > 0]
+                    avg_ret_list = [r.get("avg_ret", 0) for r in results if r["n"] > 0]
+                    if not pfs:
+                        continue
+                    n_pos = sum(1 for r in rets if r > 0)
+                    n_tot = len(results)
+                    ens_rows.append({
+                        "_sl": sl_, "_tt": tt_, "_to": to_, "_ma": ma_, "_fm": fm_,
+                        "SL %":             f"{sl_:.2f}%",
+                        "Trail-Trig %":     f"{tt_:.2f}%",
+                        "Trail-Off %":      f"{to_:.2f}%",
+                        "MA":               f"{ma_}",
+                        "Filter":           fm_,
+                        "Konsistenz %":     round(n_pos / n_tot * 100, 0),
+                        "Ø OOS PF":         round(np.mean(pfs), 2),
+                        "Ø OOS Ret %":      round(np.mean(rets), 2),
+                        "Ø Profit/Trade %": round(np.mean(avg_ret_list), 3) if avg_ret_list else 0,
+                        "Ø OOS Sharpe":     round(np.mean(sharps), 2),
+                        "Getestete Folds":  n_tot,
+                        "Zeitraum":         tested_period,
+                    })
+
+                if ens_rows:
+                    df_ens = pd.DataFrame(ens_rows).sort_values(
+                        ["Konsistenz %", "Ø OOS PF"], ascending=[False, False]
+                    ).reset_index(drop=True)
+
+                    # Ergebnisse persistent im Session-State speichern
+                    _ens_cache_key = f"dax_ens_results_{_dax_ticker}"
+                    display_cols_ens = ["SL %","Trail-Trig %","Trail-Off %","MA","Filter",
+                                        "Konsistenz %","Ø OOS PF","Ø OOS Ret %","Ø Profit/Trade %","Ø OOS Sharpe","Zeitraum"]
+                    st.session_state[_ens_cache_key] = {
+                        "df_ens":       df_ens,
+                        "bh_total_ret": bh_total_ret,
+                        "tested_period": tested_period,
+                        "n_runs":       int(n_runs),
+                        "display_cols": display_cols_ens,
+                    }
+
+                    st.success(f"**Ensemble abgeschlossen** — {len(df_ens)} Kombinationen über {int(n_runs)} Läufe · Zeitraum: {tested_period}")
+
+                    # ── Top-10 Tabelle ────────────────────────────────────────────
+                    st.markdown(f"### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
+                    st.caption(f"Zeitraum: **{tested_period}** · Buy & Hold DAX in diesem Zeitraum: **{bh_total_ret:+.1f}%**")
+
+                    top10_ens = df_ens.head(10)[display_cols_ens].copy()
+                    top10_ens["Ø OOS Ret %"]      = top10_ens["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%")
+                    top10_ens["Ø Profit/Trade %"] = top10_ens["Ø Profit/Trade %"].apply(lambda v: f"{v:.3f}%")
+
+                    def _hl_k(v):
+                        if not isinstance(v, (int, float)): return ""
+                        if v >= 80: return "color:#22c55e;font-weight:700"
+                        if v >= 60: return "color:#f0c040"
+                        return "color:#ef5350"
+                    st.dataframe(top10_ens.style.map(_hl_k, subset=["Konsistenz %"]),
+                                 use_container_width=True, hide_index=True)
+
+                    best_ens = df_ens.iloc[0]
+                    st.success(
+                        f"**Robustestes Setup:** SL {best_ens['SL %']} · "
+                        f"Trail-Trigger {best_ens['Trail-Trig %']} · Trail-Abstand {best_ens['Trail-Off %']} · "
+                        f"MA {best_ens['MA']} · Filter: {best_ens['Filter']} → "
+                        f"**{int(best_ens['Konsistenz %'])}% Konsistenz** · "
+                        f"Ø OOS PF {best_ens['Ø OOS PF']} · Ø OOS Ret {best_ens['Ø OOS Ret %']:.2f}%"
+                    )
+
+                    # ── Equity Kurve vs Buy & Hold für Top-10 ────────────────────
+                    st.markdown("### Equity Kurve vs Buy & Hold — Top-10 Setups")
+                    st.caption("Strategie (orange) vs reines DAX halten (blau) über den gesamten Testzeitraum")
+
+                    bh_equity = df_raw["Close"] / df_raw["Close"].iloc[0] * 10_000
+
+                    for rank, row in df_ens.head(10).iterrows():
+                        p_full = {**base_params,
+                                  "sl_pct":      row["_sl"],
+                                  "ma_period":   int(row["_ma"]),
+                                  "filter_mode": row["_fm"],
+                                  "trail_trig":  row["_tt"],
+                                  "trail_off":   row["_to"]}
+                        try:
+                            tr_f, eq_f = _momi_backtest_engine(df_raw.copy(), p_full)
+                            m_f = _momi_metrics(tr_f, eq_f)
+                        except Exception:
+                            continue
+
+                        total_ret_f = m_f["total_ret"]
+                        label = (f"#{rank+1} · SL {row['SL %']} · Trail {row['Trail-Trig %']} · "
+                                 f"MA {row['MA']} · {row['Filter']}")
+
+                        with st.expander(f"#{rank+1} — Rendite: {total_ret_f:+.1f}% vs Buy&Hold: {bh_total_ret:+.1f}% · {label}"):
+                            # KPI-Zeile
+                            k1,k2,k3,k4,k5 = st.columns(5)
+                            k1.metric("Gesamt-Rendite",  f"{total_ret_f:+.1f}%")
+                            k2.metric("Buy & Hold",      f"{bh_total_ret:+.1f}%")
+                            k3.metric("Outperformance",  f"{total_ret_f - bh_total_ret:+.1f}%")
+                            k4.metric("Trades",          m_f["n"])
+                            k5.metric("Profit Factor",   f"{m_f['pf']:.2f}")
+
+                            k6,k7,k8 = st.columns(3)
+                            k6.metric("Win-Rate",        f"{m_f['wr']:.1f}%")
+                            k7.metric("Max Drawdown",    f"{m_f['max_dd']:.1f}%")
+                            k8.metric("Sharpe",          f"{m_f['sharpe']:.2f}")
+
+                            # Chart
+                            fig_vs = go.Figure()
+                            fig_vs.add_trace(go.Scatter(
+                                x=bh_equity.index, y=bh_equity.values,
+                                name="Buy & Hold DAX",
+                                line=dict(color="#4a9eff", width=2),
+                                fill="tozeroy", fillcolor="rgba(74,158,255,0.05)"))
+                            fig_vs.add_trace(go.Scatter(
+                                x=eq_f.index, y=eq_f.values,
+                                name="Strategie",
+                                line=dict(color="#f7931a", width=2.5),
+                                fill="tozeroy", fillcolor="rgba(247,147,26,0.1)"))
+                            fig_vs.add_hline(y=10_000, line_color="white",
+                                             line_dash="dash", line_width=1)
+                            fig_vs.update_layout(
+                                title=f"Setup #{rank+1}: {label}",
+                                height=350, template="plotly_dark",
+                                yaxis_title="Kapital (€)",
+                                legend=dict(orientation="h", y=1.05),
+                                margin=dict(t=50, b=20, l=60, r=20))
+                            st.plotly_chart(fig_vs, use_container_width=True)
+
+                    # ── Heatmap ───────────────────────────────────────────────────
+                    st.markdown("### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
+                    pivot_ens = df_ens.copy()
+                    pivot_ens["SL_num"] = pivot_ens["SL %"].str.replace("%","").astype(float)
+                    pivot_ens["TT_num"] = pivot_ens["Trail-Trig %"].str.replace("%","").astype(float)
+                    heat_ens = pivot_ens.pivot_table(
+                        values="Konsistenz %", index="SL_num", columns="TT_num", aggfunc="mean").round(0)
+                    fig_heat_ens = go.Figure(go.Heatmap(
+                        z=heat_ens.values,
+                        x=[f"Trail {c}%" for c in heat_ens.columns],
+                        y=[f"SL {r}%"    for r in heat_ens.index],
+                        colorscale="RdYlGn", zmin=0, zmax=100,
+                        text=heat_ens.values.round(0).astype(str),
+                        texttemplate="%{text}%", showscale=True,
+                        colorbar=dict(title="Konsistenz %")))
+                    fig_heat_ens.update_layout(
+                        title=f"Ensemble-Konsistenz über {int(n_runs)} Läufe",
+                        height=350, template="plotly_dark",
+                        margin=dict(t=50, b=30, l=80, r=20))
+                    st.plotly_chart(fig_heat_ens, use_container_width=True)
+
+                    st.download_button("⬇️ Ensemble-Ergebnis als CSV",
+                                       data=df_ens[display_cols_ens].to_csv(index=False).encode(),
+                                       file_name="dax_ensemble_wfa.csv", mime="text/csv")
+
+        # ── Gespeicherte Ensemble-Ergebnisse anzeigen (auch nach Reload) ──────
+        _ens_cache_key = f"dax_ens_results_{_dax_ticker}"
+        if not st.session_state.get("dax_ens_running") and _ens_cache_key in st.session_state:
+            _ec = st.session_state[_ens_cache_key]
+            _df_ens_c   = _ec["df_ens"]
+            _bh_ret_c   = _ec["bh_total_ret"]
+            _period_c   = _ec["tested_period"]
+            _n_runs_c   = _ec["n_runs"]
+            _dcols_c    = _ec["display_cols"]
+            st.markdown("---")
+            st.markdown(f"### 🏆 Top-10 Ensemble-Setups ({_n_runs_c} Läufe) — gespeichertes Ergebnis")
+            st.caption(f"Zeitraum: **{_period_c}** · Buy & Hold: **{_bh_ret_c:+.1f}%**")
+
+            _t10 = _df_ens_c.head(10)[_dcols_c].copy()
+            _t10["Ø OOS Ret %"]      = _t10["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%" if isinstance(v, (int,float)) else v)
+            _t10["Ø Profit/Trade %"] = _t10["Ø Profit/Trade %"].apply(lambda v: f"{v:.3f}%" if isinstance(v, (int,float)) else v)
+
+            def _hl_k2(v):
+                if not isinstance(v, (int, float)): return ""
+                if v >= 80: return "color:#22c55e;font-weight:700"
+                if v >= 60: return "color:#f0c040"
+                return "color:#ef5350"
+            st.dataframe(_t10.style.map(_hl_k2, subset=["Konsistenz %"]),
+                         use_container_width=True, hide_index=True)
+
+            _best_c = _df_ens_c.iloc[0]
+            st.success(
+                f"**Robustestes Setup:** SL {_best_c['SL %']} · "
+                f"Trail-Trigger {_best_c['Trail-Trig %']} · Trail-Abstand {_best_c['Trail-Off %']} · "
+                f"MA {_best_c['MA']} · Filter: {_best_c['Filter']} → "
+                f"**{int(_best_c['Konsistenz %'])}% Konsistenz** · "
+                f"Ø OOS PF {_best_c['Ø OOS PF']} · Ø OOS Ret {_best_c['Ø OOS Ret %']:.2f}%"
+            )
+            st.download_button("⬇️ Ensemble als CSV (gespeichert)",
+                               data=_df_ens_c[_dcols_c].to_csv(index=False).encode(),
+                               file_name="dax_ensemble_wfa.csv", mime="text/csv",
+                               key="dax_ens_dl_cached")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # MONTE CARLO — Prop Trading Challenge Simulator
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("Monte Carlo — Prop Trading Challenge Simulator")
+    st.markdown("""
+Simuliert **1.000 mögliche Zukunften** deiner Strategie durch zufälliges Mischen (Bootstrap) der echten Trade-Ergebnisse.
+Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — bevor du echtes Geld riskierst.
+    """)
+
+    # Trades aus Full-Sample Backtest holen — wird immer berechnet (oben)
+    mc_trades_raw = st.session_state.get(f"dax_mc_trades_{_dax_ticker}")
+    if mc_trades_raw is None or mc_trades_raw.empty:
+        mc_trades_raw = st.session_state.get(wfa_cache_key, {}).get("full_trades")
+    # Letzter Fallback: tr_full liegt im aktuellen Scope
+    if (mc_trades_raw is None or mc_trades_raw.empty) and not tr_full.empty:
+        mc_trades_raw = tr_full
+
+    if mc_trades_raw is None or mc_trades_raw.empty:
+        st.info("Kein Backtest-Ergebnis — Seite neu laden und Parameter prüfen.")
+    else:
+        n_real = len(mc_trades_raw)
+        real_rets = mc_trades_raw["PnL $"].values
+        st.success(f"**{n_real} echte Trades** aus dem Full-Sample Backtest geladen · "
+                   f"Win-Rate: {(real_rets > 0).mean()*100:.1f}% · "
+                   f"Ø Trade: {real_rets.mean():.2f}$ · "
+                   f"Trades/Jahr: ~{n_real / max(1, (df_raw.index[-1]-df_raw.index[0]).days / 365):.0f}")
+
+        if n_real < 20:
+            st.warning(f"⚠️ Nur {n_real} Trades — Monte Carlo Ergebnisse haben hohe Unsicherheit. "
+                       f"Mind. 50 Trades empfohlen für verlässliche Aussagen.")
+
+        st.info("ℹ️ Kein Zeitlimit — die Simulation läuft bis das Profit-Ziel erreicht **oder** "
+                "die Drawdown-Grenze verletzt wird. Genau wie moderne Prop Firms.")
+
+        mc1, mc2 = st.columns(2)
+        with mc1:
+            st.markdown("**Challenge-Regeln (Prop Firm)**")
+            challenge_capital    = st.number_input("Startkapital ($)", 10_000, 200_000, 100_000, step=10_000, key="dax_mc_cap")
+            profit_target_p1_pct = st.number_input("Phase 1 Profit-Ziel (%)", 1.0, 20.0, 8.0, step=0.5, key="dax_mc_pt_p1",
+                                                    help="FTMO Phase 1: 8% — Evaluierung")
+            profit_target_p2_pct = st.number_input("Phase 2 Profit-Ziel (%)", 1.0, 20.0, 5.0, step=0.5, key="dax_mc_pt_p2",
+                                                    help="FTMO Phase 2: 5% — Verification (gleiche DD-Regeln)")
+            max_total_dd_pct     = st.number_input("Max. Total Drawdown (%)", 1.0, 20.0, 10.0, step=0.5, key="dax_mc_tdd",
+                                                    help="FTMO: 10% — gilt für BEIDE Phasen")
+            max_daily_dd_pct     = st.number_input("Max. Daily Drawdown (%)", 0.5, 10.0, 5.0, step=0.5, key="dax_mc_ddd",
+                                                    help="FTMO: 5% — gilt für BEIDE Phasen")
+        with mc2:
+            st.markdown("**Simulation**")
+            n_sims         = st.number_input("Anzahl Simulationen", 500, 5000, 1000, step=500, key="dax_mc_sims")
+            max_trades_sim = st.number_input("Max. Trades pro Simulation", 10, 500, 100, step=10, key="dax_mc_maxt",
+                                              help="Sicherheitsnetz: nach X Trades ohne Ergebnis gilt die Sim als 'nicht bestanden'")
+            risk_per_trade = st.number_input("Risiko pro Trade (%)", 0.1, 5.0, 1.0, step=0.1, key="dax_mc_risk")
+
+        run_mc = st.button("▶ Monte Carlo starten", type="primary", key="dax_mc_run_btn")
+        if run_mc:
+            st.session_state["dax_mc_running"] = True
+        if st.session_state.get("dax_mc_running"):
+            st.session_state["dax_mc_running"] = False
+
+            mc_progress = st.progress(0, text="Monte Carlo läuft …")
+
+            # Trade-Returns normieren
+            win_mask  = real_rets > 0
+            avg_win   = real_rets[win_mask].mean()  if win_mask.any()   else 1
+            avg_loss  = real_rets[~win_mask].mean() if (~win_mask).any() else -1
+            norm_rets = np.where(real_rets > 0,
+                                  real_rets / avg_win,
+                                 -real_rets / avg_loss)
+
+            n_sims_int = int(n_sims)
+            results, all_paths_p1 = [], []
+
+            def _run_phase(cap, target_pct, norm_r, risk_pct, dd_total, dd_daily, max_t):
+                """Simuliert eine Phase; gibt (passed, fail_reason, n_trades, final_pct, path) zurück."""
+                capital   = float(cap)
+                peak      = capital
+                day_start = capital
+                path      = [capital]
+                n_trades  = 0
+                failed    = False
+                reason    = ""
+                while True:
+                    nr      = norm_r[np.random.randint(len(norm_r))]
+                    pnl     = capital * (risk_pct / 100) * nr
+                    capital += pnl
+                    peak    = max(peak, capital)
+                    path.append(capital)
+                    n_trades += 1
+                    daily_dd = (capital - day_start) / day_start * 100
+                    if daily_dd < -dd_daily:
+                        failed, reason = True, "Daily DD"; break
+                    day_start = capital
+                    total_dd = (capital - peak) / peak * 100
+                    if total_dd < -dd_total:
+                        failed, reason = True, "Total DD"; break
+                    profit = (capital - cap) / cap * 100
+                    if profit >= target_pct:
+                        break
+                    if n_trades >= max_t:
+                        break
+                final_pct = (capital - cap) / cap * 100
+                passed    = not failed and final_pct >= target_pct
+                return passed, reason, n_trades, final_pct, path
+
+            for sim_i in range(n_sims_int):
+                # ── Phase 1 ──
+                p1_passed, p1_reason, p1_trades, p1_pct, p1_path = _run_phase(
+                    challenge_capital, profit_target_p1_pct, norm_rets,
+                    risk_per_trade, max_total_dd_pct, max_daily_dd_pct, int(max_trades_sim))
+
+                # ── Phase 2 (nur wenn Phase 1 bestanden) ──
+                p2_passed, p2_reason, p2_trades, p2_pct = False, "", 0, 0.0
+                if p1_passed:
+                    p2_passed, p2_reason, p2_trades, p2_pct, _ = _run_phase(
+                        challenge_capital, profit_target_p2_pct, norm_rets,
+                        risk_per_trade, max_total_dd_pct, max_daily_dd_pct, int(max_trades_sim))
+
+                results.append({
+                    "p1_passed":  p1_passed,
+                    "p1_reason":  p1_reason,
+                    "p1_trades":  p1_trades,
+                    "p1_pct":     p1_pct,
+                    "p2_passed":  p2_passed,
+                    "p2_reason":  p2_reason,
+                    "p2_trades":  p2_trades,
+                    "p2_pct":     p2_pct,
+                    "payout":     p1_passed and p2_passed,
+                })
+                if sim_i < 200:
+                    all_paths_p1.append(p1_path)
+
+                if sim_i % 100 == 0:
+                    mc_progress.progress(sim_i / n_sims_int, text=f"Simulation {sim_i}/{n_sims_int} …")
+
+            mc_progress.progress(1.0, text="Monte Carlo abgeschlossen ✓")
+
+            df_res = pd.DataFrame(results)
+            n_p1_pass  = df_res["p1_passed"].sum()
+            n_p1_fail  = (~df_res["p1_passed"]).sum()
+            n_p2_pass  = df_res["p2_passed"].sum()   # = payout
+            n_p2_fail  = (df_res["p1_passed"] & ~df_res["p2_passed"]).sum()
+            n_payout   = df_res["payout"].sum()
+
+            p1_pct_val   = n_p1_pass / n_sims_int * 100
+            p2_cond_pct  = n_p2_pass / n_p1_pass * 100 if n_p1_pass > 0 else 0   # P(P2|P1)
+            payout_pct   = n_payout  / n_sims_int * 100                            # P(P1∩P2)
+
+            avg_t_p1 = df_res.loc[df_res["p1_passed"], "p1_trades"].mean() if n_p1_pass > 0 else 0
+            avg_t_p2 = df_res.loc[df_res["p2_passed"], "p2_trades"].mean() if n_p2_pass > 0 else 0
+
+            # ── Payout Badge ──────────────────────────────────────────────
+            if payout_pct >= 40:
+                bc, bt = "#22c55e", f"✅ GUTE PAYOUT-CHANCE — {payout_pct:.1f}% der Simulationen bestehen BEIDE Phasen"
+            elif payout_pct >= 15:
+                bc, bt = "#f0c040", f"⚠️ MÖGLICH — {payout_pct:.1f}% der Simulationen bestehen BEIDE Phasen"
+            else:
+                bc, bt = "#ef5350", f"❌ SCHWIERIG — nur {payout_pct:.1f}% der Simulationen erhalten einen Payout"
+
+            st.markdown(
+                f'<div style="background:{bc}22;border:2px solid {bc};border-radius:10px;'
+                f'padding:16px 24px;font-weight:800;font-size:1.3rem;color:{bc};margin:16px 0;">'
+                f'{bt}</div>', unsafe_allow_html=True)
+
+            # ── KPIs ──────────────────────────────────────────────────────
+            k1,k2,k3,k4,k5,k6 = st.columns(6)
+            k1.metric("Phase 1 besteht",    f"{p1_pct_val:.1f}%",  f"{n_p1_pass}/{n_sims_int}")
+            k2.metric("Phase 2 | P1 ok",    f"{p2_cond_pct:.1f}%", f"{n_p2_pass}/{n_p1_pass if n_p1_pass else '–'}",
+                      help="Wahrscheinlichkeit Phase 2 zu bestehen, wenn Phase 1 schon bestanden ist")
+            k3.metric("💰 Payout",           f"{payout_pct:.1f}%",  f"{n_payout}/{n_sims_int}",
+                      help="P(Phase1) × P(Phase2|Phase1) — echte Auszahlungswahrscheinlichkeit")
+            k4.metric("Ø Wochen Phase 1",   f"{avg_t_p1:.0f} Wo."  if avg_t_p1 > 0 else "–",
+                      help="Durchschnittliche Dauer bis Phase 1 bestanden (bei bestandenen Sims)")
+            k5.metric("Ø Wochen Phase 2",   f"{avg_t_p2:.0f} Wo."  if avg_t_p2 > 0 else "–",
+                      help="Durchschnittliche Dauer bis Phase 2 bestanden (bei bestandenen Sims)")
+            k6.metric("Ø Gesamt",           f"{avg_t_p1+avg_t_p2:.0f} Wo." if (avg_t_p1+avg_t_p2) > 0 else "–",
+                      help="Gesamtdauer bis erster Payout")
+
+            p1_dd_fail = (df_res["p1_reason"] == "Daily DD").sum()
+            p1_td_fail = (df_res["p1_reason"] == "Total DD").sum()
+            p2_dd_fail = (df_res["p2_reason"] == "Daily DD").sum()
+            p2_td_fail = (df_res["p2_reason"] == "Total DD").sum()
+            st.caption(
+                f"Phase 1 — Daily DD: {p1_dd_fail}x · Total DD: {p1_td_fail}x  |  "
+                f"Phase 2 — Daily DD: {p2_dd_fail}x · Total DD: {p2_td_fail}x")
+
+            # ── Kreisdiagramm ─────────────────────────────────────────────
+            pie_labels = ["❌ Phase 1 gescheitert", "⚠️ Phase 2 gescheitert", "💰 Payout erhalten"]
+            pie_values = [n_p1_fail, n_p2_fail, n_payout]
+            pie_colors = ["#ef5350", "#f0c040", "#22c55e"]
+            fig_pie = go.Figure(go.Pie(
+                labels=pie_labels,
+                values=pie_values,
+                marker=dict(colors=pie_colors, line=dict(color="#1a1a2e", width=2)),
+                textinfo="label+percent",
+                textfont=dict(size=13),
+                hole=0.4,
+                pull=[0, 0, 0.07],
+            ))
+            fig_pie.update_layout(
+                title=f"Challenge-Ergebnis aus {n_sims_int} Simulationen",
+                height=380, template="plotly_dark",
+                showlegend=True,
+                legend=dict(orientation="h", y=-0.15),
+                margin=dict(t=60, b=60, l=20, r=20),
+                annotations=[dict(
+                    text=f"<b>{payout_pct:.1f}%</b><br>Payout",
+                    x=0.5, y=0.5, font_size=16,
+                    font_color="#22c55e", showarrow=False)]
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+            st.info(
+                f"**Warum ist Phase 2 leichter als Phase 1?**  "
+                f"Niedrigeres Ziel ({profit_target_p2_pct}% statt {profit_target_p1_pct}%) bei gleichen DD-Grenzen. "
+                f"Daher: P(Phase 2 | Phase 1 bestanden) = **{p2_cond_pct:.1f}%** > P(Phase 1) = **{p1_pct_val:.1f}%**. "
+                f"Gesamtchance: {p1_pct_val:.1f}% × {p2_cond_pct:.1f}% = **{payout_pct:.1f}% Payout**."
+            )
+
+            # ── Phase-1-Pfad-Chart ────────────────────────────────────────
+            if all_paths_p1:
+                st.subheader("Phase 1 — Simulierte Verläufe")
+                fig_mc = go.Figure()
+                for path in all_paths_p1:
+                    ok = (path[-1] - challenge_capital) / challenge_capital * 100 >= profit_target_p1_pct
+                    fig_mc.add_trace(go.Scatter(
+                        y=path, mode="lines",
+                        line=dict(color="#22c55e" if ok else "#ef5350", width=0.5),
+                        opacity=0.12, showlegend=False))
+                max_len   = max(len(p) for p in all_paths_p1)
+                padded    = [p + [p[-1]] * (max_len - len(p)) for p in all_paths_p1]
+                mean_path = np.mean(padded, axis=0)
+                fig_mc.add_trace(go.Scatter(y=mean_path, mode="lines",
+                                             line=dict(color="white", width=2.5, dash="dash"), name="Ø Pfad"))
+                fig_mc.add_hline(y=challenge_capital * (1 + profit_target_p1_pct/100),
+                                  line_color="#22c55e", line_dash="dot", line_width=2,
+                                  annotation_text=f"Phase 1 Ziel +{profit_target_p1_pct}%", annotation_position="right")
+                fig_mc.add_hline(y=challenge_capital * (1 - max_total_dd_pct/100),
+                                  line_color="#ef5350", line_dash="dot", line_width=2,
+                                  annotation_text=f"Ruin -{max_total_dd_pct}%", annotation_position="right")
+                fig_mc.add_hline(y=challenge_capital, line_color="white", line_dash="dash", line_width=1)
+                fig_mc.update_layout(
+                    title=f"Phase 1 — {n_sims_int} Simulationen · Grün = bestanden · Rot = gescheitert",
+                    height=420, template="plotly_dark",
+                    yaxis_title="Kapital ($)", xaxis_title="Trade #",
+                    margin=dict(t=50, b=30, l=70, r=130))
+                st.plotly_chart(fig_mc, use_container_width=True)
+
+            # ── Trades-Histogramme ────────────────────────────────────────
+            if n_p1_pass > 0:
+                col_h1, col_h2 = st.columns(2)
+                with col_h1:
+                    fig_tw1 = go.Figure(go.Histogram(
+                        x=df_res.loc[df_res["p1_passed"], "p1_trades"], nbinsx=20,
+                        marker_color="#42a5f5"))
+                    fig_tw1.update_layout(
+                        title=f"Phase 1: Wochen bis Ziel (Ø {avg_t_p1:.0f} Wo.)",
+                        height=220, template="plotly_dark",
+                        xaxis_title="Trades/Wochen", yaxis_title="Anzahl",
+                        margin=dict(t=40, b=30, l=50, r=10))
+                    st.plotly_chart(fig_tw1, use_container_width=True)
+                with col_h2:
+                    if n_p2_pass > 0:
+                        fig_tw2 = go.Figure(go.Histogram(
+                            x=df_res.loc[df_res["p2_passed"], "p2_trades"], nbinsx=20,
+                            marker_color="#22c55e"))
+                        fig_tw2.update_layout(
+                            title=f"Phase 2: Wochen bis Ziel (Ø {avg_t_p2:.0f} Wo.)",
+                            height=220, template="plotly_dark",
+                            xaxis_title="Trades/Wochen", yaxis_title="Anzahl",
+                            margin=dict(t=40, b=30, l=50, r=10))
+                        st.plotly_chart(fig_tw2, use_container_width=True)
+
+            if n_real < 30:
+                st.warning(f"⚠️ Nur {n_real} echte Trades — Monte Carlo Ergebnisse haben hohe Unsicherheit. "
+                           f"Mind. 50 Trades für verlässliche Aussagen.")
+
+
 def render_pdh_pdl_strategie() -> None:
     """PDH/PDL Proximity Reversal Strategy — Python-Backtest."""
     import datetime as _dt
@@ -7280,7 +8492,7 @@ def render_muster_analyse() -> None:
     st.rerun()
 
 
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA"], horizontal=False, label_visibility="collapsed")
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie"], horizontal=False, label_visibility="collapsed")
 
 if test_mode == "Seasonality Lab":
     render_seasonality_lab()
@@ -7300,6 +8512,10 @@ if test_mode == "Yen Mo-Mi Strategie":
 
 if test_mode == "Crypto WeekdayMA WFA":
     render_btc_wfa()
+    st.stop()
+
+if test_mode == "DAX EMA Strategie":
+    render_dax_ema_wfa()
     st.stop()
 
 with st.sidebar:
