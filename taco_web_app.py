@@ -6621,14 +6621,15 @@ Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeiti
             gl    = abs(rets[rets <= 0].sum())
             pf    = gp / gl if gl > 0 else float("inf")
             avg_r = rets.mean()
-            # Qualitätsschwellen
-            qualified = wr >= 45 and pf >= 1.2 and n >= 20
+            # Qualitätsschwellen — PF ≥ 1.2 reicht, WR-Minimum 35%
+            # (asymmetrische Strategien mit großen Wins können <45% WR haben)
+            qualified = pf >= 1.2 and wr >= 35 and n >= 20
             if qualified:
                 auto_select.append(tkr)
                 rec = "✅ Empfohlen"
             else:
                 reasons = []
-                if wr < 45:  reasons.append(f"Win-Rate {wr:.0f}%<45%")
+                if wr < 35:  reasons.append(f"Win-Rate {wr:.0f}%<35%")
                 if pf < 1.2: reasons.append(f"PF {pf:.2f}<1.2")
                 if n < 20:   reasons.append(f"Nur {n} Trades")
                 rec = "❌ " + " · ".join(reasons)
@@ -6655,7 +6656,7 @@ Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeiti
 
         n_qual = len(auto_select)
         if n_qual == 0:
-            st.error("Kein Coin hat die Qualitätsschwellen erreicht (Win-Rate ≥45% + PF ≥1.2). "
+            st.error("Kein Coin hat die Qualitätsschwellen erreicht (Win-Rate ≥35% + PF ≥1.2). "
                      "Alle Assets per Hand auswählen oder Grids anpassen.")
         elif n_qual == 1:
             st.warning(f"Nur 1 Coin qualifiziert — mindestens 2 für Multi-Coin MC nötig. "
