@@ -5796,12 +5796,15 @@ Führt den WFA **N Mal** durch, jedes Mal mit einem um 1 Monat versetzten Startd
 So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **immer wieder** gewinnen, unabhängig vom Startpunkt.
     """)
 
-    with st.expander("Ensemble WFA starten", expanded=False):
-        ec1, ec2 = st.columns(2)
-        n_runs    = ec1.number_input("Anzahl Läufe", min_value=3, max_value=10, value=5, step=1, key="ens_runs")
-        ens_start = ec2.button("▶ Ensemble WFA starten", type="primary", key="ens_run_btn")
+    if "ens_running" not in st.session_state:
+        st.session_state["ens_running"] = False
 
-    if ens_start:
+    ec1, ec2 = st.columns(2)
+    n_runs = ec1.number_input("Anzahl Läufe", min_value=3, max_value=10, value=5, step=1, key="ens_runs")
+    if ec2.button("▶ Ensemble WFA starten", type="primary", key="ens_run_btn"):
+        st.session_state["ens_running"] = True
+
+    if st.session_state["ens_running"]:
         import datetime as _dt2
         from dateutil.relativedelta import relativedelta
 
@@ -5867,6 +5870,7 @@ So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **
                                    text=f"Lauf {run_i+1}/{int(n_runs)} abgeschlossen")
 
         ens_progress.progress(1.0, text=f"Ensemble abgeschlossen ✓  ({int(n_runs)} Läufe)")
+        st.session_state["ens_running"] = False
 
         # Auswertung
         if not ensemble_stability:
