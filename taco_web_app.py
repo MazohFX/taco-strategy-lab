@@ -6733,7 +6733,8 @@ Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeiti
             with mmc1:
                 st.markdown("**Challenge-Regeln**")
                 mmc_cap    = st.number_input("Startkapital ($)", 10_000, 200_000, 100_000, step=10_000, key="mmc_cap")
-                mmc_pt     = st.number_input("Profit-Ziel (%)", 1.0, 20.0, 8.0, step=0.5, key="mmc_pt")
+                mmc_pt_p1  = st.number_input("Phase 1 Profit-Ziel (%)", 1.0, 20.0, 8.0, step=0.5, key="mmc_pt_p1")
+                mmc_pt_p2  = st.number_input("Phase 2 Profit-Ziel (%)", 1.0, 20.0, 5.0, step=0.5, key="mmc_pt_p2")
                 mmc_tdd    = st.number_input("Max. Total Drawdown (%)", 1.0, 20.0, 10.0, step=0.5, key="mmc_tdd")
                 mmc_ddd    = st.number_input("Max. Daily Drawdown (%)", 0.5, 10.0, 5.0, step=0.5, key="mmc_ddd")
             with mmc2:
@@ -6764,109 +6765,124 @@ Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeiti
 
                 active_tickers = list(coin_norm.keys())
                 n_coins = len(active_tickers)
-
                 n_sims_mmc = int(mmc_sims)
-                results_mmc, paths_mmc, trades_to_fin = [], [], []
+                results_mmc, paths_p1 = [], []
+
+                def _mmc_phase(cap, target_pct, c_norm, tickers, risk_pct, tdd, ddd, max_w):
+                    capital = float(cap); peak = capital; day_start = capital
+                    path = [capital]; n_weeks = 0; failed = False
+                    while True:
+                        week_pnl = sum(capital * (risk_pct/100) * c_norm[t][np.random.randint(len(c_norm[t]))]
+                                       for t in tickers)
+                        capital += week_pnl; n_weeks += 1; path.append(capital)
+                        peak = max(peak, capital)
+                        profit = (capital - cap) / cap * 100
+                        total_dd = (capital - cap) / cap * 100
+                        daily_dd = (capital - day_start) / day_start * 100 if day_start > 0 else 0
+                        day_start = capital
+                        if profit >= target_pct: break
+                        if total_dd <= -tdd or daily_dd <= -ddd or n_weeks >= max_w:
+                            failed = True; break
+                    final = (capital - cap) / cap * 100
+                    return not failed and final >= target_pct, n_weeks, final, path
 
                 for sim_i in range(n_sims_mmc):
-                    capital   = float(mmc_cap)
-                    peak      = capital
-                    day_start = capital
-                    path      = [capital]
-                    n_weeks   = 0
-                    passed    = False
-                    disq      = False
-
-                    while True:
-                        # Jede "Woche": alle Coins handeln gleichzeitig
-                        week_pnl = 0.0
-                        for tkr in active_tickers:
-                            idx = np.random.randint(len(coin_norm[tkr]))
-                            nr  = coin_norm[tkr][idx]
-                            week_pnl += capital * (mmc_risk / 100) * nr
-
-                        capital   += week_pnl
-                        n_weeks   += 1
-                        path.append(capital)
-                        peak = max(peak, capital)
-
-                        profit_pct  = (capital - mmc_cap) / mmc_cap * 100
-                        total_dd    = (capital - mmc_cap) / mmc_cap * 100
-                        daily_dd    = (capital - day_start) / day_start * 100 if day_start > 0 else 0
-                        day_start   = capital
-
-                        if profit_pct >= mmc_pt:
-                            passed = True; break
-                        if total_dd <= -mmc_tdd:
-                            disq = True; break
-                        if daily_dd <= -mmc_ddd:
-                            disq = True; break
-                        if n_weeks >= int(mmc_maxt):
-                            disq = True; break
-
+                    p1_ok, p1_w, p1_pct, p1_path = _mmc_phase(
+                        mmc_cap, mmc_pt_p1, coin_norm, active_tickers,
+                        mmc_risk, mmc_tdd, mmc_ddd, int(mmc_maxt))
+                    p2_ok, p2_w, p2_pct = False, 0, 0.0
+                    if p1_ok:
+                        p2_ok, p2_w, p2_pct, _ = _mmc_phase(
+                            mmc_cap, mmc_pt_p2, coin_norm, active_tickers,
+                            mmc_risk, mmc_tdd, mmc_ddd, int(mmc_maxt))
                     results_mmc.append({
-                        "passed": passed,
-                        "final_pct": profit_pct,
-                        "n_weeks": n_weeks,
+                        "p1_ok": p1_ok, "p1_weeks": p1_w, "p1_pct": p1_pct,
+                        "p2_ok": p2_ok, "p2_weeks": p2_w,
+                        "payout": p1_ok and p2_ok,
                     })
-                    paths_mmc.append(path)
-                    if passed:
-                        trades_to_fin.append(n_weeks)
+                    if sim_i < 200:
+                        paths_p1.append(p1_path)
                     mmc_prog.progress((sim_i + 1) / n_sims_mmc)
 
                 mmc_prog.progress(1.0, text="Multi-Coin Monte Carlo abgeschlossen ✓")
                 df_mmc = pd.DataFrame(results_mmc)
-                n_pass_mmc  = df_mmc["passed"].sum()
-                pass_pct_mmc = n_pass_mmc / n_sims_mmc * 100
-                n_disq_mmc  = n_sims_mmc - n_pass_mmc
 
-                # Ergebnis-Banner
-                color_mmc = "#22c55e" if pass_pct_mmc >= 40 else "#f59e0b" if pass_pct_mmc >= 20 else "#ef5350"
-                label_mmc = "SEHR GUT" if pass_pct_mmc >= 40 else "MACHBAR" if pass_pct_mmc >= 20 else "SCHWIERIG"
+                n_p1      = df_mmc["p1_ok"].sum()
+                n_p2      = df_mmc["p2_ok"].sum()
+                n_payout  = df_mmc["payout"].sum()
+                n_p1_fail = n_sims_mmc - n_p1
+                n_p2_fail = n_p1 - n_p2
+
+                p1_pct_v   = n_p1     / n_sims_mmc * 100
+                p2_cond_v  = n_p2     / n_p1       * 100 if n_p1 > 0 else 0
+                payout_v   = n_payout / n_sims_mmc * 100
+                avg_w_p1   = df_mmc.loc[df_mmc["p1_ok"],  "p1_weeks"].mean() if n_p1 > 0 else 0
+                avg_w_p2   = df_mmc.loc[df_mmc["p2_ok"],  "p2_weeks"].mean() if n_p2 > 0 else 0
+
+                # ── Payout-Badge ──────────────────────────────────────────
+                color_mmc = "#22c55e" if payout_v >= 30 else "#f59e0b" if payout_v >= 10 else "#ef5350"
+                label_mmc = "SEHR GUT" if payout_v >= 30 else "MACHBAR" if payout_v >= 10 else "SCHWIERIG"
+                coin_labels = " + ".join([all_names[t] for t in active_tickers])
                 st.markdown(f"""
-<div style="background:{color_mmc}22;border:1px solid {color_mmc};border-radius:8px;padding:12px 20px;margin:10px 0">
-<span style="color:{color_mmc};font-size:1.2em;font-weight:bold">{label_mmc} — {pass_pct_mmc:.1f}% der Simulationen bestanden</span>
+<div style="background:{color_mmc}22;border:2px solid {color_mmc};border-radius:10px;padding:14px 22px;margin:12px 0">
+<span style="color:{color_mmc};font-size:1.2em;font-weight:800">{label_mmc} — {payout_v:.1f}% Payout-Wahrscheinlichkeit</span>
 <br><small style="color:#ccc">{n_coins} Coins gleichzeitig · {mmc_risk}% Risiko/Coin/Woche · Korrelation berücksichtigt</small>
 </div>""", unsafe_allow_html=True)
 
-                mm1, mm2, mm3, mm4 = st.columns(4)
-                mm1.metric("Bestanden", f"{pass_pct_mmc:.1f}%", f"+{n_pass_mmc}/{n_sims_mmc}")
-                mm2.metric("Disqualifiziert", f"{100-pass_pct_mmc:.1f}%", f"-{n_disq_mmc}/{n_sims_mmc}", delta_color="inverse")
-                mm3.metric("Ø Wochen bis Ziel", f"{np.mean(trades_to_fin):.0f} Wo." if trades_to_fin else "—")
-                mm4.metric("Trades/Woche", f"{n_coins}")
+                # ── KPIs ──────────────────────────────────────────────────
+                mm1,mm2,mm3,mm4,mm5,mm6 = st.columns(6)
+                mm1.metric("Phase 1 besteht",  f"{p1_pct_v:.1f}%",  f"{n_p1}/{n_sims_mmc}")
+                mm2.metric("Phase 2 | P1 ok",  f"{p2_cond_v:.1f}%", f"{n_p2}/{n_p1 if n_p1 else '–'}")
+                mm3.metric("💰 Payout",          f"{payout_v:.1f}%",  f"{n_payout}/{n_sims_mmc}")
+                mm4.metric("Ø Wochen Phase 1",  f"{avg_w_p1:.0f} Wo." if avg_w_p1 > 0 else "–")
+                mm5.metric("Ø Wochen Phase 2",  f"{avg_w_p2:.0f} Wo." if avg_w_p2 > 0 else "–")
+                mm6.metric("Ø Gesamt",           f"{avg_w_p1+avg_w_p2:.0f} Wo." if (avg_w_p1+avg_w_p2) > 0 else "–")
 
-                # Vergleich Einzel vs Multi
-                single_pass = None
-                single_cache_key = f"btc_wfa_results_{_yf_ticker}_{btc_start}_{btc_end}_{is_months}_{oos_months}"
-                if "mc_last_pass_pct" in st.session_state:
-                    single_pass = st.session_state["mc_last_pass_pct"]
+                # ── Kreisdiagramm ─────────────────────────────────────────
+                fig_pie_m = go.Figure(go.Pie(
+                    labels=["❌ Phase 1 gescheitert", "⚠️ Phase 2 gescheitert", "💰 Payout erhalten"],
+                    values=[n_p1_fail, n_p2_fail, n_payout],
+                    marker=dict(colors=["#ef5350","#f0c040","#22c55e"],
+                                line=dict(color="#1a1a2e", width=2)),
+                    textinfo="label+percent", textfont=dict(size=12),
+                    hole=0.4, pull=[0, 0, 0.07],
+                ))
+                fig_pie_m.update_layout(
+                    title=f"Multi-Coin Challenge ({coin_labels}) — {n_sims_mmc} Simulationen",
+                    height=360, template="plotly_dark",
+                    legend=dict(orientation="h", y=-0.15),
+                    margin=dict(t=60, b=60, l=20, r=20),
+                    annotations=[dict(text=f"<b>{payout_v:.1f}%</b><br>Payout",
+                                      x=0.5, y=0.5, font_size=16,
+                                      font_color="#22c55e", showarrow=False)])
+                st.plotly_chart(fig_pie_m, use_container_width=True)
 
-                if single_pass is not None:
-                    delta = pass_pct_mmc - single_pass
-                    st.info(f"📊 Vergleich: Einzel-BTC: **{single_pass:.1f}%** → Multi-Coin ({n_coins}x): **{pass_pct_mmc:.1f}%** "
-                            f"({'↑ +' if delta >= 0 else '↓ '}{abs(delta):.1f}%)")
+                st.info(
+                    f"Phase 2 leichter als Phase 1 (Ziel {mmc_pt_p2}% statt {mmc_pt_p1}%) → "
+                    f"P(Phase 2 | Phase 1 ok) = **{p2_cond_v:.1f}%**. "
+                    f"Gesamtchance: {p1_pct_v:.1f}% × {p2_cond_v:.1f}% = **{payout_v:.1f}% Payout**.")
 
-                # Equity-Pfade Chart
-                fig_mmc = go.Figure()
-                for pi, path in enumerate(paths_mmc[:200]):
-                    passed_i = results_mmc[pi]["passed"]
-                    fig_mmc.add_trace(go.Scatter(
-                        y=path, mode="lines",
-                        line=dict(color="#22c55e" if passed_i else "#ef5350", width=0.5),
-                        opacity=0.3, showlegend=False))
-                fig_mmc.add_hline(y=mmc_cap * (1 + mmc_pt / 100),
-                                   line_color="#22c55e", line_dash="dot",
-                                   annotation_text=f"Ziel +{mmc_pt}%")
-                fig_mmc.add_hline(y=mmc_cap * (1 - mmc_tdd / 100),
-                                   line_color="#ef5350", line_dash="dot",
-                                   annotation_text=f"DD-Limit -{mmc_tdd}%")
-                coin_labels = " + ".join([all_names[t] for t in active_tickers])
-                fig_mmc.update_layout(
-                    title=f"Multi-Coin MC — {n_sims_mmc} Simulationen · {coin_labels}",
-                    height=420, template="plotly_dark",
-                    yaxis_title="Kapital ($)", xaxis_title="Wochen",
-                    margin=dict(t=50, b=30, l=70, r=100))
-                st.plotly_chart(fig_mmc, use_container_width=True)
+                # ── Phase-1-Pfade ─────────────────────────────────────────
+                if paths_p1:
+                    fig_mmc = go.Figure()
+                    for pi, path in enumerate(paths_p1):
+                        ok_i = results_mmc[pi]["p1_ok"]
+                        fig_mmc.add_trace(go.Scatter(
+                            y=path, mode="lines",
+                            line=dict(color="#22c55e" if ok_i else "#ef5350", width=0.5),
+                            opacity=0.25, showlegend=False))
+                    fig_mmc.add_hline(y=mmc_cap * (1 + mmc_pt_p1/100),
+                                       line_color="#22c55e", line_dash="dot",
+                                       annotation_text=f"Phase 1 Ziel +{mmc_pt_p1}%")
+                    fig_mmc.add_hline(y=mmc_cap * (1 - mmc_tdd/100),
+                                       line_color="#ef5350", line_dash="dot",
+                                       annotation_text=f"DD-Limit -{mmc_tdd}%")
+                    fig_mmc.update_layout(
+                        title=f"Phase 1 — Multi-Coin MC · {coin_labels}",
+                        height=400, template="plotly_dark",
+                        yaxis_title="Kapital ($)", xaxis_title="Wochen",
+                        margin=dict(t=50, b=30, l=70, r=130))
+                    st.plotly_chart(fig_mmc, use_container_width=True)
 
 
 def render_pdh_pdl_strategie() -> None:
