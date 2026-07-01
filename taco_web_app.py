@@ -5577,6 +5577,18 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             "base_params":     base_params,
             "grids":           (g_sl, g_ma, g_fm, g_tt, g_to),
         }
+        # Multi-Coin Cache: Trades für diesen Ticker speichern
+        try:
+            _mc_tr, _ = _momi_backtest_engine(df_raw.copy(), base_params)
+            if "wfa_coin_trades" not in st.session_state:
+                st.session_state["wfa_coin_trades"] = {}
+            st.session_state["wfa_coin_trades"][_yf_ticker] = {
+                "trades":       _mc_tr,
+                "symbol_name":  selected_name,
+                "base_params":  base_params,
+            }
+        except Exception:
+            pass
 
     # Ergebnisse aus Cache laden
     _cached = st.session_state[wfa_cache_key]
@@ -6312,6 +6324,187 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
             if n_real < 30:
                 st.warning(f"⚠️ Nur {n_real} echte Trades — Konfidenzintervall der {pass_pct:.0f}% ist breit (±15-20%). "
                            f"Mind. 50 Trades für verlässliche Aussagen.")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # MULTI-COIN MONTE CARLO
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("Multi-Coin Monte Carlo — Portfolio Challenge Simulator")
+    st.markdown("""
+Kombiniert die Trade-Historien **mehrerer Coins** in einer gemeinsamen Challenge-Simulation.
+Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeitig (Korrelation bleibt erhalten).
+    """)
+
+    coin_trades_all = st.session_state.get("wfa_coin_trades", {})
+
+    if len(coin_trades_all) < 2:
+        st.info(f"{'1 Coin gespeichert' if len(coin_trades_all) == 1 else 'Noch keine Coins gespeichert'}. "
+                f"Führe WFA für mindestens 2 Coins durch (z.B. BTC + ETH), dann erscheint hier die Multi-Coin Simulation.")
+        if coin_trades_all:
+            done_ticker = list(coin_trades_all.keys())[0]
+            done_name   = coin_trades_all[done_ticker]["symbol_name"]
+            st.success(f"✓ Bereits gespeichert: **{done_name}** ({len(coin_trades_all[done_ticker]['trades'])} Trades)")
+    else:
+        # Übersicht welche Coins verfügbar
+        st.markdown("**Verfügbare Coins (WFA abgeschlossen):**")
+        avail_cols = st.columns(min(len(coin_trades_all), 4))
+        for ci, (tkr, cdata) in enumerate(coin_trades_all.items()):
+            n_tr = len(cdata["trades"])
+            avail_cols[ci % 4].success(f"✓ **{cdata['symbol_name'].split('—')[0].strip()}**\n{n_tr} Trades")
+
+        # Coin-Auswahl für Multi-Simulation
+        all_names = {tkr: cdata["symbol_name"].split("—")[0].strip()
+                     for tkr, cdata in coin_trades_all.items()}
+        selected_tickers = st.multiselect(
+            "Coins für Multi-Simulation auswählen",
+            options=list(all_names.keys()),
+            default=list(all_names.keys()),
+            format_func=lambda t: all_names[t],
+            key="mc_multi_tickers"
+        )
+
+        if len(selected_tickers) < 2:
+            st.warning("Bitte mindestens 2 Coins auswählen.")
+        else:
+            # Parameter
+            mmc1, mmc2 = st.columns(2)
+            with mmc1:
+                st.markdown("**Challenge-Regeln**")
+                mmc_cap    = st.number_input("Startkapital ($)", 10_000, 200_000, 100_000, step=10_000, key="mmc_cap")
+                mmc_pt     = st.number_input("Profit-Ziel (%)", 1.0, 20.0, 8.0, step=0.5, key="mmc_pt")
+                mmc_tdd    = st.number_input("Max. Total Drawdown (%)", 1.0, 20.0, 10.0, step=0.5, key="mmc_tdd")
+                mmc_ddd    = st.number_input("Max. Daily Drawdown (%)", 0.5, 10.0, 5.0, step=0.5, key="mmc_ddd")
+            with mmc2:
+                st.markdown("**Simulation**")
+                mmc_sims   = st.number_input("Anzahl Simulationen", 500, 5000, 1000, step=500, key="mmc_sims")
+                mmc_maxt   = st.number_input("Max. Trades (Sicherheitsnetz)", 10, 1000, 300, step=50, key="mmc_maxt")
+                mmc_risk   = st.number_input("Risiko pro Trade pro Coin (%)", 0.1, 3.0, 0.5, step=0.1, key="mmc_risk",
+                                              help="z.B. 0.5% pro Coin × 4 Coins = 2% gesamt pro Woche")
+
+            run_mmc = st.button("▶ Multi-Coin Monte Carlo starten", type="primary", key="mmc_run_btn")
+            if run_mmc:
+                st.session_state["mmc_running"] = True
+            if st.session_state.get("mmc_running"):
+                st.session_state["mmc_running"] = False
+
+                mmc_prog = st.progress(0, text="Multi-Coin Monte Carlo läuft …")
+
+                # Trades pro Coin normieren
+                coin_norm = {}
+                for tkr in selected_tickers:
+                    tr = coin_trades_all[tkr]["trades"]
+                    if tr.empty:
+                        continue
+                    rets = tr["PnL $"].values
+                    wm = rets[rets > 0].mean() if (rets > 0).any() else 1
+                    lm = rets[rets <= 0].mean() if (rets <= 0).any() else -1
+                    coin_norm[tkr] = np.where(rets > 0, rets / wm, -rets / lm)
+
+                active_tickers = list(coin_norm.keys())
+                n_coins = len(active_tickers)
+
+                n_sims_mmc = int(mmc_sims)
+                results_mmc, paths_mmc, trades_to_fin = [], [], []
+
+                for sim_i in range(n_sims_mmc):
+                    capital   = float(mmc_cap)
+                    peak      = capital
+                    day_start = capital
+                    path      = [capital]
+                    n_weeks   = 0
+                    passed    = False
+                    disq      = False
+
+                    while True:
+                        # Jede "Woche": alle Coins handeln gleichzeitig
+                        week_pnl = 0.0
+                        for tkr in active_tickers:
+                            idx = np.random.randint(len(coin_norm[tkr]))
+                            nr  = coin_norm[tkr][idx]
+                            week_pnl += capital * (mmc_risk / 100) * nr
+
+                        capital   += week_pnl
+                        n_weeks   += 1
+                        path.append(capital)
+                        peak = max(peak, capital)
+
+                        profit_pct  = (capital - mmc_cap) / mmc_cap * 100
+                        total_dd    = (capital - mmc_cap) / mmc_cap * 100
+                        daily_dd    = (capital - day_start) / day_start * 100 if day_start > 0 else 0
+                        day_start   = capital
+
+                        if profit_pct >= mmc_pt:
+                            passed = True; break
+                        if total_dd <= -mmc_tdd:
+                            disq = True; break
+                        if daily_dd <= -mmc_ddd:
+                            disq = True; break
+                        if n_weeks >= int(mmc_maxt):
+                            disq = True; break
+
+                    results_mmc.append({
+                        "passed": passed,
+                        "final_pct": profit_pct,
+                        "n_weeks": n_weeks,
+                    })
+                    paths_mmc.append(path)
+                    if passed:
+                        trades_to_fin.append(n_weeks)
+                    mmc_prog.progress((sim_i + 1) / n_sims_mmc)
+
+                mmc_prog.progress(1.0, text="Multi-Coin Monte Carlo abgeschlossen ✓")
+                df_mmc = pd.DataFrame(results_mmc)
+                n_pass_mmc  = df_mmc["passed"].sum()
+                pass_pct_mmc = n_pass_mmc / n_sims_mmc * 100
+                n_disq_mmc  = n_sims_mmc - n_pass_mmc
+
+                # Ergebnis-Banner
+                color_mmc = "#22c55e" if pass_pct_mmc >= 40 else "#f59e0b" if pass_pct_mmc >= 20 else "#ef5350"
+                label_mmc = "SEHR GUT" if pass_pct_mmc >= 40 else "MACHBAR" if pass_pct_mmc >= 20 else "SCHWIERIG"
+                st.markdown(f"""
+<div style="background:{color_mmc}22;border:1px solid {color_mmc};border-radius:8px;padding:12px 20px;margin:10px 0">
+<span style="color:{color_mmc};font-size:1.2em;font-weight:bold">{label_mmc} — {pass_pct_mmc:.1f}% der Simulationen bestanden</span>
+<br><small style="color:#ccc">{n_coins} Coins gleichzeitig · {mmc_risk}% Risiko/Coin/Woche · Korrelation berücksichtigt</small>
+</div>""", unsafe_allow_html=True)
+
+                mm1, mm2, mm3, mm4 = st.columns(4)
+                mm1.metric("Bestanden", f"{pass_pct_mmc:.1f}%", f"+{n_pass_mmc}/{n_sims_mmc}")
+                mm2.metric("Disqualifiziert", f"{100-pass_pct_mmc:.1f}%", f"-{n_disq_mmc}/{n_sims_mmc}", delta_color="inverse")
+                mm3.metric("Ø Wochen bis Ziel", f"{np.mean(trades_to_fin):.0f} Wo." if trades_to_fin else "—")
+                mm4.metric("Trades/Woche", f"{n_coins}")
+
+                # Vergleich Einzel vs Multi
+                single_pass = None
+                single_cache_key = f"btc_wfa_results_{_yf_ticker}_{btc_start}_{btc_end}_{is_months}_{oos_months}"
+                if "mc_last_pass_pct" in st.session_state:
+                    single_pass = st.session_state["mc_last_pass_pct"]
+
+                if single_pass is not None:
+                    delta = pass_pct_mmc - single_pass
+                    st.info(f"📊 Vergleich: Einzel-BTC: **{single_pass:.1f}%** → Multi-Coin ({n_coins}x): **{pass_pct_mmc:.1f}%** "
+                            f"({'↑ +' if delta >= 0 else '↓ '}{abs(delta):.1f}%)")
+
+                # Equity-Pfade Chart
+                fig_mmc = go.Figure()
+                for pi, path in enumerate(paths_mmc[:200]):
+                    passed_i = results_mmc[pi]["passed"]
+                    fig_mmc.add_trace(go.Scatter(
+                        y=path, mode="lines",
+                        line=dict(color="#22c55e" if passed_i else "#ef5350", width=0.5),
+                        opacity=0.3, showlegend=False))
+                fig_mmc.add_hline(y=mmc_cap * (1 + mmc_pt / 100),
+                                   line_color="#22c55e", line_dash="dot",
+                                   annotation_text=f"Ziel +{mmc_pt}%")
+                fig_mmc.add_hline(y=mmc_cap * (1 - mmc_tdd / 100),
+                                   line_color="#ef5350", line_dash="dot",
+                                   annotation_text=f"DD-Limit -{mmc_tdd}%")
+                coin_labels = " + ".join([all_names[t] for t in active_tickers])
+                fig_mmc.update_layout(
+                    title=f"Multi-Coin MC — {n_sims_mmc} Simulationen · {coin_labels}",
+                    height=420, template="plotly_dark",
+                    yaxis_title="Kapital ($)", xaxis_title="Wochen",
+                    margin=dict(t=50, b=30, l=70, r=100))
+                st.plotly_chart(fig_mmc, use_container_width=True)
 
 
 def render_pdh_pdl_strategie() -> None:
