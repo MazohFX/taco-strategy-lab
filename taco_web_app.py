@@ -5237,6 +5237,22 @@ def render_btc_wfa() -> None:
     import datetime as _dt
     from itertools import product as _prod
 
+    _symbol_map_early = {
+        "BTC — Bitcoin":       ("BTC-USD",  _dt.date(2018, 1, 1)),
+        "ETH — Ethereum":      ("ETH-USD",  _dt.date(2018, 1, 1)),
+        "SOL — Solana":        ("SOL-USD",  _dt.date(2020, 4, 1)),
+        "XRP — Ripple":        ("XRP-USD",  _dt.date(2018, 1, 1)),
+        "ADA — Cardano":       ("ADA-USD",  _dt.date(2018, 1, 1)),
+        "DOGE — Dogecoin":     ("DOGE-USD", _dt.date(2018, 1, 1)),
+        "AVAX — Avalanche":    ("AVAX-USD", _dt.date(2020, 9, 1)),
+        "LINK — Chainlink":    ("LINK-USD", _dt.date(2019, 1, 1)),
+    }
+    _early_key = st.session_state.get("btc_symbol", "BTC — Bitcoin")
+    if _early_key not in _symbol_map_early:
+        _early_key = "BTC — Bitcoin"
+    selected_name = _early_key
+    _yf_ticker, _default_start = _symbol_map_early[selected_name]
+
     st.header(f"{selected_name.split('—')[0].strip()} WeekdayMA — Walk-Forward Analyse")
 
     with st.expander("ℹ️ Was wird hier getestet und wie funktioniert es?", expanded=False):
