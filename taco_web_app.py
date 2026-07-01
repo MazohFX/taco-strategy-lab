@@ -5243,25 +5243,37 @@ def render_btc_wfa() -> None:
 
 ---
 
-**Walk-Forward Analyse (WFA) — was das bedeutet:**
+**Walk-Forward Analyse (WFA) — wie es funktioniert:**
 
-Die WFA verhindert Overfitting: Parameter werden nur auf historischen Daten optimiert und dann blind auf ungesehenen Daten getestet.
+Der gesamte Zeitraum (z.B. 2018–2026) wird in mehrere **Folds** aufgeteilt. Jeder Fold besteht aus zwei Phasen:
 
-| Phase | Was passiert |
-|-------|-------------|
-| **In-Sample (IS)** | Grid-Search über alle Parameter-Kombinationen — welche Einstellungen performen am besten auf dem Trainings-Zeitraum? |
-| **Out-of-Sample (OOS)** | Die beste IS-Kombination wird auf dem **folgenden, unbekannten** Zeitraum getestet — unverändert, kein Re-Fitting |
-| **Fold** | IS + OOS zusammen bilden einen "Fold". Das Fenster verschiebt sich dann um die OOS-Länge nach vorne |
+```
+Fold 1: [2018–2019 optimieren (IS)] → [2019–2020 blind testen (OOS)]
+Fold 2: [2019–2020 optimieren (IS)] → [2020–2021 blind testen (OOS)]
+Fold 3: [2020–2021 optimieren (IS)] → [2021–2022 blind testen (OOS)]
+... usw.
+```
 
-**Wann gilt eine Strategie als ROBUST?**
-- Mindestens X von N Folds müssen im OOS profitabel sein (PF > 1.0 und Rendite > 0)
-- Die Parameter-Stabilitätsanalyse zeigt, welche SL / Trailing-Kombinationen **konsistent über alle Folds** gut funktionieren — nicht nur in einer Periode
+- **In-Sample (IS):** Das System testet automatisch hunderte Parameter-Kombinationen und findet die beste für diesen Zeitraum
+- **Out-of-Sample (OOS):** Diese beste Kombination wird auf dem **nächsten, unbekannten** Zeitraum getestet — ohne Anpassung
+- **Die entscheidende Frage:** Sind die besten Parameter über alle Folds ähnlich? Funktionieren sie auch blind?
+  - ✅ **Ja → ROBUST** — die Strategie hat eine echte Edge, kein Zufall
+  - ❌ **Nein → OVERFITTED** — die Parameter funktionieren nur auf den Trainingsdaten, nicht in der Realität
+
+---
+
+**Was bedeuten die WFA-Ergebnisse für TradingView?**
+
+Wenn der WFA z.B. `EMA 50 + SL 1.8% + Trail 0.3%` als stabile Kombination identifiziert, bedeutet das: **Diese Parameter haben in mehreren unabhängigen Zeiträumen funktioniert** — nicht nur einmal zufällig.
+
+Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig:** TradingView macht dann keinen WFA — es ist ein normaler Backtest mit fixen Parametern. TradingView dient nur zur visuellen Kontrolle (Chart, Trades, Equity-Kurve). Den Robustheitstest hat Python bereits erledigt.
+
+---
 
 **Warum unterscheidet sich die Tradeanzahl von TradingView?**
-- Python nutzt **Daily-Daten**: 1 Bar = 1 Tag, Entry immer am Tagesschlusskurs des Sonntags
-- TradingView nutzt **4H-Daten**: Entry nur wenn die exakte Uhrzeit (z.B. 20:00) getroffen wird
-- Außerdem reagieren EMA und ADX auf Daily vs. 4H unterschiedlich → andere Filterquote
-- **Grundregel:** Mehr Trades ≠ besser. Qualität der Trades entscheidet die Win-Rate
+- Python nutzt **Daily-Daten**: 1 Bar = 1 Tag, Entry am Tagesschlusskurs des Sonntags
+- TradingView nutzt **4H-Daten**: Entry nur wenn die exakte Uhrzeit getroffen wird + EMA/ADX reagiert feiner
+- **Grundregel:** Mehr Trades ≠ besser. Qualität entscheidet die Win-Rate — TradingView filtert strenger
         """)
 
     st.caption("Strategie: Sonntag-Entry / Montag-Exit auf BTC · Daily-Daten via yfinance · Rollierender IS/OOS-Test")
