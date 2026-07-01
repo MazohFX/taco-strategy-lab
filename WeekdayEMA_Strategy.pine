@@ -4,8 +4,14 @@
 // Entry: Wochentag + Uhrzeit + MA-Filter (EMA/SMA) + optionaler ADX-Trendfilter
 // Exit:  zeitbasiert ODER Stop-Loss ODER Trailing-Stop (was zuerst eintritt)
 //
-// WICHTIG: 15m, 30m oder 1H Chart verwenden damit die
-// eingestellte Uhrzeit als eigene Bar existiert.
+// H4-KOMPATIBLE ZEITEN (UTC — funktioniert immer, kein Sommer/Winterzeit-Problem):
+//   Gültige H4-Eröffnungen: 00:00 · 04:00 · 08:00 · 12:00 · 16:00 · 20:00 UTC
+//
+//   Berlin Sommer (CEST +2): 02 · 06 · 10 · 14 · 18 · 22 Uhr
+//   Berlin Winter (CET  +1): 01 · 05 · 09 · 13 · 17 · 21 Uhr
+//
+// EMPFEHLUNG: Zeitzone auf UTC lassen, Stunden in UTC eintragen.
+// Für 1H Chart: jede Stunde möglich — Zeitzone nach Wunsch.
 // ============================================================
 strategy(
     title             = "WeekdayMA Long Strategy",
@@ -19,12 +25,14 @@ strategy(
 // INPUTS
 // ============================================================
 
-i_entryDay    = input.string("Montag",    "Entry-Tag",           options=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"], group="Entry")
-i_entryHour   = input.int(15,             "Entry-Stunde (0-23)", minval=0, maxval=23, group="Entry")
+i_entryDay    = input.string("Sonntag",   "Entry-Tag",           options=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"], group="Entry")
+i_entryHour   = input.int(8,              "Entry-Stunde UTC (H4: 0/4/8/12/16/20)", minval=0, maxval=23, group="Entry",
+     tooltip="H4-kompatible Stunden in UTC: 0, 4, 8, 12, 16, 20\nBeispiel: 8 UTC = 10 Uhr Berlin Sommer / 9 Uhr Berlin Winter")
 i_entryMinute = input.int(0,              "Entry-Minute (0-59)", minval=0, maxval=59, group="Entry")
 
-i_exitDay     = input.string("Mittwoch",  "Exit-Tag",            options=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"], group="Exit")
-i_exitHour    = input.int(17,             "Exit-Stunde (0-23)",  minval=0, maxval=23, group="Exit")
+i_exitDay     = input.string("Montag",    "Exit-Tag",            options=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"], group="Exit")
+i_exitHour    = input.int(16,             "Exit-Stunde UTC (H4: 0/4/8/12/16/20)",  minval=0, maxval=23, group="Exit",
+     tooltip="H4-kompatible Stunden in UTC: 0, 4, 8, 12, 16, 20\nBeispiel: 16 UTC = 18 Uhr Berlin Sommer / 17 Uhr Berlin Winter")
 i_exitMinute  = input.int(0,              "Exit-Minute (0-59)",  minval=0, maxval=59, group="Exit")
 
 // MA-Typ: EMA oder SMA wählbar -> ermöglicht direkten Vergleich
@@ -47,7 +55,8 @@ i_lookback    = input.int(5, "Crossover Lookback (Bars)", minval=1, maxval=20,
      tooltip="Nur relevant bei 'Crossover (letzte 5 Bars)'",
      group="Indikator")
 
-i_tz          = input.string("Europe/Berlin", "Zeitzone", options=["Europe/Berlin","America/New_York","UTC"], group="Zeitzone")
+i_tz          = input.string("UTC", "Zeitzone", options=["UTC","Europe/Berlin","America/New_York"], group="Zeitzone",
+     tooltip="UTC empfohlen für H4-Charts — funktioniert ohne Sommer/Winterzeit-Umrechnung")
 
 // --- ADX-Trendstärkefilter ---
 i_useAdx    = input.bool(true, "ADX-Trendfilter aktivieren", group="Trendfilter")
