@@ -5900,29 +5900,40 @@ So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **
         if not ensemble_stability:
             st.error("Keine Ensemble-Ergebnisse — Grid oder Zeitraum anpassen.")
         else:
+            # Buy & Hold Referenz für den gesamten Zeitraum
+            bh_start_price = float(df_raw["Close"].iloc[0])
+            bh_end_price   = float(df_raw["Close"].iloc[-1])
+            bh_total_ret   = (bh_end_price / bh_start_price - 1) * 100
+            tested_period  = f"{df_raw.index[0].date()} – {df_raw.index[-1].date()}"
+
             ens_rows = []
+            ens_raw_params = {}  # key=rank → raw param dict für Backtest
             for (sl_, tt_, to_, ma_, fm_), results in ensemble_stability.items():
                 if len(results) < 3:
                     continue
                 pfs    = [r["pf"]        for r in results if r["n"] > 0]
                 rets   = [r["total_ret"] for r in results if r["n"] > 0]
                 sharps = [r["sharpe"]    for r in results if r["n"] > 0]
+                trades_list = [r["n"]    for r in results if r["n"] > 0]
+                avg_ret_list = [r.get("avg_ret", 0) for r in results if r["n"] > 0]
                 if not pfs:
                     continue
-                n_pos  = sum(1 for r in rets if r > 0)
-                n_tot  = len(results)
+                n_pos = sum(1 for r in rets if r > 0)
+                n_tot = len(results)
                 ens_rows.append({
+                    "_sl": sl_, "_tt": tt_, "_to": to_, "_ma": ma_, "_fm": fm_,
                     "SL %":             f"{sl_:.2f}%",
                     "Trail-Trig %":     f"{tt_:.2f}%",
                     "Trail-Off %":      f"{to_:.2f}%",
                     "MA":               f"{ma_}",
                     "Filter":           fm_,
-                    "Getestete Folds":  n_tot,
-                    "Profitable Folds": n_pos,
                     "Konsistenz %":     round(n_pos / n_tot * 100, 0),
                     "Ø OOS PF":         round(np.mean(pfs), 2),
-                    "Ø OOS Ret %":      f"{round(np.mean(rets), 2):.2f}%",
+                    "Ø OOS Ret %":      round(np.mean(rets), 2),
+                    "Ø Profit/Trade %": round(np.mean(avg_ret_list), 3) if avg_ret_list else 0,
                     "Ø OOS Sharpe":     round(np.mean(sharps), 2),
+                    "Getestete Folds":  n_tot,
+                    "Zeitraum":         tested_period,
                 })
 
             if ens_rows:
@@ -5930,12 +5941,18 @@ So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **
                     ["Konsistenz %", "Ø OOS PF"], ascending=[False, False]
                 ).reset_index(drop=True)
 
-                st.success(f"**Ensemble abgeschlossen** — {int(n_rows := len(df_ens))} Kombinationen über {int(n_runs)} Läufe analysiert")
+                st.success(f"**Ensemble abgeschlossen** — {len(df_ens)} Kombinationen über {int(n_runs)} Läufe · Zeitraum: {tested_period}")
 
-                st.markdown(f"#### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
-                st.caption("Diese Parameter haben über ALLE Läufe mit versetzten Startdaten konsistent funktioniert — das ist das robusteste Ergebnis.")
+                # ── Top-10 Tabelle ────────────────────────────────────────────
+                st.markdown(f"### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
+                st.caption(f"Zeitraum: **{tested_period}** · Buy & Hold BTC in diesem Zeitraum: **{bh_total_ret:+.1f}%**")
 
-                top10_ens = df_ens.head(10)
+                display_cols = ["SL %","Trail-Trig %","Trail-Off %","MA","Filter",
+                                "Konsistenz %","Ø OOS PF","Ø OOS Ret %","Ø Profit/Trade %","Ø OOS Sharpe","Zeitraum"]
+                top10_ens = df_ens.head(10)[display_cols].copy()
+                top10_ens["Ø OOS Ret %"]      = top10_ens["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%")
+                top10_ens["Ø Profit/Trade %"] = top10_ens["Ø Profit/Trade %"].apply(lambda v: f"{v:.3f}%")
+
                 def _hl_k(v):
                     if not isinstance(v, (int, float)): return ""
                     if v >= 80: return "color:#22c55e;font-weight:700"
@@ -5946,19 +5963,77 @@ So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **
 
                 best_ens = df_ens.iloc[0]
                 st.success(
-                    f"**Robustestes Setup (Ensemble):** "
-                    f"SL {best_ens['SL %']} · "
-                    f"Trail-Trigger {best_ens['Trail-Trig %']} · "
-                    f"Trail-Abstand {best_ens['Trail-Off %']} · "
+                    f"**Robustestes Setup:** SL {best_ens['SL %']} · "
+                    f"Trail-Trigger {best_ens['Trail-Trig %']} · Trail-Abstand {best_ens['Trail-Off %']} · "
                     f"MA {best_ens['MA']} · Filter: {best_ens['Filter']} → "
-                    f"**{int(best_ens['Konsistenz %'])}% Konsistenz** über {int(n_runs)} Läufe · "
-                    f"Ø OOS PF {best_ens['Ø OOS PF']} · Ø OOS Ret {best_ens['Ø OOS Ret %']}"
+                    f"**{int(best_ens['Konsistenz %'])}% Konsistenz** · "
+                    f"Ø OOS PF {best_ens['Ø OOS PF']} · Ø OOS Ret {best_ens['Ø OOS Ret %']:.2f}%"
                 )
 
-                # Heatmap Ensemble
+                # ── Equity Kurve vs Buy & Hold für Top-10 ────────────────────
+                st.markdown("### Equity Kurve vs Buy & Hold — Top-10 Setups")
+                st.caption("Strategie (orange) vs reines BTC halten (blau) über den gesamten Testzeitraum")
+
+                bh_equity = df_raw["Close"] / df_raw["Close"].iloc[0] * 10_000
+
+                for rank, row in df_ens.head(10).iterrows():
+                    p_full = {**base_params,
+                              "sl_pct":      row["_sl"],
+                              "ma_period":   int(row["_ma"]),
+                              "filter_mode": row["_fm"],
+                              "trail_trig":  row["_tt"],
+                              "trail_off":   row["_to"]}
+                    try:
+                        tr_f, eq_f = _momi_backtest_engine(df_raw.copy(), p_full)
+                        m_f = _momi_metrics(tr_f, eq_f)
+                    except Exception:
+                        continue
+
+                    total_ret_f = m_f["total_ret"]
+                    label = (f"#{rank+1} · SL {row['SL %']} · Trail {row['Trail-Trig %']} · "
+                             f"MA {row['MA']} · {row['Filter']}")
+
+                    with st.expander(f"#{rank+1} — Rendite: {total_ret_f:+.1f}% vs Buy&Hold: {bh_total_ret:+.1f}% · {label}"):
+                        # KPI-Zeile
+                        k1,k2,k3,k4,k5 = st.columns(5)
+                        k1.metric("Gesamt-Rendite",  f"{total_ret_f:+.1f}%")
+                        k2.metric("Buy & Hold",      f"{bh_total_ret:+.1f}%")
+                        k3.metric("Outperformance",  f"{total_ret_f - bh_total_ret:+.1f}%")
+                        k4.metric("Trades",          m_f["n"])
+                        k5.metric("Profit Factor",   f"{m_f['pf']:.2f}")
+
+                        k6,k7,k8 = st.columns(3)
+                        k6.metric("Win-Rate",        f"{m_f['wr']:.1f}%")
+                        k7.metric("Max Drawdown",    f"{m_f['max_dd']:.1f}%")
+                        k8.metric("Sharpe",          f"{m_f['sharpe']:.2f}")
+
+                        # Chart
+                        fig_vs = go.Figure()
+                        fig_vs.add_trace(go.Scatter(
+                            x=bh_equity.index, y=bh_equity.values,
+                            name="Buy & Hold BTC",
+                            line=dict(color="#4a9eff", width=2),
+                            fill="tozeroy", fillcolor="rgba(74,158,255,0.05)"))
+                        fig_vs.add_trace(go.Scatter(
+                            x=eq_f.index, y=eq_f.values,
+                            name="Strategie",
+                            line=dict(color="#f7931a", width=2.5),
+                            fill="tozeroy", fillcolor="rgba(247,147,26,0.1)"))
+                        fig_vs.add_hline(y=10_000, line_color="white",
+                                         line_dash="dash", line_width=1)
+                        fig_vs.update_layout(
+                            title=f"Setup #{rank+1}: {label}",
+                            height=350, template="plotly_dark",
+                            yaxis_title="Kapital (€)",
+                            legend=dict(orientation="h", y=1.05),
+                            margin=dict(t=50, b=20, l=60, r=20))
+                        st.plotly_chart(fig_vs, use_container_width=True)
+
+                # ── Heatmap ───────────────────────────────────────────────────
+                st.markdown("### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
                 pivot_ens = df_ens.copy()
-                pivot_ens["SL_num"]  = pivot_ens["SL %"].str.replace("%","").astype(float)
-                pivot_ens["TT_num"]  = pivot_ens["Trail-Trig %"].str.replace("%","").astype(float)
+                pivot_ens["SL_num"] = pivot_ens["SL %"].str.replace("%","").astype(float)
+                pivot_ens["TT_num"] = pivot_ens["Trail-Trig %"].str.replace("%","").astype(float)
                 heat_ens = pivot_ens.pivot_table(
                     values="Konsistenz %", index="SL_num", columns="TT_num", aggfunc="mean").round(0)
                 fig_heat_ens = go.Figure(go.Heatmap(
@@ -5968,16 +6043,15 @@ So entstehen echte, unterschiedliche Folds — und du siehst welche Parameter **
                     colorscale="RdYlGn", zmin=0, zmax=100,
                     text=heat_ens.values.round(0).astype(str),
                     texttemplate="%{text}%", showscale=True,
-                    colorbar=dict(title="Konsistenz %")
-                ))
+                    colorbar=dict(title="Konsistenz %")))
                 fig_heat_ens.update_layout(
-                    title=f"Ensemble-Konsistenz: SL% × Trail-Trigger% (über {int(n_runs)} Läufe)",
+                    title=f"Ensemble-Konsistenz über {int(n_runs)} Läufe",
                     height=350, template="plotly_dark",
                     margin=dict(t=50, b=30, l=80, r=20))
                 st.plotly_chart(fig_heat_ens, use_container_width=True)
 
                 st.download_button("⬇️ Ensemble-Ergebnis als CSV",
-                                   data=df_ens.to_csv(index=False).encode(),
+                                   data=df_ens[display_cols].to_csv(index=False).encode(),
                                    file_name="btc_ensemble_wfa.csv", mime="text/csv")
 
 
