@@ -4819,9 +4819,10 @@ def _momi_metrics(df_trades: pd.DataFrame, equity: pd.Series) -> dict:
     ps  = df_trades["PnL $"]
     sharpe = (ps.mean() / ps.std() * np.sqrt(252)) if ps.std() > 0 else 0
     total_ret = (equity.iloc[-1] - equity.iloc[0]) / equity.iloc[0] * 100
+    avg_ret   = df_trades["PnL $"].mean() / equity.iloc[0] * 100 if n > 0 else 0
     return {"n": n, "wr": round(wr,1), "pf": round(pf,3),
             "sharpe": round(sharpe,3), "max_dd": round(dd.min(),2),
-            "total_ret": round(total_ret,2)}
+            "total_ret": round(total_ret,2), "avg_ret": round(avg_ret,3)}
 
 
 def render_yen_momi_strategie() -> None:
@@ -5501,7 +5502,7 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
                              "OOS": f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
                              "Bester SL":"–","Bestes MA":"–","Bester FM":"–",
                              "IS Trades":0,"IS PF":"–","IS Sharpe":"–",
-                             "OOS Trades":0,"OOS PF":"–","OOS Ret %":"–","OOS Sharpe":"–",
+                             "OOS Trades":0,"OOS PF":"–","OOS Ret %":"–","Ø Ret/Trade %":"–","OOS Sharpe":"–",
                              "Status":"⚠️ Kein IS-Ergebnis"})
             continue
 
@@ -5523,11 +5524,12 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             "IS Trades":  m_is["n"],
             "IS PF":      m_is["pf"],
             "IS Sharpe":  m_is["sharpe"],
-            "OOS Trades": m_oos["n"],
-            "OOS PF":     m_oos["pf"],
-            "OOS Ret %":  m_oos["total_ret"],
-            "OOS Sharpe": m_oos["sharpe"],
-            "Status":     "✅ Bestanden" if ok else "❌ Fail",
+            "OOS Trades":    m_oos["n"],
+            "OOS PF":        m_oos["pf"],
+            "OOS Ret %":     m_oos["total_ret"],
+            "Ø Ret/Trade %": m_oos["avg_ret"],
+            "OOS Sharpe":    m_oos["sharpe"],
+            "Status":        "✅ Bestanden" if ok else "❌ Fail",
         })
 
     progress.progress(1.0, text="Walk-Forward abgeschlossen ✓")
@@ -5574,7 +5576,7 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         if isinstance(v, (int,float)):
             return "color:#22c55e" if v > 0 else "color:#ef5350"
         return ""
-    num_cols = [c for c in ["OOS Ret %","OOS PF","OOS Sharpe"] if c in wfa_df.columns]
+    num_cols = [c for c in ["OOS Ret %","OOS PF","OOS Sharpe","Ø Ret/Trade %"] if c in wfa_df.columns]
     styled = wfa_df.style\
         .map(_color_status, subset=["Status"])\
         .map(_color_num,    subset=num_cols)
