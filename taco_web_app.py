@@ -5708,11 +5708,11 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
             # Bestes Setup hervorheben
             best = df_stab.iloc[0]
             st.success(
-                f"**Stabilstes Setup:** SL {best['SL %']}% · "
-                f"Trail-Trigger {best['Trail-Trig %']}% · Trail-Abstand {best['Trail-Off %']}% · "
+                f"**Stabilstes Setup:** SL {best['SL %']} · "
+                f"Trail-Trigger {best['Trail-Trig %']} · Trail-Abstand {best['Trail-Off %']} · "
                 f"MA {best['MA']} · Filter: {best['Filter']} → "
                 f"**{int(best['Konsistenz %'])}% Konsistenz** · "
-                f"Ø OOS PF {best['Ø OOS PF']} · Ø OOS Ret {best['Ø OOS Ret %']}%"
+                f"Ø OOS PF {best['Ø OOS PF']} · Ø OOS Ret {best['Ø OOS Ret %']}"
             )
 
             # Download
