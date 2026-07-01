@@ -5233,11 +5233,11 @@ def render_yen_momi_strategie() -> None:
 
 
 def render_btc_wfa() -> None:
-    """BTC WeekdayMA WFA — Sonntag Entry / Montag Exit auf BTC-USD Daily."""
+    """Crypto WeekdayMA WFA — Sonntag Entry / Montag Exit auf BTC-USD Daily."""
     import datetime as _dt
     from itertools import product as _prod
 
-    st.header("BTC WeekdayMA — Walk-Forward Analyse")
+    st.header(f"{selected_name.split('—')[0].strip()} WeekdayMA — Walk-Forward Analyse")
 
     with st.expander("ℹ️ Was wird hier getestet und wie funktioniert es?", expanded=False):
         st.markdown("""
@@ -5281,16 +5281,28 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
 - **Grundregel:** Mehr Trades ≠ besser. Qualität entscheidet die Win-Rate — TradingView filtert strenger
         """)
 
-    st.caption("Strategie: Sonntag-Entry / Montag-Exit auf BTC · Daily-Daten via yfinance · Rollierender IS/OOS-Test")
+    st.caption(f"Strategie: Sonntag-Entry / Montag-Exit auf {_yf_ticker} · Daily-Daten via yfinance · Rollierender IS/OOS-Test")
 
     # ════════════════════════════════════════════════════════════════════════
     # SIDEBAR — Strategie-Parameter (vorausgefüllt mit TradingView-Bestresultat)
     # ════════════════════════════════════════════════════════════════════════
     with st.sidebar:
         st.markdown("---")
-        st.subheader("BTC WFA: Parameter")
-        btc_start = st.date_input("Daten ab", _dt.date(2018, 1, 1), key="btc_start")
-        btc_end   = st.date_input("Daten bis", _dt.date.today(),    key="btc_end")
+        st.subheader("Crypto WFA: Parameter")
+        _symbol_map = {
+            "BTC — Bitcoin":       ("BTC-USD",  _dt.date(2018, 1, 1)),
+            "ETH — Ethereum":      ("ETH-USD",  _dt.date(2018, 1, 1)),
+            "SOL — Solana":        ("SOL-USD",  _dt.date(2020, 4, 1)),
+            "XRP — Ripple":        ("XRP-USD",  _dt.date(2018, 1, 1)),
+            "ADA — Cardano":       ("ADA-USD",  _dt.date(2018, 1, 1)),
+            "DOGE — Dogecoin":     ("DOGE-USD", _dt.date(2018, 1, 1)),
+            "AVAX — Avalanche":    ("AVAX-USD", _dt.date(2020, 9, 1)),
+            "LINK — Chainlink":    ("LINK-USD", _dt.date(2019, 1, 1)),
+        }
+        selected_name = st.selectbox("Symbol", list(_symbol_map.keys()), key="btc_symbol")
+        _yf_ticker, _default_start = _symbol_map[selected_name]
+        btc_start = st.date_input("Daten ab", _default_start, key="btc_start")
+        btc_end   = st.date_input("Daten bis", _dt.date.today(), key="btc_end")
 
     # ── Strategie-Parameter ──────────────────────────────────────────────
     st.subheader("Strategie-Parameter")
@@ -5370,11 +5382,11 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         st.error("`pip install yfinance` fehlt.")
         return
 
-    cache_key = f"btc_df_{btc_start}_{btc_end}"
+    cache_key = f"btc_df_{_yf_ticker}_{btc_start}_{btc_end}"
     if cache_key not in st.session_state or run_btn:
-        with st.spinner("BTC-USD Daily-Daten laden …"):
+        with st.spinner(f"{_yf_ticker} Daily-Daten laden …"):
             st.session_state[cache_key] = yf.download(
-                "BTC-USD", start=str(btc_start), end=str(btc_end),
+                _yf_ticker, start=str(btc_start), end=str(btc_end),
                 interval="1d", auto_adjust=True, progress=False)
     df_raw = st.session_state[cache_key]
 
@@ -5455,7 +5467,7 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
     st.info(f"**{len(folds)} Folds** · IS {is_months}M / OOS {oos_months}M  "
             f"· Grid-Größe: {len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)} Kombinationen je Fold")
 
-    wfa_cache_key = f"btc_wfa_results_{btc_start}_{btc_end}_{is_months}_{oos_months}"
+    wfa_cache_key = f"btc_wfa_results_{_yf_ticker}_{btc_start}_{btc_end}_{is_months}_{oos_months}"
 
     if run_btn or wfa_cache_key not in st.session_state:
         progress = st.progress(0, text="Walk-Forward läuft …")
@@ -6681,7 +6693,7 @@ def render_muster_analyse() -> None:
     st.rerun()
 
 
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "BTC WeekdayMA WFA"], horizontal=False, label_visibility="collapsed")
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA"], horizontal=False, label_visibility="collapsed")
 
 if test_mode == "Seasonality Lab":
     render_seasonality_lab()
@@ -6699,7 +6711,7 @@ if test_mode == "Yen Mo-Mi Strategie":
     render_yen_momi_strategie()
     st.stop()
 
-if test_mode == "BTC WeekdayMA WFA":
+if test_mode == "Crypto WeekdayMA WFA":
     render_btc_wfa()
     st.stop()
 
