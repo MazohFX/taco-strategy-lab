@@ -11,6 +11,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from edge_validation import evaluate_edge, kelly_position_size
+
 
 # ── Muster-Notizen (JSON-Persistenz) ─────────────────────────────────────────
 _NOTES_FILE = Path(__file__).parent / "pattern_notes.json"
@@ -1595,6 +1597,74 @@ def _render_muster_detail() -> None:
                    _ampel_html("15J",_fenster_data(tdf_15)),_ampel_html("20J",_fenster_data(tdf_20))])
         + '</div>', unsafe_allow_html=True)
 
+    # ── Edge-Validierung (statistische Handelbarkeits-Prüfung) ───────────────
+    st.markdown("### 📐 Edge-Validierung")
+    _edge_trades = pd.DataFrame({"pnl": (tdf["Netto Return %"] / 100.0).tolist()})
+    _edge_result = evaluate_edge(_edge_trades, min_trades=200, alpha=0.05, min_sharpe_oos=1.0)
+
+    _status_style = {
+        "handelbar":       ("#4ade80", "🟢 Handelbar"),
+        "grenzwertig":     ("#f0c040", "🟡 Grenzwertig"),
+        "nicht handelbar": ("#f87171", "🔴 Nicht handelbar"),
+    }
+    _ev_farbe, _ev_label = _status_style[_edge_result["status"]]
+    _ev_p = _edge_result["p_value"]
+    _ev_sharpe = _edge_result["sharpe_oos"]
+    _ev_wlo, _ev_whi = _edge_result["wilson_ci"]
+    _ev_p_str = "n/a" if math.isnan(_ev_p) else f"{_ev_p:.4f}"
+    _ev_sharpe_str = "n/a" if math.isnan(_ev_sharpe) else f"{_ev_sharpe:.2f}"
+
+    st.markdown(
+        f"""<div style="background:#0a1220;border:1px solid {_ev_farbe}55;border-radius:8px;
+        padding:14px 18px;margin-bottom:14px;">
+          <span style="background:{_ev_farbe}22;border:1px solid {_ev_farbe}55;border-radius:6px;
+            padding:4px 12px;color:{_ev_farbe};font-weight:800;font-size:1rem;">{_ev_label}</span>
+          <span style="color:#9fb0c7;font-size:.85rem;margin-left:12px;">
+            n={_edge_result['n_trades']} · p={_ev_p_str}
+            · Sharpe OOS={_ev_sharpe_str}
+            · Wilson-CI Winrate=[{_ev_wlo*100:.1f}%, {_ev_whi*100:.1f}%]
+          </span>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    if _edge_result["reasons"]:
+        st.caption("⚠️ " + " · ".join(_edge_result["reasons"]))
+
+    if _edge_result["status"] != "nicht handelbar":
+        _kelly_balance = st.number_input(
+            "Kontostand für Sizing-Empfehlung (€)", 100.0, 10_000_000.0, 10_000.0, step=100.0,
+            key=f"ev_balance_{symbol_str}_{row['Entry']}",
+        )
+        _net_returns = (tdf["Netto Return %"] / 100.0)
+        _wins = _net_returns[_net_returns > 0]
+        _losses = _net_returns[_net_returns <= 0]
+        _win_rate = len(_wins) / len(_net_returns) if len(_net_returns) > 0 else 0.0
+        _avg_win = float(_wins.mean()) if len(_wins) > 0 else 0.0
+        _avg_loss = float(abs(_losses.mean())) if len(_losses) > 0 else 0.0
+        _rr_ratio = _avg_win / _avg_loss if _avg_loss > 0 else 0.0
+
+        if _rr_ratio > 0:
+            _kelly = kelly_position_size(
+                win_rate=_win_rate,
+                reward_risk_ratio=_rr_ratio,
+                account_balance=_kelly_balance,
+                kelly_fraction=0.25,
+                max_risk_pct=0.01,
+                n_trades_used=_edge_result["n_trades"],
+                min_trades=200,
+            )
+            _risk_amount = _kelly["risk_amount"]
+            _lots = _risk_amount / (_kostenpuffer * _kelly_balance) if _kostenpuffer > 0 else float("nan")
+            st.info(
+                f"**Empfohlene Positionsgröße:** {_kelly['risk_pct_used']*100:.2f}% Risiko "
+                f"bzw. {_risk_amount:.2f}€ bei Kontostand {_kelly_balance:,.0f}€ "
+                f"(Quarter-Kelly{', gecappt auf PropFirm-Limit 1%' if _kelly['capped'] else ''})."
+            )
+            if _kelly["warning"]:
+                st.warning(_kelly["warning"])
+        else:
+            st.caption("Kelly-Sizing nicht berechenbar (kein Verlust-Trade in der Stichprobe).")
+
     # ── Stop-Loss-Empfehlung ─────────────────────────────────────────────────
     st.markdown("### 🛡️ Stop-Loss-Empfehlung")
     _dd_abs  = tdf["Max DD %"].abs()
@@ -2081,6 +2151,34 @@ die WFA nutzt immer alle verfügbaren Daten der CSVs unabhängig davon.
 <br>
 <b style="color:#4ade80;">→ Tipp: Stelle links auf 20J</b>, damit nur Muster durchkommen, die über 20 Jahre konsistent waren.
 Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
+<br><br>
+<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">🧹 Was filtert die WFA konkret heraus?</div>
+Beim Scan werden zigtausende Tag/Richtung/Haltedauer-Kombinationen getestet (Multiple-Comparisons-Problem) —
+bei so vielen Versuchen sieht im Schnitt immer irgendetwas wie ein "Muster" aus, obwohl es reiner Zufall ist.
+Die WFA filtert genau diese Zufallstreffer heraus: Sie verlangt, dass ein Muster nicht nur einmal, sondern über
+mehrere <b>unabhängige</b> rollierende Fenster (Folds) hinweg immer wieder als Kandidat erscheint.
+<br>
+<b style="color:#f87171;">Was die WFA NICHT erkennt:</b> echte strukturelle Brüche (z. B. eine veränderte Marktstruktur) —
+sie prüft nur Konsistenz in der Vergangenheit, keine Garantie für die Zukunft.
+<br><br>
+<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">⚖️ 10 Jahre vs. 20 Jahre — ist die WFA bei einem 10J-Muster überhaupt aussagekräftig?</div>
+Mit Vorsicht zu genießen. Ein saisonales Muster hat typischerweise nur <b>1 Trade pro Jahr</b>. Bei 10 Jahren
+Lookback sind das nur 10 Datenpunkte — statistisch sehr klein. Die WFA nutzt zwar immer die komplette
+CSV-Historie für ihre Folds, aber wenn das Muster nur über 10 Jahre gesucht wurde, hatte es auch nur 10 Chancen,
+sich zu bestätigen, bevor es überhaupt als Kandidat zählt → hohes Risiko für einen reinen Zufallstreffer.
+Bei 20J-Analyse verdoppelt sich sowohl die Stichprobe als auch die Anzahl unabhängiger Folds (~8–10 statt ~4–5) —
+eine deutlich härtere Hürde.
+<br>
+<b style="color:#4ade80;">→ Praxis-Empfehlung:</b> 10J-Muster nur als Beobachtungsliste/Kandidaten behandeln, nicht direkt handeln.
+Für reales PropFirm-Trading ausschließlich <b>20J-validierte Muster mit ≥ 7 Folds</b> verwenden.
+<br><br>
+<div style="color:#f0c040;font-weight:700;font-size:.95rem;margin-bottom:4px;">📐 Zusammenspiel mit der Edge-Validierung (Badge weiter unten)</div>
+Die Edge-Validierung verlangt standardmäßig <code>min_trades=200</code>. Für saisonale Jahres-Muster
+(max. ~20–25 Trades über 20–25 Jahre Historie) ist das strukturell unerreichbar — sie zeigt bei
+Saisonalitäts-Mustern deshalb fast immer <b style="color:#f87171;">🔴 "Nicht handelbar"</b>, selbst wenn das
+Muster WFA-validiert ist. Das ist kein Fehler, sondern ein ehrliches Signal: Mit ~20 Jahres-Trades lässt sich
+keine Aussage auf 200-Trades-Niveau treffen. <b>Für saisonale Muster bleibt deshalb die WFA-Foldzahl die
+primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwert der allgemeinen Edge-Validierung.
 </div>
 """, unsafe_allow_html=True)
 
@@ -2383,6 +2481,21 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
         current_month_name = _month_names_list[current_month]
 
         result_clean = result.drop(columns=["_sort_key"], errors="ignore")
+
+        # WFA-Status pro Muster ermitteln (für Top-Setups-Badge/Filter — Sterne allein sagen
+        # nichts über OOS-Validierung aus, siehe Walk-Forward-Erklärung oben)
+        _wfa_res_top = st.session_state.get("muster_wfa_result")
+        def _wfa_status_for_row(r: pd.Series) -> str:
+            if _wfa_res_top is None:
+                return ""
+            from seasonality_wfa import wfa_badge_for_row
+            return wfa_badge_for_row(
+                _wfa_res_top, symbol=str(r.get("Symbol", "")),
+                entry_doy=int(r.get("_entry_doy", 0)), exit_doy=int(r.get("_exit_doy", 0)),
+                direction="long" if r.get("Richtung") == "Long" else "short",
+            )
+        result_clean["WFA Status"] = result_clean.apply(_wfa_status_for_row, axis=1)
+
         _today = _dt.date.today()
         # Wochenende: nächsten Montag als effektiven "heute" nutzen
         if _today.weekday() == 5: _today = _today + _dt.timedelta(days=2)  # Sa → Mo
@@ -2459,6 +2572,18 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
             unsafe_allow_html=True,
         )
 
+        if _wfa_res_top is None:
+            st.caption(
+                "⚠️ Walk-Forward noch nicht gelaufen — Sterne basieren nur auf In-Sample-Daten, "
+                "keines dieser Setups ist OOS-validiert. Erst '🔄 Walk-Forward validieren' klicken."
+            )
+        else:
+            _only_validated = st.checkbox(
+                "Nur ✅ WFA-validierte Setups zeigen", value=False, key="top_only_wfa_validated",
+            )
+            if _only_validated:
+                top_month = top_month[top_month["WFA Status"] == "✅ OOS-validiert"].reset_index(drop=True)
+
         saved_dfs = st.session_state.get("muster_dataframes", {})
 
         _notes_all = _load_notes()
@@ -2506,6 +2631,8 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
                 _star_str   = "⭐" * _stars_int + "☆" * (5 - _stars_int)
                 _rob_val    = str(row.get("Robustheit", "—"))
                 _rob_clr    = {"🟢 Stark": "#4ade80", "✅ Robust": "#a3e635", "⚠️ Sensitiv": "#facc15", "❌ Fragil": "#f87171"}.get(_rob_val, "#6b7fa3")
+                _wfa_val    = str(row.get("WFA Status", "") or "— nicht WFA-getestet")
+                _wfa_clr    = {"✅ OOS-validiert": "#4ade80", "⚠️ Nur IS": "#fbbf24"}.get(_wfa_val, "#475569")
 
                 # Notiz für dieses Muster laden
                 _nkey = _notes_key(symbol_str, str(row.get("Entry", "")), str(row.get("Exit", "")), richtung)
@@ -2542,6 +2669,7 @@ Die WFA hat dann auch mehr Folds (~8–10 statt 4–5) → robustere Badges.
                             <span style="color:#475569;font-size:.8rem;">Sharpe {sharpe_str}</span>
                             <span style="font-size:.95rem;letter-spacing:.02em;">{_star_str}</span>
                             <span style="color:{_rob_clr};font-size:.8rem;font-weight:600;">{_rob_val}</span>
+                            <span style="color:{_wfa_clr};font-size:.8rem;font-weight:700;">{_wfa_val}</span>
                           </div>
                         </div>""",
                         unsafe_allow_html=True,
@@ -4577,6 +4705,1223 @@ st.sidebar.markdown(
     """,
     unsafe_allow_html=True,
 )
+def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame, pd.Series]:
+    """
+    Kern-Backtest für die Mo-Mi Strategie. Wiederverwendbar für WFA IS+OOS Folds.
+    params-Keys: entry_dow, exit_dow, entry_hour, entry_min, exit_hour, exit_min,
+                 ma_type, ma_period, filter_mode, use_adx, adx_thresh,
+                 sl_pct, use_trail, trail_trig, trail_off
+    Gibt (df_trades, equity_series) zurück.
+    """
+    ma_period   = params["ma_period"]
+    ma_type     = params["ma_type"]
+    filter_mode = params["filter_mode"]
+
+    ma_vals = df["Close"].ewm(span=ma_period, adjust=False).mean() if ma_type == "EMA" else df["Close"].rolling(ma_period).mean()
+    df = df.copy()
+    df["MA"] = ma_vals
+
+    # ADX
+    hi, lo, cl = df["High"], df["Low"], df["Close"]
+    tr    = pd.concat([hi-lo, (hi-cl.shift()).abs(), (lo-cl.shift()).abs()], axis=1).max(axis=1)
+    atr14 = tr.rolling(14).mean()
+    up    = hi - hi.shift(); dn = lo.shift() - lo
+    pdm   = pd.Series(np.where((up>dn)&(up>0), up, 0), index=df.index)
+    ndm   = pd.Series(np.where((dn>up)&(dn>0), dn, 0), index=df.index)
+    pdi   = 100 * pdm.rolling(14).mean() / atr14
+    ndi   = 100 * ndm.rolling(14).mean() / atr14
+    dx    = (100*(pdi-ndi).abs()/(pdi+ndi).replace(0,np.nan)).fillna(0)
+    df["ADX"] = dx.rolling(14).mean()
+
+    # Auf Daily-Daten sind alle Stunden = 0 → Stunden-Check weglassen
+    is_daily = df.index.hour.nunique() == 1 and df.index.hour[0] == 0
+    if is_daily:
+        df["entry_time"] = df.index.dayofweek == params["entry_dow"]
+        df["exit_time"]  = df.index.dayofweek == params["exit_dow"]
+    else:
+        df["entry_time"] = (df.index.dayofweek == params["entry_dow"]) & \
+                           (df.index.hour == params["entry_hour"]) & \
+                           (df.index.minute == params["entry_min"])
+        df["exit_time"]  = (df.index.dayofweek == params["exit_dow"]) & \
+                           (df.index.hour == params["exit_hour"]) & \
+                           (df.index.minute == params["exit_min"])
+
+    if filter_mode == "Close > MA":
+        df["ma_ok"] = df["Close"] > df["MA"]
+    elif filter_mode == "MA steigt":
+        df["ma_ok"] = df["MA"] > df["MA"].shift(1)
+    else:
+        df["ma_ok"] = True
+
+    df["adx_ok"] = (df["ADX"] > params["adx_thresh"]) if params["use_adx"] else True
+    df["entry_signal"] = df["entry_time"] & df["ma_ok"] & df["adx_ok"] & df["MA"].notna()
+
+    capital = 10_000.0
+    position, entry_price, sl_price = 0, 0.0, 0.0
+    trail_high, qty, trail_active = 0.0, 0.0, False
+    trades, equity_curve = [], []
+
+    sl_pct    = params["sl_pct"]
+    use_trail = params["use_trail"]
+    trail_trig = params["trail_trig"]
+    trail_off  = params["trail_off"]
+
+    for ts, row in df.iterrows():
+        c, h, l = float(row["Close"]), float(row["High"]), float(row["Low"])
+
+        if position == 1:
+            if use_trail and trail_active:
+                trail_high = max(trail_high, h)
+                sl_price   = max(sl_price, trail_high * (1 - trail_off / 100))
+            elif use_trail and h >= entry_price * (1 + trail_trig / 100):
+                trail_active = True
+                trail_high   = h
+
+            exit_price, reason = None, None
+            if l <= sl_price:
+                exit_price, reason = sl_price, "SL"
+            elif bool(row["exit_time"]):
+                exit_price, reason = c, "Time Exit"
+
+            if exit_price is not None:
+                pnl = (exit_price - entry_price) * qty
+                capital += pnl
+                trades.append({"Zeit": ts, "Entry": entry_price, "Exit": exit_price,
+                                "PnL $": round(pnl, 2), "Grund": reason})
+                position, trail_active = 0, False
+
+        if position == 0 and row["entry_signal"]:
+            entry_price  = c
+            sl_price     = c * (1 - sl_pct / 100)
+            qty          = (capital * 0.10) / c
+            trail_high   = c
+            trail_active = False
+            position     = 1
+
+        equity_curve.append(capital)
+
+    eq = pd.Series(equity_curve, index=df.index)
+    return pd.DataFrame(trades), eq
+
+
+def _momi_metrics(df_trades: pd.DataFrame, equity: pd.Series) -> dict:
+    """Berechnet alle Kennzahlen aus einem Trades-DataFrame + Equity-Series."""
+    if df_trades.empty:
+        return {"n": 0, "wr": 0, "pf": 0, "sharpe": 0, "max_dd": 0, "total_ret": 0}
+    n   = len(df_trades)
+    wr  = (df_trades["PnL $"] > 0).sum() / n * 100
+    gp  = df_trades.loc[df_trades["PnL $"] > 0, "PnL $"].sum()
+    gl  = df_trades.loc[df_trades["PnL $"] <= 0, "PnL $"].abs().sum()
+    pf  = gp / gl if gl > 0 else 9.99
+    dd  = (equity - equity.cummax()) / equity.cummax() * 100
+    ps  = df_trades["PnL $"]
+    sharpe = (ps.mean() / ps.std() * np.sqrt(252)) if ps.std() > 0 else 0
+    total_ret = (equity.iloc[-1] - equity.iloc[0]) / equity.iloc[0] * 100
+    return {"n": n, "wr": round(wr,1), "pf": round(pf,3),
+            "sharpe": round(sharpe,3), "max_dd": round(dd.min(),2),
+            "total_ret": round(total_ret,2)}
+
+
+def render_yen_momi_strategie() -> None:
+    """Weekday MA Long Strategy — Mo-Einstieg, Mi-Ausstieg, EMA/SMA Filter + ADX + WFA."""
+    import datetime as _dt
+
+    st.header("Yen Mo-Mi Strategie")
+    st.caption("Long-only · Zeitbasierter Entry/Exit · EMA/SMA + ADX Filter · Trailing Stop · Walk-Forward Analyse")
+
+    # ── Daten laden ──────────────────────────────────────────────────────────
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("Mo-Mi: Einstellungen")
+        momi_symbol = st.text_input("Symbol (Yahoo)", "GBPJPY=X", key="momi_sym")
+        momi_start  = st.date_input("Von", _dt.date(2024, 1, 1), key="momi_start")
+        momi_end    = st.date_input("Bis", _dt.date.today(),     key="momi_end")
+        momi_tf     = st.selectbox("Timeframe", ["1h", "30m", "15m"], key="momi_tf")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("**Entry**")
+        entry_day  = st.selectbox("Entry-Tag",    ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag"], index=0, key="momi_ed")
+        entry_hour = st.number_input("Entry-Stunde", 0, 23, 15, key="momi_eh")
+        entry_min  = st.number_input("Entry-Minute", 0, 59, 0,  key="momi_em")
+    with col2:
+        st.markdown("**Exit**")
+        exit_day   = st.selectbox("Exit-Tag",     ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag"], index=2, key="momi_xd")
+        exit_hour  = st.number_input("Exit-Stunde",  0, 23, 17, key="momi_xh")
+        exit_min   = st.number_input("Exit-Minute",  0, 59, 0,  key="momi_xm")
+    with col3:
+        st.markdown("**Indikator & Risk**")
+        ma_type    = st.selectbox("MA-Typ",    ["EMA", "SMA"], key="momi_mat")
+        ma_period  = st.selectbox("MA-Periode", [20, 50, 100, 200], key="momi_map")
+        filter_mode = st.selectbox("Filter-Modus", ["Close > MA", "MA steigt", "Kein Filter"], key="momi_fm")
+        use_adx    = st.checkbox("ADX-Filter", True, key="momi_adx")
+        adx_thresh = st.slider("ADX-Schwelle", 10, 40, 20, key="momi_adxt")
+        sl_pct     = st.number_input("Stop-Loss %", 0.1, 10.0, 1.5, step=0.1, key="momi_sl")
+        use_trail  = st.checkbox("Trailing Stop", True, key="momi_trail")
+        trail_trig = st.number_input("Trail-Trigger %", 0.1, 5.0, 0.5, step=0.1, key="momi_tt")
+        trail_off  = st.number_input("Trail-Abstand %", 0.1, 5.0, 0.4, step=0.1, key="momi_to")
+
+    if not st.button("▶ Backtest starten", key="momi_run"):
+        st.info("Parameter einstellen und Backtest starten.")
+        return
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        st.error("yfinance fehlt: `pip install yfinance`")
+        return
+
+    with st.spinner("Daten laden …"):
+        df_raw = yf.download(momi_symbol, start=str(momi_start), end=str(momi_end),
+                             interval=momi_tf, auto_adjust=True, progress=False)
+    if df_raw.empty:
+        st.error("Keine Daten geladen — Symbol oder Zeitraum prüfen.")
+        return
+    if isinstance(df_raw.columns, pd.MultiIndex):
+        df_raw.columns = df_raw.columns.get_level_values(0)
+    df_raw.index = pd.to_datetime(df_raw.index).tz_localize(None)
+
+    # ── Indikatoren ──────────────────────────────────────────────────────────
+    df = df_raw.copy()
+    ma_vals = df["Close"].ewm(span=ma_period, adjust=False).mean() if ma_type == "EMA" else df["Close"].rolling(ma_period).mean()
+    df["MA"] = ma_vals
+
+    # ADX
+    hi, lo, cl = df["High"], df["Low"], df["Close"]
+    tr   = pd.concat([hi - lo, (hi - cl.shift()).abs(), (lo - cl.shift()).abs()], axis=1).max(axis=1)
+    atr14 = tr.rolling(14).mean()
+    up_move  = hi - hi.shift()
+    dn_move  = lo.shift() - lo
+    pdm = pd.Series(np.where((up_move > dn_move) & (up_move > 0), up_move, 0), index=df.index)
+    ndm = pd.Series(np.where((dn_move > up_move) & (dn_move > 0), dn_move, 0), index=df.index)
+    pdi = 100 * pdm.rolling(14).mean() / atr14
+    ndi = 100 * ndm.rolling(14).mean() / atr14
+    dx  = (100 * (pdi - ndi).abs() / (pdi + ndi).replace(0, np.nan)).fillna(0)
+    df["ADX"] = dx.rolling(14).mean()
+
+    # ── Wochentag-Mapping ────────────────────────────────────────────────────
+    day_map = {"Montag": 0, "Dienstag": 1, "Mittwoch": 2, "Donnerstag": 3, "Freitag": 4}
+    entry_dow = day_map[entry_day]
+    exit_dow  = day_map[exit_day]
+
+    df["entry_time"] = (df.index.dayofweek == entry_dow) & (df.index.hour == entry_hour) & (df.index.minute == entry_min)
+    df["exit_time"]  = (df.index.dayofweek == exit_dow)  & (df.index.hour == exit_hour)  & (df.index.minute == exit_min)
+
+    if filter_mode == "Close > MA":
+        df["ma_ok"] = df["Close"] > df["MA"]
+    elif filter_mode == "MA steigt":
+        df["ma_ok"] = df["MA"] > df["MA"].shift(1)
+    else:
+        df["ma_ok"] = True
+
+    df["adx_ok"] = (df["ADX"] > adx_thresh) if use_adx else True
+    df["entry_signal"] = df["entry_time"] & df["ma_ok"] & df["adx_ok"] & df["MA"].notna()
+
+    # ── Backtest ─────────────────────────────────────────────────────────────
+    capital, position, entry_price, sl_price = 10_000.0, 0, 0.0, 0.0
+    trail_high, qty = 0.0, 0.0
+    trail_active = False
+    trades, equity_curve = [], []
+
+    for ts, row in df.iterrows():
+        c = float(row["Close"])
+        h = float(row["High"])
+        l = float(row["Low"])
+
+        if position == 1:
+            # Trailing Stop aktualisieren
+            if use_trail and trail_active:
+                trail_high = max(trail_high, h)
+                trail_sl   = trail_high * (1 - trail_off / 100)
+                sl_price   = max(sl_price, trail_sl)
+            elif use_trail and h >= entry_price * (1 + trail_trig / 100):
+                trail_active = True
+                trail_high   = h
+
+            hit_sl = l <= sl_price
+            hit_te = bool(row["exit_time"])
+
+            exit_price, reason = None, None
+            if hit_sl:
+                exit_price, reason = sl_price, "SL"
+            elif hit_te:
+                exit_price, reason = c, "Time Exit"
+
+            if exit_price is not None:
+                pnl = (exit_price - entry_price) * qty
+                capital += pnl
+                trades.append({"Zeit": ts, "Richtung": "Long", "Entry": entry_price,
+                                "Exit": exit_price, "PnL $": round(pnl, 2), "Grund": reason})
+                position, trail_active = 0, False
+
+        if position == 0 and row["entry_signal"]:
+            entry_price  = c
+            sl_price     = c * (1 - sl_pct / 100)
+            qty          = (capital * 0.10) / c
+            trail_high   = c
+            trail_active = False
+            position     = 1
+
+        equity_curve.append(capital)
+
+    df["Equity"] = equity_curve
+
+    # ── Kennzahlen ───────────────────────────────────────────────────────────
+    df_trades = pd.DataFrame(trades)
+    if df_trades.empty:
+        st.warning("Keine Trades — Filter oder Zeitfenster anpassen.")
+        return
+
+    total_ret  = (df["Equity"].iloc[-1] - 10_000) / 10_000 * 100
+    n          = len(df_trades)
+    wins       = (df_trades["PnL $"] > 0).sum()
+    wr         = wins / n * 100
+    gp         = df_trades.loc[df_trades["PnL $"] > 0, "PnL $"].sum()
+    gl         = df_trades.loc[df_trades["PnL $"] <= 0, "PnL $"].abs().sum()
+    pf         = gp / gl if gl > 0 else float("inf")
+    eq         = df["Equity"]
+    dd         = (eq - eq.cummax()) / eq.cummax() * 100
+    max_dd     = dd.min()
+    pnl_s      = df_trades["PnL $"]
+    sharpe     = (pnl_s.mean() / pnl_s.std() * np.sqrt(252)) if pnl_s.std() > 0 else 0
+
+    # ── KPI-Kacheln ──────────────────────────────────────────────────────────
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Gesamtrendite",  f"{total_ret:.2f}%")
+    k2.metric("Trades",         n)
+    k3.metric("Win-Rate",       f"{wr:.1f}%")
+    k4.metric("Profit Factor",  f"{pf:.2f}")
+    k5.metric("Sharpe Ratio",   f"{sharpe:.2f}")
+    st.metric("Max. Drawdown",  f"{max_dd:.2f}%")
+
+    # ── Equity Curve ─────────────────────────────────────────────────────────
+    fig_eq = go.Figure()
+    fig_eq.add_trace(go.Scatter(x=df.index, y=df["Equity"], name="Equity", line=dict(color="#00d4aa", width=2)))
+    fig_eq.update_layout(title="Equity Curve", height=300, template="plotly_dark", margin=dict(t=40, b=20))
+    st.plotly_chart(fig_eq, use_container_width=True)
+
+    # ── Preis + MA + Entry/Exit ───────────────────────────────────────────────
+    fig_c = go.Figure()
+    fig_c.add_trace(go.Candlestick(x=df.index, open=df["Open"], high=df["High"],
+                                   low=df["Low"], close=df["Close"], name="Preis",
+                                   increasing_line_color="#26a69a", decreasing_line_color="#ef5350"))
+    fig_c.add_trace(go.Scatter(x=df.index, y=df["MA"], name=f"{ma_type} {ma_period}",
+                               line=dict(color="orange", width=1.5)))
+    for _, tr_ in df_trades.iterrows():
+        fig_c.add_vline(x=tr_["Zeit"], line_color="lime" if tr_["Grund"] != "SL" else "red",
+                        line_width=1, line_dash="dot")
+    fig_c.update_layout(title="Preis + MA", height=400, template="plotly_dark",
+                        xaxis_rangeslider_visible=False, margin=dict(t=40, b=20))
+    st.plotly_chart(fig_c, use_container_width=True)
+
+    # ── Trade-Tabelle ────────────────────────────────────────────────────────
+    st.subheader("Trade-Liste")
+    st.dataframe(df_trades.style.map(lambda v: "color: #26a69a" if isinstance(v, (int, float)) and v > 0
+                                     else ("color: #ef5350" if isinstance(v, (int, float)) and v < 0 else ""),
+                                     subset=["PnL $"]), use_container_width=True)
+
+    # ── Exit-Grund Verteilung ────────────────────────────────────────────────
+    exit_counts = df_trades["Grund"].value_counts()
+    fig_pie = go.Figure(go.Pie(labels=exit_counts.index, values=exit_counts.values,
+                               hole=0.4, marker_colors=["#ef5350", "#26a69a", "#ffa726"]))
+    fig_pie.update_layout(title="Exit-Gründe", height=280, template="plotly_dark", margin=dict(t=40, b=10))
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # WALK-FORWARD ANALYSE
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("Walk-Forward Analyse")
+    st.caption("IS-Periode optimiert beste Parameter → OOS-Periode testet diese ungesehen. Mehrere Folds = Robustheitsnachweis.")
+
+    wfa_col1, wfa_col2, wfa_col3 = st.columns(3)
+    with wfa_col1:
+        wfa_is_months  = st.number_input("IS-Fenster (Monate)", 3, 24, 6, key="wfa_is")
+        wfa_oos_months = st.number_input("OOS-Fenster (Monate)", 1, 12, 2, key="wfa_oos")
+    with wfa_col2:
+        wfa_min_trades = st.number_input("Min. IS-Trades für gültigen Fold", 3, 30, 5, key="wfa_mint")
+        wfa_opt_metric = st.selectbox("Optimierungsziel", ["profit_factor", "sharpe", "win_rate"], key="wfa_met")
+    with wfa_col3:
+        wfa_min_folds  = st.number_input("Min. OOS-Folds für ✅ Badge", 2, 10, 3, key="wfa_mf")
+        st.markdown(" ")
+        run_wfa = st.button("🔄 Walk-Forward starten", use_container_width=True, key="wfa_btn")
+
+    # Grid-Suchraum für IS-Optimierung
+    with st.expander("Grid-Suchraum anpassen"):
+        gc1, gc2, gc3 = st.columns(3)
+        with gc1:
+            grid_sl   = st.multiselect("Stop-Loss %",    [0.5, 1.0, 1.5, 2.0, 2.5, 3.0], default=[1.0, 1.5, 2.0], key="wfa_gsl")
+            grid_ma   = st.multiselect("MA-Periode",     [20, 50, 100, 200],               default=[20, 50],        key="wfa_gma")
+        with gc2:
+            grid_adx  = st.multiselect("ADX-Schwelle",   [15, 20, 25, 30],                 default=[20, 25],        key="wfa_gadx")
+            grid_tt   = st.multiselect("Trail-Trigger %",[0.3, 0.5, 0.8, 1.0],             default=[0.5, 0.8],      key="wfa_gtt")
+        with gc3:
+            grid_to   = st.multiselect("Trail-Abstand %",[0.2, 0.3, 0.4, 0.5],             default=[0.3, 0.4],      key="wfa_gto")
+
+    if not run_wfa:
+        st.info("Parameter festlegen und Walk-Forward starten.")
+    else:
+        if df_raw.empty:
+            st.error("Keine Rohdaten — zuerst oben einen Backtest starten.")
+        elif not all([grid_sl, grid_ma, grid_adx, grid_tt, grid_to]):
+            st.warning("Bitte mindestens einen Wert pro Grid-Parameter auswählen.")
+        else:
+            # Basis-Params aus den Eingaben oben (Zeit/Richtung bleiben fix)
+            base_params = {
+                "entry_dow":  day_map[entry_day],
+                "exit_dow":   day_map[exit_day],
+                "entry_hour": int(entry_hour),
+                "entry_min":  int(entry_min),
+                "exit_hour":  int(exit_hour),
+                "exit_min":   int(exit_min),
+                "ma_type":    ma_type,
+                "filter_mode": filter_mode,
+                "use_adx":    use_adx,
+                "use_trail":  use_trail,
+            }
+
+            # Folds generieren: rollierendes IS+OOS Fenster
+            all_dates = df_raw.index
+            total_start = all_dates[0]
+            total_end   = all_dates[-1]
+            is_delta    = pd.DateOffset(months=int(wfa_is_months))
+            oos_delta   = pd.DateOffset(months=int(wfa_oos_months))
+
+            folds = []
+            fold_start = total_start
+            while True:
+                is_end  = fold_start + is_delta
+                oos_end = is_end    + oos_delta
+                if oos_end > total_end:
+                    break
+                folds.append({"is_start": fold_start, "is_end": is_end,
+                               "oos_start": is_end,    "oos_end": oos_end})
+                fold_start = fold_start + oos_delta
+
+            if len(folds) < 2:
+                st.warning(f"Zu wenig Daten für WFA. Bitte längeren Zeitraum laden oder IS/OOS-Fenster verkleinern.")
+            else:
+                st.info(f"**{len(folds)} Folds** generiert — IS: {wfa_is_months} Monate / OOS: {wfa_oos_months} Monate")
+
+                progress_bar = st.progress(0, text="Walk-Forward läuft …")
+                wfa_rows = []
+
+                for fi, fold in enumerate(folds):
+                    progress_bar.progress((fi) / len(folds),
+                                          text=f"Fold {fi+1}/{len(folds)} — IS optimieren …")
+
+                    df_is  = df_raw[(df_raw.index >= fold["is_start"])  & (df_raw.index < fold["is_end"])]
+                    df_oos = df_raw[(df_raw.index >= fold["oos_start"]) & (df_raw.index < fold["oos_end"])]
+
+                    if len(df_is) < 50 or len(df_oos) < 10:
+                        continue
+
+                    # IS-Optimierung: Grid Search
+                    best_score, best_params = -np.inf, None
+                    from itertools import product as _prod
+                    for sl_, ma_, adx_, tt_, to_ in _prod(grid_sl, grid_ma, grid_adx, grid_tt, grid_to):
+                        p = {**base_params, "sl_pct": sl_, "ma_period": ma_,
+                             "adx_thresh": adx_, "trail_trig": tt_, "trail_off": to_}
+                        try:
+                            tr_, eq_ = _momi_backtest_engine(df_is.copy(), p)
+                        except Exception:
+                            continue
+                        if len(tr_) < int(wfa_min_trades):
+                            continue
+                        m_ = _momi_metrics(tr_, eq_)
+                        score = m_.get(wfa_opt_metric.replace("win_rate","wr"), m_["pf"])
+                        if score > best_score:
+                            best_score, best_params = score, p
+
+                    if best_params is None:
+                        wfa_rows.append({"Fold": fi+1,
+                                         "IS": f"{fold['is_start'].date()} – {fold['is_end'].date()}",
+                                         "OOS": f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
+                                         "IS Trades": 0, "IS PF": "–", "IS Sharpe": "–",
+                                         "OOS Trades": 0, "OOS PF": "–", "OOS Sharpe": "–",
+                                         "OOS Ret %": "–", "Status": "⚠️ Keine IS-Params"})
+                        continue
+
+                    # OOS mit besten IS-Params
+                    tr_is,  eq_is  = _momi_backtest_engine(df_is.copy(),  best_params)
+                    tr_oos, eq_oos = _momi_backtest_engine(df_oos.copy(), best_params)
+                    m_is  = _momi_metrics(tr_is,  eq_is)
+                    m_oos = _momi_metrics(tr_oos, eq_oos)
+
+                    status = "✅ OOS-validiert" if (m_oos["n"] >= 1 and m_oos["pf"] > 1.0 and m_oos["total_ret"] > 0) else "❌ OOS-Fail"
+
+                    wfa_rows.append({
+                        "Fold":        fi + 1,
+                        "IS":          f"{fold['is_start'].date()} – {fold['is_end'].date()}",
+                        "OOS":         f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
+                        "Beste MA":    f"{best_params['ma_type']} {best_params['ma_period']}",
+                        "Bester SL":   f"{best_params['sl_pct']}%",
+                        "IS Trades":   m_is["n"],
+                        "IS PF":       m_is["pf"],
+                        "IS Sharpe":   m_is["sharpe"],
+                        "OOS Trades":  m_oos["n"],
+                        "OOS PF":      m_oos["pf"],
+                        "OOS Sharpe":  m_oos["sharpe"],
+                        "OOS Ret %":   m_oos["total_ret"],
+                        "Status":      status,
+                    })
+
+                progress_bar.progress(1.0, text="Walk-Forward abgeschlossen ✓")
+
+                wfa_df = pd.DataFrame(wfa_rows)
+                n_ok   = (wfa_df["Status"] == "✅ OOS-validiert").sum()
+                n_fail = (wfa_df["Status"] == "❌ OOS-Fail").sum()
+
+                # ── Gesamt-Badge ─────────────────────────────────────────────
+                if n_ok >= int(wfa_min_folds):
+                    badge_color, badge_text = "#22c55e", f"✅ ROBUST — {n_ok}/{len(wfa_df)} Folds OOS-validiert"
+                elif n_ok > 0:
+                    badge_color, badge_text = "#f0c040", f"⚠️ TEILWEISE — {n_ok}/{len(wfa_df)} Folds validiert"
+                else:
+                    badge_color, badge_text = "#ef5350", f"❌ NICHT ROBUST — 0/{len(wfa_df)} Folds bestanden"
+
+                st.markdown(
+                    f'<div style="background:{badge_color}22;border:1px solid {badge_color};'
+                    f'border-radius:8px;padding:12px 18px;font-weight:700;font-size:1.1rem;'
+                    f'color:{badge_color};margin:12px 0;">{badge_text}</div>',
+                    unsafe_allow_html=True)
+
+                # ── Fold-Tabelle ─────────────────────────────────────────────
+                st.dataframe(wfa_df, use_container_width=True, hide_index=True)
+
+                # ── OOS Equity Kurven ─────────────────────────────────────────
+                st.subheader("OOS Equity Kurven je Fold")
+                fig_wfa = go.Figure()
+                colors  = ["#00d4aa","#ffa726","#42a5f5","#ef5350","#ab47bc","#66bb6a","#26c6da"]
+                for fi, fold in enumerate(folds):
+                    if fi >= len(wfa_rows):
+                        break
+                    row_ = wfa_rows[fi]
+                    if row_["OOS Trades"] == 0:
+                        continue
+                    bp = next((r for r in [wfa_rows[fi]] if r.get("Beste MA")), None)
+                    if bp is None:
+                        continue
+                    # Rebuild OOS equity für Plot
+                    df_oos_plot = df_raw[(df_raw.index >= fold["oos_start"]) & (df_raw.index < fold["oos_end"])]
+                    # best_params aus wfa_rows nicht direkt verfügbar → skip detailed plot
+                    fig_wfa.add_annotation(x=fold["oos_start"], y=fi * 500 + 10000,
+                                           text=f"F{fi+1}", showarrow=False,
+                                           font=dict(color=colors[fi % len(colors)]))
+
+                # Stattdessen: OOS-Rendite als Bar-Chart je Fold
+                fold_labels = [f"F{r['Fold']}" for r in wfa_rows]
+                oos_rets    = [r["OOS Ret %"] if isinstance(r["OOS Ret %"], (int,float)) else 0 for r in wfa_rows]
+                bar_colors  = ["#22c55e" if v > 0 else "#ef5350" for v in oos_rets]
+                fig_bar = go.Figure(go.Bar(x=fold_labels, y=oos_rets,
+                                           marker_color=bar_colors, text=[f"{v:.1f}%" for v in oos_rets],
+                                           textposition="outside"))
+                fig_bar.update_layout(title="OOS-Rendite je Fold", height=300,
+                                      template="plotly_dark", yaxis_title="Rendite %",
+                                      margin=dict(t=40, b=20))
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+                # ── CSV Download ──────────────────────────────────────────────
+                st.download_button("⬇️ WFA-Ergebnis als CSV",
+                                   data=wfa_df.to_csv(index=False).encode(),
+                                   file_name="momi_wfa.csv", mime="text/csv")
+
+
+def render_btc_wfa() -> None:
+    """BTC WeekdayMA WFA — Sonntag Entry / Montag Exit auf BTC-USD Daily."""
+    import datetime as _dt
+    from itertools import product as _prod
+
+    st.header("BTC WeekdayMA — Walk-Forward Analyse")
+
+    with st.expander("ℹ️ Was wird hier getestet und wie funktioniert es?", expanded=False):
+        st.markdown("""
+**Strategie:** Long-only Wochentag-Momentum auf BTC/USD (Daily-Daten via Yahoo Finance)
+- **Entry:** Jeden Sonntag, wenn Kurs über dem gleitenden Durchschnitt liegt (MA-Filter) und der Trend stark genug ist (ADX-Filter)
+- **Exit:** Montag-Schlusskurs (zeitbasiert) — oder früher durch Stop-Loss / Trailing-Stop
+- **Idee:** BTC tendiert historisch dazu, Wochenenden für Aufwärtsbewegungen zu nutzen (weniger institutioneller Verkaufsdruck)
+
+---
+
+**Walk-Forward Analyse (WFA) — was das bedeutet:**
+
+Die WFA verhindert Overfitting: Parameter werden nur auf historischen Daten optimiert und dann blind auf ungesehenen Daten getestet.
+
+| Phase | Was passiert |
+|-------|-------------|
+| **In-Sample (IS)** | Grid-Search über alle Parameter-Kombinationen — welche Einstellungen performen am besten auf dem Trainings-Zeitraum? |
+| **Out-of-Sample (OOS)** | Die beste IS-Kombination wird auf dem **folgenden, unbekannten** Zeitraum getestet — unverändert, kein Re-Fitting |
+| **Fold** | IS + OOS zusammen bilden einen "Fold". Das Fenster verschiebt sich dann um die OOS-Länge nach vorne |
+
+**Wann gilt eine Strategie als ROBUST?**
+- Mindestens X von N Folds müssen im OOS profitabel sein (PF > 1.0 und Rendite > 0)
+- Die Parameter-Stabilitätsanalyse zeigt, welche SL / Trailing-Kombinationen **konsistent über alle Folds** gut funktionieren — nicht nur in einer Periode
+
+**Warum unterscheidet sich die Tradeanzahl von TradingView?**
+- Python nutzt **Daily-Daten**: 1 Bar = 1 Tag, Entry immer am Tagesschlusskurs des Sonntags
+- TradingView nutzt **4H-Daten**: Entry nur wenn die exakte Uhrzeit (z.B. 20:00) getroffen wird
+- Außerdem reagieren EMA und ADX auf Daily vs. 4H unterschiedlich → andere Filterquote
+- **Grundregel:** Mehr Trades ≠ besser. Qualität der Trades entscheidet die Win-Rate
+        """)
+
+    st.caption("Strategie: Sonntag-Entry / Montag-Exit auf BTC · Daily-Daten via yfinance · Rollierender IS/OOS-Test")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SIDEBAR — Strategie-Parameter (vorausgefüllt mit TradingView-Bestresultat)
+    # ════════════════════════════════════════════════════════════════════════
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("BTC WFA: Parameter")
+        btc_start = st.date_input("Daten ab", _dt.date(2018, 1, 1), key="btc_start")
+        btc_end   = st.date_input("Daten bis", _dt.date.today(),    key="btc_end")
+
+    # ── Strategie-Parameter ──────────────────────────────────────────────
+    st.subheader("Strategie-Parameter")
+    pc1, pc2, pc3 = st.columns(3)
+    with pc1:
+        st.markdown("**Entry / Exit**")
+        day_map_full = {"Montag":0,"Dienstag":1,"Mittwoch":2,"Donnerstag":3,"Freitag":4,"Samstag":5,"Sonntag":6}
+        entry_day  = st.selectbox("Entry-Tag", list(day_map_full.keys()), index=6, key="btc_ed")  # Sonntag
+        entry_hour = st.number_input("Entry-Stunde", 0, 23, 22, key="btc_eh")
+        exit_day   = st.selectbox("Exit-Tag",   list(day_map_full.keys()), index=0, key="btc_xd")  # Montag
+        exit_hour  = st.number_input("Exit-Stunde",  0, 23, 22, key="btc_xh")
+    with pc2:
+        st.markdown("**MA & Filter**")
+        ma_type     = st.selectbox("MA-Typ",      ["EMA","SMA"],                          key="btc_mt")
+        ma_period   = st.selectbox("MA-Periode",  [20, 50, 100, 200], index=0,            key="btc_mp")
+        filter_mode = st.selectbox("Filter-Modus",["Kein Filter (nur Zeit)","Close > MA","MA steigt"], key="btc_fm")
+        use_adx     = st.checkbox("ADX-Filter", False, key="btc_adx")
+        adx_thresh  = st.number_input("ADX-Schwelle", 5, 50, 20, key="btc_adxt")
+    with pc3:
+        st.markdown("**Risk Management**")
+        use_sl     = st.checkbox("Stop-Loss", True, key="btc_sl")
+        sl_pct     = st.number_input("SL %", 0.1, 20.0, 1.8, step=0.1, key="btc_slp")
+        use_trail  = st.checkbox("Trailing Stop", True, key="btc_tr")
+        trail_trig = st.number_input("Trail-Trigger %", 0.1, 10.0, 0.2, step=0.1, key="btc_tt")
+        trail_off  = st.number_input("Trail-Abstand %", 0.1, 10.0, 0.2, step=0.1, key="btc_to")
+
+    # ── WFA-Konfiguration ─────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Walk-Forward Konfiguration")
+    wc1, wc2, wc3 = st.columns(3)
+    with wc1:
+        is_months  = st.number_input("IS-Fenster (Monate)", 6, 36, 18, key="btc_is")
+        oos_months = st.number_input("OOS-Fenster (Monate)", 3, 18, 12, key="btc_oos")
+    with wc2:
+        min_trades  = st.number_input("Min. IS-Trades", 5, 50, 10, key="btc_mint")
+        opt_metric  = st.selectbox("Optimierungsziel", ["pf","sharpe","wr"], format_func=lambda x: {"pf":"Profit Factor","sharpe":"Sharpe","wr":"Win-Rate"}[x], key="btc_om")
+    with wc3:
+        min_folds   = st.number_input("Min. Folds für ✅ ROBUST", 2, 8, 3, key="btc_mf")
+        st.markdown(" ")
+
+    # ── Grid-Suchraum ─────────────────────────────────────────────────────
+    with st.expander("Grid-Suchraum (IS-Optimierung)"):
+        gc1, gc2, gc3 = st.columns(3)
+        with gc1:
+            g_sl   = st.multiselect("SL %",           [0.5,1.0,1.5,1.8,2.0,2.5,3.0], default=[1.0,1.5,1.8,2.0], key="btc_gsl")
+            g_ma   = st.multiselect("MA-Periode",      [20,50,100,200],                default=[20,50],            key="btc_gma")
+        with gc2:
+            g_fm   = st.multiselect("Filter-Modus",   ["Kein Filter (nur Zeit)","Close > MA","MA steigt"],
+                                     default=["Kein Filter (nur Zeit)","Close > MA"],   key="btc_gfm")
+            g_adx  = st.multiselect("ADX-Schwelle",   [15,20,25,30],                  default=[20],               key="btc_gadx")
+        with gc3:
+            g_tt   = st.multiselect("Trail-Trigger %",[0.1,0.2,0.3,0.5],              default=[0.2,0.3],          key="btc_gtt")
+            g_to   = st.multiselect("Trail-Abstand %",[0.1,0.2,0.3,0.4],              default=[0.2,0.3],          key="btc_gto")
+
+    run_btn = st.button("🔄 WFA starten", type="primary", use_container_width=True, key="btc_run")
+    if not run_btn:
+        st.info("Parameter prüfen und WFA starten. BTC-Daten werden automatisch via yfinance geladen.")
+        # Vorab-Info zur Fold-Struktur
+        n_months_total = (btc_end.year - btc_start.year) * 12 + (btc_end.month - btc_start.month)
+        est_folds = max(0, (n_months_total - is_months) // oos_months)
+        st.metric("Geschätzte Anzahl Folds", est_folds,
+                  help=f"Bei {is_months}M IS + {oos_months}M OOS über {n_months_total} Monate Gesamtdaten")
+        return
+
+    # ════════════════════════════════════════════════════════════════════════
+    # DATEN LADEN
+    # ════════════════════════════════════════════════════════════════════════
+    try:
+        import yfinance as yf
+    except ImportError:
+        st.error("`pip install yfinance` fehlt.")
+        return
+
+    with st.spinner("BTC-USD Daily-Daten laden …"):
+        df_raw = yf.download("BTC-USD", start=str(btc_start), end=str(btc_end),
+                             interval="1d", auto_adjust=True, progress=False)
+
+    if df_raw.empty:
+        st.error("Keine BTC-Daten geladen.")
+        return
+    if isinstance(df_raw.columns, pd.MultiIndex):
+        df_raw.columns = df_raw.columns.get_level_values(0)
+    df_raw.index = pd.to_datetime(df_raw.index).tz_localize(None)
+
+    st.success(f"✓ {len(df_raw)} Daily-Bars geladen ({df_raw.index[0].date()} → {df_raw.index[-1].date()})")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # FULL-SAMPLE BACKTEST (zur Orientierung)
+    # ════════════════════════════════════════════════════════════════════════
+    base_params = {
+        "entry_dow":   day_map_full[entry_day],
+        "exit_dow":    day_map_full[exit_day],
+        "entry_hour":  int(entry_hour),
+        "entry_min":   0,
+        "exit_hour":   int(exit_hour),
+        "exit_min":    0,
+        "ma_type":     ma_type,
+        "ma_period":   int(ma_period),
+        "filter_mode": filter_mode,
+        "use_adx":     use_adx,
+        "adx_thresh":  float(adx_thresh),
+        "sl_pct":      float(sl_pct)  if use_sl    else 999.0,
+        "use_trail":   use_trail,
+        "trail_trig":  float(trail_trig),
+        "trail_off":   float(trail_off),
+    }
+
+    with st.spinner("Full-Sample Backtest …"):
+        tr_full, eq_full = _momi_backtest_engine(df_raw.copy(), base_params)
+        m_full = _momi_metrics(tr_full, eq_full)
+
+    st.markdown("---")
+    st.subheader("Full-Sample Ergebnis (zur Orientierung, KEIN WFA)")
+    fc1,fc2,fc3,fc4,fc5 = st.columns(5)
+    fc1.metric("Rendite",       f"{m_full['total_ret']:.1f}%")
+    fc2.metric("Trades",         m_full['n'])
+    fc3.metric("Win-Rate",      f"{m_full['wr']:.1f}%")
+    fc4.metric("Profit Factor", f"{m_full['pf']:.2f}")
+    fc5.metric("Sharpe",        f"{m_full['sharpe']:.2f}")
+
+    fig_full = go.Figure()
+    fig_full.add_trace(go.Scatter(x=eq_full.index, y=eq_full.values,
+                                  line=dict(color="#f7931a", width=2), name="Equity (Full)"))
+    fig_full.update_layout(title="Full-Sample Equity Curve", height=250,
+                           template="plotly_dark", margin=dict(t=35,b=15))
+    st.plotly_chart(fig_full, use_container_width=True)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # WALK-FORWARD ANALYSE
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("Walk-Forward Analyse")
+
+    # Folds generieren
+    is_d   = pd.DateOffset(months=int(is_months))
+    oos_d  = pd.DateOffset(months=int(oos_months))
+    folds  = []
+    fs     = df_raw.index[0]
+    while True:
+        ie = fs + is_d
+        oe = ie + oos_d
+        if oe > df_raw.index[-1]:
+            break
+        folds.append({"is_start": fs, "is_end": ie, "oos_start": ie, "oos_end": oe})
+        fs = fs + oos_d
+
+    if len(folds) < 2:
+        st.warning("Zu wenig Daten für WFA. Zeitraum verlängern oder IS/OOS-Fenster verkleinern.")
+        return
+
+    st.info(f"**{len(folds)} Folds** · IS {is_months}M / OOS {oos_months}M  "
+            f"· Grid-Größe: {len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)} Kombinationen je Fold")
+
+    progress = st.progress(0, text="Walk-Forward läuft …")
+    wfa_rows, oos_equities = [], []
+    # Für Stabilitätsanalyse: alle OOS-Ergebnisse je Parameterkombination sammeln
+    param_stability: dict = {}   # key=(sl,tt,to,ma,fm) → list of OOS metrics
+
+    for fi, fold in enumerate(folds):
+        progress.progress(fi / len(folds), text=f"Fold {fi+1}/{len(folds)} — optimiere IS …")
+
+        df_is  = df_raw[(df_raw.index >= fold["is_start"]) & (df_raw.index < fold["is_end"])].copy()
+        df_oos = df_raw[(df_raw.index >= fold["oos_start"]) & (df_raw.index < fold["oos_end"])].copy()
+
+        if len(df_is) < 30 or len(df_oos) < 5:
+            continue
+
+        # IS Grid Search — teste ALLE Kombinationen und sammle OOS-Ergebnis je Combo
+        best_score, best_p = -np.inf, None
+        adx_grid = g_adx if use_adx else [float(adx_thresh)]
+
+        for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid, g_tt, g_to):
+            p = {**base_params,
+                 "sl_pct":      sl_,
+                 "ma_period":   ma_,
+                 "filter_mode": fm_,
+                 "adx_thresh":  adx_,
+                 "trail_trig":  tt_,
+                 "trail_off":   to_}
+            try:
+                tr_, eq_ = _momi_backtest_engine(df_is.copy(), p)
+            except Exception:
+                continue
+            if len(tr_) < int(min_trades):
+                continue
+            m_ = _momi_metrics(tr_, eq_)
+            score = m_[opt_metric]
+            if score > best_score:
+                best_score, best_p = score, p.copy()
+
+            # OOS sofort für diese Kombination berechnen → Stabilitätsanalyse
+            try:
+                tr_oos_, eq_oos_ = _momi_backtest_engine(df_oos.copy(), p)
+                m_oos_ = _momi_metrics(tr_oos_, eq_oos_)
+                key = (sl_, tt_, to_, ma_, fm_)
+                if key not in param_stability:
+                    param_stability[key] = []
+                param_stability[key].append(m_oos_)
+            except Exception:
+                pass
+
+        if best_p is None:
+            wfa_rows.append({"Fold": fi+1,
+                             "IS": f"{fold['is_start'].date()} – {fold['is_end'].date()}",
+                             "OOS": f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
+                             "Bester SL":"–","Bestes MA":"–","Bester FM":"–",
+                             "IS Trades":0,"IS PF":"–","IS Sharpe":"–",
+                             "OOS Trades":0,"OOS PF":"–","OOS Ret %":"–","OOS Sharpe":"–",
+                             "Status":"⚠️ Kein IS-Ergebnis"})
+            continue
+
+        tr_is,  eq_is  = _momi_backtest_engine(df_is.copy(),  best_p)
+        tr_oos, eq_oos = _momi_backtest_engine(df_oos.copy(), best_p)
+        m_is  = _momi_metrics(tr_is,  eq_is)
+        m_oos = _momi_metrics(tr_oos, eq_oos)
+
+        oos_equities.append((fi+1, eq_oos))
+
+        ok = m_oos["n"] >= 1 and m_oos["pf"] > 1.0 and m_oos["total_ret"] > 0
+        wfa_rows.append({
+            "Fold":       fi+1,
+            "IS":         f"{fold['is_start'].date()} – {fold['is_end'].date()}",
+            "OOS":        f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
+            "Bester SL":  f"{best_p['sl_pct']}%",
+            "Bestes MA":  f"{best_p['ma_type']} {best_p['ma_period']}",
+            "Bester FM":  best_p['filter_mode'],
+            "IS Trades":  m_is["n"],
+            "IS PF":      m_is["pf"],
+            "IS Sharpe":  m_is["sharpe"],
+            "OOS Trades": m_oos["n"],
+            "OOS PF":     m_oos["pf"],
+            "OOS Ret %":  m_oos["total_ret"],
+            "OOS Sharpe": m_oos["sharpe"],
+            "Status":     "✅ Bestanden" if ok else "❌ Fail",
+        })
+
+    progress.progress(1.0, text="Walk-Forward abgeschlossen ✓")
+
+    if not wfa_rows:
+        st.error("Keine WFA-Ergebnisse — Parameter oder Zeitraum anpassen.")
+        return
+
+    wfa_df = pd.DataFrame(wfa_rows)
+    n_ok   = (wfa_df["Status"] == "✅ Bestanden").sum()
+    n_tot  = len(wfa_df)
+
+    # ── Gesamt-Badge ─────────────────────────────────────────────────────
+    if n_ok >= int(min_folds):
+        bc, bt = "#f7931a", f"✅ ROBUST — {n_ok}/{n_tot} Folds bestanden"
+    elif n_ok > 0:
+        bc, bt = "#f0c040", f"⚠️ TEILWEISE ROBUST — {n_ok}/{n_tot} Folds bestanden"
+    else:
+        bc, bt = "#ef5350", f"❌ NICHT ROBUST — 0/{n_tot} Folds bestanden"
+
+    st.markdown(
+        f'<div style="background:{bc}22;border:2px solid {bc};border-radius:10px;'
+        f'padding:16px 24px;font-weight:800;font-size:1.2rem;color:{bc};margin:16px 0;">'
+        f'{bt}</div>', unsafe_allow_html=True)
+
+    # ── KPI-Zusammenfassung über alle OOS-Folds ───────────────────────────
+    oos_pfs   = [r["OOS PF"]    for r in wfa_rows if isinstance(r["OOS PF"],    (int,float))]
+    oos_rets  = [r["OOS Ret %"] for r in wfa_rows if isinstance(r["OOS Ret %"], (int,float))]
+    oos_shs   = [r["OOS Sharpe"] for r in wfa_rows if isinstance(r.get("OOS Sharpe"), (int,float))]
+
+    sc1,sc2,sc3,sc4 = st.columns(4)
+    sc1.metric("Ø OOS Profit Factor", f"{np.mean(oos_pfs):.2f}"  if oos_pfs  else "–")
+    sc2.metric("Ø OOS Rendite",       f"{np.mean(oos_rets):.1f}%" if oos_rets else "–")
+    sc3.metric("Ø OOS Sharpe",        f"{np.mean(oos_shs):.2f}"   if oos_shs  else "–")
+    sc4.metric("Bestandene Folds",    f"{n_ok}/{n_tot}")
+
+    # ── Fold-Tabelle ──────────────────────────────────────────────────────
+    st.subheader("Fold-Ergebnisse")
+    def _color_status(v):
+        if v == "✅ Bestanden": return "color:#22c55e;font-weight:700"
+        if v == "❌ Fail":      return "color:#ef5350;font-weight:700"
+        return "color:#f0c040"
+    def _color_num(v):
+        if isinstance(v, (int,float)):
+            return "color:#22c55e" if v > 0 else "color:#ef5350"
+        return ""
+    num_cols = [c for c in ["OOS Ret %","OOS PF","OOS Sharpe"] if c in wfa_df.columns]
+    styled = wfa_df.style\
+        .map(_color_status, subset=["Status"])\
+        .map(_color_num,    subset=num_cols)
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    # ── OOS Rendite Bar-Chart ─────────────────────────────────────────────
+    st.subheader("OOS-Rendite je Fold")
+    fold_labels = [f"Fold {r['Fold']}" for r in wfa_rows]
+    bar_colors  = ["#22c55e" if isinstance(r["OOS Ret %"],(int,float)) and r["OOS Ret %"]>0
+                   else "#ef5350" for r in wfa_rows]
+    bar_vals    = [r["OOS Ret %"] if isinstance(r["OOS Ret %"],(int,float)) else 0 for r in wfa_rows]
+
+    fig_bar = go.Figure(go.Bar(
+        x=fold_labels, y=bar_vals, marker_color=bar_colors,
+        text=[f"{v:.1f}%" for v in bar_vals], textposition="outside",
+        width=0.5))
+    fig_bar.add_hline(y=0, line_color="white", line_width=1, line_dash="dash")
+    fig_bar.update_layout(title="OOS-Rendite je Fold (grün = profitabel)",
+                          height=380, template="plotly_dark",
+                          yaxis_title="Rendite %",
+                          xaxis=dict(tickfont=dict(size=13)),
+                          margin=dict(t=50,b=60,l=60,r=20))
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+    # ── Gestapelte OOS Equity Curves ──────────────────────────────────────
+    if oos_equities:
+        st.subheader("OOS Equity Kurven je Fold")
+        fig_eq = go.Figure()
+        colors = ["#f7931a","#00d4aa","#42a5f5","#ab47bc","#ffa726","#66bb6a","#ef5350","#26c6da"]
+        for fi, eq in oos_equities:
+            norm = eq / eq.iloc[0] * 100  # normiert auf 100 Startbasis
+            fig_eq.add_trace(go.Scatter(x=eq.index, y=norm.values,
+                                        name=f"Fold {fi}",
+                                        line=dict(color=colors[(fi-1) % len(colors)], width=1.5)))
+        fig_eq.add_hline(y=100, line_color="white", line_dash="dash", line_width=1)
+        fig_eq.update_layout(title="OOS Equity je Fold (normiert auf 100)",
+                             height=350, template="plotly_dark", margin=dict(t=40,b=20))
+        st.plotly_chart(fig_eq, use_container_width=True)
+
+    # ── CSV Download ──────────────────────────────────────────────────────
+    st.download_button("⬇️ WFA-Ergebnis als CSV",
+                       data=wfa_df.to_csv(index=False).encode(),
+                       file_name="btc_weekday_wfa.csv", mime="text/csv")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # PARAMETER-STABILITÄTSANALYSE
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("Parameter-Stabilitätsanalyse")
+    st.caption("Welche SL / Trailing-Kombinationen liefern konsistent über ALLE Folds gute OOS-Ergebnisse?")
+
+    if param_stability:
+        stab_rows = []
+        for (sl_, tt_, to_, ma_, fm_), results in param_stability.items():
+            if len(results) < 2:
+                continue
+            pfs      = [r["pf"]         for r in results if r["n"] > 0]
+            rets     = [r["total_ret"]   for r in results if r["n"] > 0]
+            sharpes  = [r["sharpe"]      for r in results if r["n"] > 0]
+            trades   = [r["n"]           for r in results]
+            n_pos    = sum(1 for r in rets if r > 0) if rets else 0
+            n_folds  = len(results)
+
+            if not pfs:
+                continue
+
+            stab_rows.append({
+                "SL %":             f"{sl_:.2f}%",
+                "Trail-Trig %":     f"{tt_:.2f}%",
+                "Trail-Off %":      f"{to_:.2f}%",
+                "MA":               f"{ma_}",
+                "Filter":           fm_,
+                "Folds getestet":   n_folds,
+                "Profitable Folds": n_pos,
+                "Konsistenz %":     round(n_pos / n_folds * 100, 0),
+                "Ø OOS PF":         round(np.mean(pfs), 2),
+                "Ø OOS Ret %":      f"{round(np.mean(rets), 2):.2f}%",
+                "Ø OOS Sharpe":     round(np.mean(sharpes), 2),
+                "Min OOS Ret %":    f"{round(np.min(rets), 2):.2f}%",
+                "Max DD Ø":         f"{round(np.mean([r['max_dd'] for r in results]), 2):.2f}%",
+            })
+
+        if stab_rows:
+            df_stab = pd.DataFrame(stab_rows)
+            # Sortierung: erst Konsistenz, dann Ø PF
+            df_stab = df_stab.sort_values(
+                ["Konsistenz %", "Ø OOS PF", "Ø OOS Ret %"],
+                ascending=[False, False, False]
+            ).reset_index(drop=True)
+
+            # Top 3 hervorheben
+            st.markdown("#### 🏆 Top-10 stabilste Setups")
+            top10 = df_stab.head(10).copy()
+
+            def _hl_konsistenz(v):
+                if isinstance(v, (int, float)):
+                    if v >= 80: return "color:#22c55e;font-weight:700"
+                    if v >= 60: return "color:#f0c040"
+                    return "color:#ef5350"
+                return ""
+
+            def _hl_num(v):
+                if isinstance(v, (int, float)):
+                    return "color:#22c55e" if v > 0 else "color:#ef5350"
+                return ""
+
+            styled_stab = top10.style\
+                .map(_hl_konsistenz, subset=["Konsistenz %"])\
+                .map(_hl_num, subset=["Ø OOS PF"])
+            st.dataframe(styled_stab, use_container_width=True, hide_index=True)
+
+            # Heatmap: SL% vs Trail-Trig% → Ø Konsistenz
+            st.markdown("#### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
+            pivot = df_stab.pivot_table(
+                values="Konsistenz %",
+                index="SL %",
+                columns="Trail-Trig %",
+                aggfunc="mean"
+            ).round(0)
+
+            fig_heat = go.Figure(go.Heatmap(
+                z=pivot.values,
+                x=[f"Trail {c}%" for c in pivot.columns],
+                y=[f"SL {r}%" for r in pivot.index],
+                colorscale="RdYlGn",
+                zmin=0, zmax=100,
+                text=pivot.values.round(0).astype(str),
+                texttemplate="%{text}%",
+                showscale=True,
+                colorbar=dict(title="Konsistenz %")
+            ))
+            fig_heat.update_layout(
+                title="Ø Konsistenz je SL% / Trail-Trigger% Kombination",
+                height=350, template="plotly_dark",
+                margin=dict(t=50, b=30, l=80, r=20)
+            )
+            st.plotly_chart(fig_heat, use_container_width=True)
+
+            # Bestes Setup hervorheben
+            best = df_stab.iloc[0]
+            st.success(
+                f"**Stabilstes Setup:** SL {best['SL %']}% · "
+                f"Trail-Trigger {best['Trail-Trig %']}% · Trail-Abstand {best['Trail-Off %']}% · "
+                f"MA {best['MA']} · Filter: {best['Filter']} → "
+                f"**{int(best['Konsistenz %'])}% Konsistenz** · "
+                f"Ø OOS PF {best['Ø OOS PF']} · Ø OOS Ret {best['Ø OOS Ret %']}%"
+            )
+
+            # Download
+            st.download_button("⬇️ Stabilitätsanalyse als CSV",
+                               data=df_stab.to_csv(index=False).encode(),
+                               file_name="btc_param_stability.csv", mime="text/csv")
+        else:
+            st.info("Zu wenig Daten für Stabilitätsanalyse — mehr Folds oder breiteren Grid verwenden.")
+
+
+def render_pdh_pdl_strategie() -> None:
+    """PDH/PDL Proximity Reversal Strategy — Python-Backtest."""
+    import datetime as _dt
+
+    st.header("PDH/PDL Proximity Reversal Strategie")
+    st.caption("Long & Short · Previous Day High/Low Zonen · ATR-basierter Stop · RR-Ratio")
+
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("PDH/PDL: Einstellungen")
+        pdp_symbol = st.text_input("Symbol (Yahoo)", "NQ=F", key="pdp_sym")
+        pdp_start  = st.date_input("Von", _dt.date(2024, 1, 1), key="pdp_start")
+        pdp_end    = st.date_input("Bis", _dt.date.today(),     key="pdp_end")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("**Proximity Zone**")
+        zone_mode  = st.selectbox("Zonen-Modus", ["ATR", "Prozent"], key="pdp_zm")
+        atr_mult   = st.number_input("ATR-Multiplikator", 0.0, 2.0, 0.1, step=0.05, key="pdp_am")
+        pct_zone   = st.number_input("Zonen-Größe %", 0.0, 2.0, 0.1, step=0.05, key="pdp_pz")
+    with col2:
+        st.markdown("**Entry-Logik**")
+        use_close  = st.checkbox("Trigger auf Close (statt H/L)", False, key="pdp_uc")
+        long_on    = st.checkbox("Long-Setups", True, key="pdp_lo")
+        short_on   = st.checkbox("Short-Setups", True, key="pdp_so")
+    with col3:
+        st.markdown("**Risk**")
+        sl_buf     = st.number_input("SL-Puffer (Ticks)", 0.0, 20.0, 0.0, key="pdp_slb")
+        rr_ratio   = st.number_input("Risk-Reward-Ratio", 0.5, 10.0, 2.0, step=0.1, key="pdp_rr")
+
+    if not st.button("▶ Backtest starten", key="pdp_run"):
+        st.info("Parameter einstellen und Backtest starten.")
+        return
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        st.error("yfinance fehlt: `pip install yfinance`")
+        return
+
+    with st.spinner("Daten laden …"):
+        # M5-Daten (yfinance: max 60 Tage für 5m)
+        df_m5 = yf.download(pdp_symbol, start=str(pdp_start), end=str(pdp_end),
+                            interval="5m", auto_adjust=True, progress=False)
+        df_d  = yf.download(pdp_symbol, start=str(pdp_start), end=str(pdp_end),
+                            interval="1d", auto_adjust=True, progress=False)
+
+    if df_m5.empty or df_d.empty:
+        st.error("Keine Daten — Symbol und Zeitraum prüfen. Hinweis: yfinance liefert 5m-Daten nur für die letzten ~60 Tage.")
+        return
+
+    for _d in [df_m5, df_d]:
+        if isinstance(_d.columns, pd.MultiIndex):
+            _d.columns = _d.columns.get_level_values(0)
+    df_m5.index = pd.to_datetime(df_m5.index).tz_localize(None)
+    df_d.index  = pd.to_datetime(df_d.index).tz_localize(None)
+
+    # ── Daily ATR + PDH/PDL ───────────────────────────────────────────────────
+    dd = df_d.copy()
+    tr_d = pd.concat([dd["High"] - dd["Low"],
+                      (dd["High"] - dd["Close"].shift()).abs(),
+                      (dd["Low"]  - dd["Close"].shift()).abs()], axis=1).max(axis=1)
+    dd["ATR14"] = tr_d.rolling(14).mean()
+    dd["PDH"]   = dd["High"].shift(1)
+    dd["PDL"]   = dd["Low"].shift(1)
+    dd = dd[["PDH", "PDL", "ATR14"]].dropna()
+
+    m5 = df_m5.copy()
+    m5["date"] = m5.index.normalize()
+    dd.index   = pd.to_datetime(dd.index).normalize()
+    m5 = m5.merge(dd, left_on="date", right_index=True, how="left")
+    m5[["PDH","PDL","ATR14"]] = m5[["PDH","PDL","ATR14"]].ffill()
+
+    # ── Zonen berechnen ───────────────────────────────────────────────────────
+    if zone_mode == "ATR":
+        zone_h = m5["ATR14"] * atr_mult
+        zone_l = m5["ATR14"] * atr_mult
+    else:
+        zone_h = m5["PDH"] * (pct_zone / 100)
+        zone_l = m5["PDL"] * (pct_zone / 100)
+
+    m5["hzt"] = m5["PDH"] + zone_h
+    m5["hzb"] = m5["PDH"] - zone_h
+    m5["lzt"] = m5["PDL"] + zone_l
+    m5["lzb"] = m5["PDL"] - zone_l
+
+    m5["in_high"] = (m5["Close"] >= m5["hzb"]) & (m5["Close"] <= m5["hzt"])
+    m5["in_low"]  = (m5["Close"] >= m5["lzb"]) & (m5["Close"] <= m5["lzt"])
+
+    if use_close:
+        m5["short_trig"] = m5["Close"] < m5["Close"].shift(1)
+        m5["long_trig"]  = m5["Close"] > m5["Close"].shift(1)
+    else:
+        m5["short_trig"] = m5["Close"] < m5["Low"].shift(1)
+        m5["long_trig"]  = m5["Close"] > m5["High"].shift(1)
+
+    m5["long_sig"]  = long_on  & m5["in_low"]  & m5["long_trig"]  & m5["PDH"].notna()
+    m5["short_sig"] = short_on & m5["in_high"] & m5["short_trig"] & m5["PDH"].notna()
+
+    # ── Backtest ─────────────────────────────────────────────────────────────
+    capital, position, entry_price = 10_000.0, 0, 0.0
+    sl_price, tp_price, qty = 0.0, 0.0, 0.0
+    trades, equity_curve = [], []
+    tick = 0.25 if float(m5["Close"].iloc[-1]) > 1000 else 0.01
+
+    for ts, row in m5.iterrows():
+        c, h, l = float(row["Close"]), float(row["High"]), float(row["Low"])
+
+        if position == 1:
+            if l <= sl_price:
+                pnl = (sl_price - entry_price) * qty
+                capital += pnl
+                trades.append({"Zeit": ts, "Dir": "Long", "Entry": entry_price, "Exit": sl_price, "PnL $": round(pnl,2), "Grund": "SL"})
+                position = 0
+            elif h >= tp_price:
+                pnl = (tp_price - entry_price) * qty
+                capital += pnl
+                trades.append({"Zeit": ts, "Dir": "Long", "Entry": entry_price, "Exit": tp_price, "PnL $": round(pnl,2), "Grund": "TP"})
+                position = 0
+
+        elif position == -1:
+            if h >= sl_price:
+                pnl = (entry_price - sl_price) * qty
+                capital += pnl
+                trades.append({"Zeit": ts, "Dir": "Short", "Entry": entry_price, "Exit": sl_price, "PnL $": round(pnl,2), "Grund": "SL"})
+                position = 0
+            elif l <= tp_price:
+                pnl = (entry_price - tp_price) * qty
+                capital += pnl
+                trades.append({"Zeit": ts, "Dir": "Short", "Entry": entry_price, "Exit": tp_price, "PnL $": round(pnl,2), "Grund": "TP"})
+                position = 0
+
+        if position == 0:
+            buf = sl_buf * tick
+            if row["long_sig"]:
+                entry_price = c
+                sl_price    = float(row["Low"]) - buf
+                risk        = entry_price - sl_price
+                if risk > 0:
+                    tp_price = entry_price + risk * rr_ratio
+                    qty      = (capital * 0.10) / entry_price
+                    position = 1
+            elif row["short_sig"]:
+                entry_price = c
+                sl_price    = float(row["High"]) + buf
+                risk        = sl_price - entry_price
+                if risk > 0:
+                    tp_price = entry_price - risk * rr_ratio
+                    qty      = (capital * 0.10) / entry_price
+                    position = -1
+
+        equity_curve.append(capital)
+
+    m5["Equity"] = equity_curve
+    df_trades = pd.DataFrame(trades)
+
+    if df_trades.empty:
+        st.warning("Keine Trades — Zone oder Zeitraum anpassen.")
+        return
+
+    # ── KPIs ─────────────────────────────────────────────────────────────────
+    total_ret = (m5["Equity"].iloc[-1] - 10_000) / 10_000 * 100
+    n   = len(df_trades)
+    wr  = (df_trades["PnL $"] > 0).sum() / n * 100
+    gp  = df_trades.loc[df_trades["PnL $"] > 0, "PnL $"].sum()
+    gl  = df_trades.loc[df_trades["PnL $"] <= 0, "PnL $"].abs().sum()
+    pf  = gp / gl if gl > 0 else float("inf")
+    eq  = m5["Equity"]
+    dd_s = (eq - eq.cummax()) / eq.cummax() * 100
+    max_dd = dd_s.min()
+    ps  = df_trades["PnL $"]
+    sharpe = (ps.mean() / ps.std() * np.sqrt(252)) if ps.std() > 0 else 0
+
+    k1,k2,k3,k4,k5 = st.columns(5)
+    k1.metric("Gesamtrendite", f"{total_ret:.2f}%")
+    k2.metric("Trades",        n)
+    k3.metric("Win-Rate",      f"{wr:.1f}%")
+    k4.metric("Profit Factor", f"{pf:.2f}")
+    k5.metric("Sharpe",        f"{sharpe:.2f}")
+    st.metric("Max. Drawdown", f"{max_dd:.2f}%")
+
+    # ── Equity Curve ─────────────────────────────────────────────────────────
+    fig_eq = go.Figure()
+    fig_eq.add_trace(go.Scatter(x=m5.index, y=m5["Equity"], line=dict(color="#00d4aa", width=2), name="Equity"))
+    fig_eq.update_layout(title="Equity Curve", height=280, template="plotly_dark", margin=dict(t=40,b=20))
+    st.plotly_chart(fig_eq, use_container_width=True)
+
+    # ── PDH/PDL Zonen-Chart ───────────────────────────────────────────────────
+    fig_c = go.Figure()
+    fig_c.add_trace(go.Candlestick(x=m5.index, open=m5["Open"], high=m5["High"],
+                                   low=m5["Low"], close=m5["Close"], name="M5",
+                                   increasing_line_color="#26a69a", decreasing_line_color="#ef5350"))
+    fig_c.add_trace(go.Scatter(x=m5.index, y=m5["PDH"], name="PDH", line=dict(color="red",   width=1, dash="dash")))
+    fig_c.add_trace(go.Scatter(x=m5.index, y=m5["PDL"], name="PDL", line=dict(color="green", width=1, dash="dash")))
+    fig_c.update_layout(title="M5 Preis + PDH/PDL", height=400, template="plotly_dark",
+                        xaxis_rangeslider_visible=False, margin=dict(t=40,b=20))
+    st.plotly_chart(fig_c, use_container_width=True)
+
+    # ── Trades ───────────────────────────────────────────────────────────────
+    st.subheader("Trade-Liste")
+    st.dataframe(df_trades.style.map(lambda v: "color: #26a69a" if isinstance(v,(int,float)) and v > 0
+                                     else ("color: #ef5350" if isinstance(v,(int,float)) and v < 0 else ""),
+                                     subset=["PnL $"]), use_container_width=True)
+
+    ec = df_trades["Grund"].value_counts()
+    fig_p = go.Figure(go.Pie(labels=ec.index, values=ec.values, hole=0.4,
+                             marker_colors=["#ef5350","#26a69a","#ffa726"]))
+    fig_p.update_layout(title="Exit-Gründe", height=260, template="plotly_dark", margin=dict(t=40,b=10))
+    st.plotly_chart(fig_p, use_container_width=True)
+
+
 def render_muster_analyse() -> None:
     import datetime as _dt2
     from pathlib import Path as _Path
@@ -4761,7 +6106,7 @@ def render_muster_analyse() -> None:
     st.rerun()
 
 
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse"], horizontal=False, label_visibility="collapsed")
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "BTC WeekdayMA WFA"], horizontal=False, label_visibility="collapsed")
 
 if test_mode == "Seasonality Lab":
     render_seasonality_lab()
@@ -4773,6 +6118,14 @@ if test_mode == "Seasonality Muster":
 
 if test_mode == "Muster Analyse":
     render_muster_analyse()
+    st.stop()
+
+if test_mode == "Yen Mo-Mi Strategie":
+    render_yen_momi_strategie()
+    st.stop()
+
+if test_mode == "BTC WeekdayMA WFA":
+    render_btc_wfa()
     st.stop()
 
 with st.sidebar:
