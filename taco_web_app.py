@@ -5535,7 +5535,9 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
     st.info(f"**{len(folds)} Folds** · IS {is_months}M / OOS {oos_months}M  "
             f"· Grid-Größe: {len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)} Kombinationen je Fold")
 
-    wfa_cache_key = f"btc_wfa_results_{_yf_ticker}_{btc_start}_{btc_end}_{is_months}_{oos_months}"
+    wfa_cache_key = (f"btc_wfa_results_{_yf_ticker}_{btc_start}_{btc_end}"
+                     f"_{is_months}_{oos_months}_{entry_day}_{exit_day}"
+                     f"_{ma_type}_{sl_pct}_{use_trail}_{trail_trig}_{trail_off}")
 
     if run_btn or wfa_cache_key not in st.session_state:
         progress = st.progress(0, text="Walk-Forward läuft …")
@@ -6162,8 +6164,8 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
     # Trades aus WFA laden (Full-Sample Backtest mit base_params)
     mc_trades_raw = None
     if st.session_state.get("btc_wfa_ran") and "base_params" in st.session_state.get(
-            f"btc_wfa_results_{btc_start}_{btc_end}_{is_months}_{oos_months}", {}):
-        cached = st.session_state[f"btc_wfa_results_{btc_start}_{btc_end}_{is_months}_{oos_months}"]
+            wfa_cache_key, {}):
+        cached = st.session_state[wfa_cache_key]
         bp = cached["base_params"]
         try:
             mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), bp)
