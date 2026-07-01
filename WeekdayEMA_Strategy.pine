@@ -26,13 +26,13 @@ strategy(
 // ============================================================
 
 i_entryDay    = input.string("Sonntag",   "Entry-Tag",           options=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"], group="Entry")
-i_entryHour   = input.int(8,              "Entry-Stunde UTC (H4: 0/4/8/12/16/20)", minval=0, maxval=23, group="Entry",
-     tooltip="H4-kompatible Stunden in UTC: 0, 4, 8, 12, 16, 20\nBeispiel: 8 UTC = 10 Uhr Berlin Sommer / 9 Uhr Berlin Winter")
+i_entryHour   = input.int(20,             "Entry-Stunde UTC (H4: 0/4/8/12/16/20)", minval=0, maxval=23, group="Entry",
+     tooltip="H4-kompatible Stunden in UTC: 0, 4, 8, 12, 16, 20\n20 UTC = 22 Uhr Berlin Sommer UND Winter korrekt")
 i_entryMinute = input.int(0,              "Entry-Minute (0-59)", minval=0, maxval=59, group="Entry")
 
 i_exitDay     = input.string("Montag",    "Exit-Tag",            options=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"], group="Exit")
-i_exitHour    = input.int(16,             "Exit-Stunde UTC (H4: 0/4/8/12/16/20)",  minval=0, maxval=23, group="Exit",
-     tooltip="H4-kompatible Stunden in UTC: 0, 4, 8, 12, 16, 20\nBeispiel: 16 UTC = 18 Uhr Berlin Sommer / 17 Uhr Berlin Winter")
+i_exitHour    = input.int(20,             "Exit-Stunde UTC (H4: 0/4/8/12/16/20)",  minval=0, maxval=23, group="Exit",
+     tooltip="H4-kompatible Stunden in UTC: 0, 4, 8, 12, 16, 20\n20 UTC = 22 Uhr Berlin Sommer UND Winter korrekt")
 i_exitMinute  = input.int(0,              "Exit-Minute (0-59)",  minval=0, maxval=59, group="Exit")
 
 // MA-Typ: EMA oder SMA wählbar -> ermöglicht direkten Vergleich

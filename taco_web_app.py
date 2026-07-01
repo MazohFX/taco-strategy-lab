@@ -5514,6 +5514,10 @@ Du kannst diese Werte in deinem Pine Script in TradingView einstellen. **Wichtig
         tr_full, eq_full = _momi_backtest_engine(df_raw.copy(), base_params)
         m_full = _momi_metrics(tr_full, eq_full)
 
+    # Sofort speichern — MC findet Trades auch ohne WFA-Lauf
+    if not tr_full.empty:
+        st.session_state[f"mc_trades_{_yf_ticker}"] = tr_full
+
     st.markdown("---")
     st.subheader("Full-Sample Ergebnis (zur Orientierung, KEIN WFA)")
     fc1,fc2,fc3,fc4,fc5 = st.columns(5)
@@ -6192,20 +6196,16 @@ Simuliert **1.000 mögliche Zukunften** deiner Strategie durch zufälliges Misch
 Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — bevor du echtes Geld riskierst.
     """)
 
-    # Trades aus WFA laden — zuerst einfacher Ticker-Key, dann Cache-Key als Fallback
-    mc_trades_raw = None
-    if f"mc_trades_{_yf_ticker}" in st.session_state:
-        mc_trades_raw = st.session_state[f"mc_trades_{_yf_ticker}"]
-    elif "full_trades" in st.session_state.get(wfa_cache_key, {}):
-        mc_trades_raw = st.session_state[wfa_cache_key]["full_trades"]
-    elif st.session_state.get("btc_wfa_ran") and "base_params" in st.session_state.get(wfa_cache_key, {}):
-        try:
-            mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), st.session_state[wfa_cache_key]["base_params"])
-        except Exception:
-            pass
+    # Trades aus Full-Sample Backtest holen — wird immer berechnet (oben)
+    mc_trades_raw = st.session_state.get(f"mc_trades_{_yf_ticker}")
+    if mc_trades_raw is None or mc_trades_raw.empty:
+        mc_trades_raw = st.session_state.get(wfa_cache_key, {}).get("full_trades")
+    # Letzter Fallback: tr_full liegt im aktuellen Scope
+    if (mc_trades_raw is None or mc_trades_raw.empty) and not tr_full.empty:
+        mc_trades_raw = tr_full
 
     if mc_trades_raw is None or mc_trades_raw.empty:
-        st.info("Erst WFA starten — Monte Carlo nutzt die Trade-Ergebnisse des Full-Sample Backtests.")
+        st.info("Kein Backtest-Ergebnis — Seite neu laden und Parameter prüfen.")
     else:
         n_real = len(mc_trades_raw)
         real_rets = mc_trades_raw["PnL $"].values
