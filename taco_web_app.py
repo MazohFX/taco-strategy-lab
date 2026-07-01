@@ -6887,11 +6887,11 @@ Alle Coins handeln am **gleichen Wochentag** → Verluste kommen oft gleichzeiti
 
 
 def render_dax_ema_wfa() -> None:
-    """DAX EMA Strategie — Montag Entry / Mittwoch Exit auf GER40 Daily (Approximation der H4 Pine-Script-Logik)."""
+    """DAX EMA Strategie — Montag Entry / Mittwoch Exit auf GER40 Daily (Pepperstone MT5 CSV, ab 2008-03-26)."""
     import datetime as _dt
     from itertools import product as _prod
 
-    _dax_ticker = "^GDAXI"
+    _dax_ticker = "GER40"
     selected_name = "DAX — Germany 40 (GER40)"
 
     if not st.session_state.get("dax_wfa_ran") and f"dax_mc_trades_{_dax_ticker}" in st.session_state:
@@ -6901,21 +6901,18 @@ def render_dax_ema_wfa() -> None:
 
     with st.expander("ℹ️ Was wird hier getestet und wie funktioniert es?", expanded=False):
         st.markdown("""
-**Strategie:** Long-only Wochentag-Momentum auf DAX/GER40 (Daily-Daten via Yahoo Finance, `^GDAXI`)
+**Strategie:** Long-only Wochentag-Momentum auf DAX/GER40 (Pepperstone-MT5-Daily-Daten, dieselbe Quelle wie im TradingView-Chart)
 - **Entry:** Jeden Montag-Schlusskurs, wenn Kurs über dem EMA liegt (MA-Filter, optional) und der Trend stark genug ist (ADX-Filter, optional)
 - **Exit:** Mittwoch-Schlusskurs (zeitbasiert) — oder früher durch Stop-Loss / Trailing-Stop
-- **Vorlage:** basiert auf deiner Pine-Script-Strategie "WD-MA" (WeekdayMA Long Strategy), auf TradingView mit H4-Bars getestet
+- **Vorlage:** basiert auf deiner Pine-Script-Strategie "WD-MA" (WeekdayMA Long Strategy), auf TradingView **auf dem Tageschart** getestet
 
 ---
 
-**Wichtig — Daily-Approximation statt H4:**
+**Datenbasis:**
 
-Dein TradingView-Test lief auf H4-Bars mit exakter Uhrzeit (Montag 10:00 UTC Entry / Mittwoch 22:00 UTC Exit) über 18 Jahre Historie.
-Yahoo Finance liefert für Intraday-Daten (1h/4h) nur ca. 2 Jahre Historie zurück — zu wenig für eine robuste Walk-Forward-Analyse.
-
-Diese Python-Version nutzt daher **Daily-Daten** (wie die Crypto-WeekdayMA-Strategie): Entry = Montag-Schlusskurs, Exit = Mittwoch-Schlusskurs.
-Das ignoriert die exakte Uhrzeit, ermöglicht aber einen WFA/Ensemble/Monte-Carlo-Test über die volle DAX-Historie.
-**Grundregel:** Die Robustheitsaussage (stabil über viele Folds ja/nein) bleibt aussagekräftig — die exakten Trade-Level unterscheiden sich von TradingView.
+Läuft auf `data/mt5/GER40.csv` — echte Pepperstone-MT5-Tagesdaten (identische Quelle wie im Seasonality Lab), verfügbar ab **2008-03-26**
+(davor liefert die Historie nur Wochenbars, die deshalb ausgeschlossen werden). Da dein TradingView-Test ebenfalls auf dem Tageschart lief,
+ist das hier **keine Approximation**, sondern dieselbe Bar-Auflösung und Datenquelle — Entry = Montag-Schlusskurs, Exit = Mittwoch-Schlusskurs.
 
 ---
 
@@ -6935,7 +6932,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 - ❌ **Instabil → OVERFITTED** — funktioniert nur auf den Trainingsdaten
         """)
 
-    st.caption(f"Strategie: Montag-Entry / Mittwoch-Exit auf {_dax_ticker} (DAX) · Daily-Daten via yfinance · Rollierender IS/OOS-Test")
+    st.caption(f"Strategie: Montag-Entry / Mittwoch-Exit auf {_dax_ticker} (DAX/GER40) · Pepperstone-MT5-Daily-Daten · Rollierender IS/OOS-Test")
 
     # ════════════════════════════════════════════════════════════════════════
     # SIDEBAR — Strategie-Parameter (vorausgefüllt mit TradingView-Bestresultat)
@@ -6943,7 +6940,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
     with st.sidebar:
         st.markdown("---")
         st.subheader("DAX WFA: Parameter")
-        dax_start = st.date_input("Daten ab", _dt.date(2000, 1, 1), key="dax_start")
+        dax_start = st.date_input("Daten ab", _dt.date(2008, 3, 26), min_value=_dt.date(2008, 3, 26), key="dax_start",
+                                  help="Pepperstone-MT5-Historie liefert vor diesem Datum nur Wochenbars, keine Tagesbars.")
         dax_end   = st.date_input("Daten bis", _dt.date.today(), key="dax_end")
 
     # ── Strategie-Parameter ──────────────────────────────────────────────
@@ -7038,28 +7036,28 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         st.session_state["dax_ens_running"] = True
 
     # ════════════════════════════════════════════════════════════════════════
-    # DATEN LADEN — läuft immer, liefert Trades für Monte Carlo
+    # DATEN LADEN — Pepperstone MT5 CSV (echte GER40-Broker-Daten, dieselbe Quelle
+    # wie im TradingView-Test) · läuft immer, liefert Trades für Monte Carlo
     # ════════════════════════════════════════════════════════════════════════
-    try:
-        import yfinance as yf
-    except ImportError:
-        st.error("`pip install yfinance` fehlt.")
-        return
-
     cache_key = f"dax_df_{_dax_ticker}_{dax_start}_{dax_end}"
     if cache_key not in st.session_state or run_btn:
-        with st.spinner(f"{_dax_ticker} Daily-Daten laden …"):
-            st.session_state[cache_key] = yf.download(
-                _dax_ticker, start=str(dax_start), end=str(dax_end),
-                interval="1d", auto_adjust=True, progress=False)
+        with st.spinner("GER40 Pepperstone-MT5 Daily-Daten laden …"):
+            _loaded = load_ohlc_data("GER40", source="mt5")
+            if _loaded is None or _loaded.empty:
+                st.session_state[cache_key] = pd.DataFrame()
+            else:
+                _df_mt5 = _loaded.set_index("Date")
+                _df_mt5.index = pd.to_datetime(_df_mt5.index).tz_localize(None)
+                # Vor 2008-03-26 liefert die CSV Wochen- statt Tagesbars (MT5-Historientiefe) —
+                # ausschließen, sonst verfälscht das die Wochentag-Logik.
+                _df_mt5 = _df_mt5[_df_mt5.index >= pd.Timestamp("2008-03-26")]
+                _df_mt5 = _df_mt5[(_df_mt5.index >= pd.Timestamp(dax_start)) & (_df_mt5.index <= pd.Timestamp(dax_end))]
+                st.session_state[cache_key] = _df_mt5
     df_raw = st.session_state[cache_key]
 
     if df_raw.empty:
-        st.error("Keine DAX-Daten geladen.")
+        st.error("Keine DAX-Daten geladen — `data/mt5/GER40.csv` fehlt oder Zeitraum liegt außerhalb der Historie (ab 2008-03-26 verfügbar).")
         return
-    if isinstance(df_raw.columns, pd.MultiIndex):
-        df_raw.columns = df_raw.columns.get_level_values(0)
-    df_raw.index = pd.to_datetime(df_raw.index).tz_localize(None)
 
     st.success(f"✓ {len(df_raw)} Daily-Bars geladen ({df_raw.index[0].date()} → {df_raw.index[-1].date()})")
 
