@@ -4714,6 +4714,10 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     Optionale Kosten-Keys (Default 0 → kein Effekt, rückwärtskompatibel):
                  spread_pts (Round-Turn-Spread in Punkten), commission_pct (Round-Turn-Kommission
                  in % der Notional)
+    Optionaler fill_mode-Key (Default "close" → bisheriges Verhalten, rückwärtskompatibel):
+                 "close" = Fill im Signal-Bar (z.B. Montag-Close), "next_open" = Fill zum Open
+                 des nächsten Bars (z.B. Dienstag-Open, entspricht Pine-Default ohne
+                 process_orders_on_close)
     Gibt (df_trades, equity_series) zurück.
     """
     ma_period   = params["ma_period"]
@@ -4762,6 +4766,7 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     capital = 10_000.0
     position, entry_price, sl_price = 0, 0.0, 0.0
     trail_high, qty, trail_active = 0.0, 0.0, False
+    pending_entry = False
     trades, equity_curve = [], []
 
     sl_pct    = params["sl_pct"]
@@ -4770,9 +4775,24 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     trail_off  = params["trail_off"]
     half_spread    = params.get("spread_pts", 0.0) / 2.0
     commission_pct = params.get("commission_pct", 0.0)
+    # "close"     = Fill zum Signal-Bar-Close (z.B. Montag-Close) — Standardverhalten
+    # "next_open" = Fill zum Open des NÄCHSTEN Bars (z.B. Dienstag-Open) — Pine-Default ohne process_orders_on_close
+    fill_mode = params.get("fill_mode", "close")
 
     for ts, row in df.iterrows():
-        c, h, l = float(row["Close"]), float(row["High"]), float(row["Low"])
+        c, h, l, o = float(row["Close"]), float(row["High"]), float(row["Low"]), float(row["Open"])
+
+        # Entry vom Vortag fällig (next_open-Modus): jetzt zum Open dieses Bars füllen
+        if pending_entry and position == 0:
+            entry_price    = o + half_spread
+            sl_price       = entry_price * (1 - sl_pct / 100)
+            risk_per_trade = capital * (params.get("risk_pct", 1.0) / 100)
+            risk_per_unit  = entry_price - sl_price
+            qty            = (risk_per_trade / risk_per_unit) if risk_per_unit > 0 else 0
+            trail_high     = o
+            trail_active   = False
+            position       = 1
+            pending_entry  = False
 
         if position == 1:
             if use_trail and trail_active:
@@ -4799,16 +4819,20 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
                                 "PnL $": round(pnl, 2), "Grund": reason})
                 position, trail_active = 0, False
 
-        if position == 0 and row["entry_signal"]:
-            # Kauf zum Ask (Close plus halber Spread)
-            entry_price    = c + half_spread
-            sl_price       = entry_price * (1 - sl_pct / 100)
-            risk_per_trade = capital * (params.get("risk_pct", 1.0) / 100)
-            risk_per_unit  = entry_price - sl_price
-            qty            = (risk_per_trade / risk_per_unit) if risk_per_unit > 0 else 0
-            trail_high     = c
-            trail_active   = False
-            position       = 1
+        if position == 0 and not pending_entry and row["entry_signal"]:
+            if fill_mode == "next_open":
+                # Erst am nächsten Bar-Open füllen (siehe oben) — hier nur vormerken
+                pending_entry = True
+            else:
+                # Kauf zum Ask (Close plus halber Spread) — Fill im selben Bar
+                entry_price    = c + half_spread
+                sl_price       = entry_price * (1 - sl_pct / 100)
+                risk_per_trade = capital * (params.get("risk_pct", 1.0) / 100)
+                risk_per_unit  = entry_price - sl_price
+                qty            = (risk_per_trade / risk_per_unit) if risk_per_unit > 0 else 0
+                trail_high     = c
+                trail_active   = False
+                position       = 1
 
         equity_curve.append(capital)
 
@@ -6981,6 +7005,13 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         exit_day   = st.selectbox("Exit-Tag",   list(day_map_full.keys()), index=2, key="dax_xd")  # Mittwoch
         exit_hour  = st.number_input("Exit-Stunde (nur bei Intraday relevant)",  0, 23, 22, key="dax_xh")
         st.caption("Auf Daily-Daten zählt nur der Wochentag — Stunde wird ignoriert.")
+        fill_mode_label = st.selectbox(
+            "Entry-Fill",
+            ["Montag Close (Signal-Bar)", "Dienstag Open (nächster Bar)"],
+            index=0, key="dax_fillmode",
+            help="TradingView (Pine-Default ohne process_orders_on_close) füllt Orders erst zum Open "
+                 "des NÄCHSTEN Bars, nicht zum Signal-Bar-Close. 'Dienstag Open' bildet das nach.")
+        fill_mode = "close" if fill_mode_label.startswith("Montag") else "next_open"
     with pc2:
         st.markdown("**MA & Filter**")
         ma_type     = st.selectbox("MA-Typ",      ["EMA","SMA"], index=0,                key="dax_mt")
@@ -7123,6 +7154,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         "risk_pct":    float(risk_pct),
         "spread_pts":     float(spread_pts),
         "commission_pct": float(commission_pct),
+        "fill_mode":      fill_mode,
     }
 
     with st.spinner("Full-Sample Backtest …"):
@@ -7148,6 +7180,35 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
     fig_full.update_layout(title="Full-Sample Equity Curve", height=250,
                            template="plotly_dark", margin=dict(t=35,b=15))
     st.plotly_chart(fig_full, use_container_width=True)
+
+    # ── Entry-Fill-Vergleich: Montag-Close vs. Dienstag-Open ──────────────
+    st.markdown("---")
+    st.subheader("Entry-Fill-Vergleich: Montag-Close vs. Dienstag-Open")
+    st.caption("Gleiche Parameter, gleicher Zeitraum — nur der Fill-Zeitpunkt unterscheidet sich. "
+               "Zeigt direkt, ob der 1-Bar-frühere Einstieg (Montag-Close) mehr Rendite bringt als der "
+               "TradingView-Standard-Fill (Dienstag-Open).")
+    with st.spinner("Fill-Vergleich läuft …"):
+        _params_close     = {**base_params, "fill_mode": "close"}
+        _params_next_open = {**base_params, "fill_mode": "next_open"}
+        _tr_close,     _eq_close     = _momi_backtest_engine(df_raw.copy(), _params_close)
+        _tr_next_open, _eq_next_open = _momi_backtest_engine(df_raw.copy(), _params_next_open)
+        _m_close     = _momi_metrics(_tr_close,     _eq_close)
+        _m_next_open = _momi_metrics(_tr_next_open, _eq_next_open)
+
+    _cmp_df = pd.DataFrame([
+        {"Fill-Modus": "Montag Close (Signal-Bar)",   "Rendite %": _m_close["total_ret"],     "Trades": _m_close["n"],
+         "Win-Rate %": _m_close["wr"],     "Profit Factor": _m_close["pf"],     "Sharpe": _m_close["sharpe"],     "Max DD %": _m_close["max_dd"]},
+        {"Fill-Modus": "Dienstag Open (nächster Bar)", "Rendite %": _m_next_open["total_ret"], "Trades": _m_next_open["n"],
+         "Win-Rate %": _m_next_open["wr"], "Profit Factor": _m_next_open["pf"], "Sharpe": _m_next_open["sharpe"], "Max DD %": _m_next_open["max_dd"]},
+    ])
+    st.dataframe(_cmp_df, use_container_width=True, hide_index=True)
+
+    _better = "Montag Close" if _m_close["total_ret"] > _m_next_open["total_ret"] else "Dienstag Open"
+    _diff   = abs(_m_close["total_ret"] - _m_next_open["total_ret"])
+    st.info(f"**{_better}** liefert im Full-Sample-Test die höhere Rendite "
+            f"({_m_close['total_ret']:.1f}% vs. {_m_next_open['total_ret']:.1f}%, Differenz {_diff:.1f} Prozentpunkte). "
+            f"Der aktuell in Strategie-Parameter gewählte Fill-Modus (**{fill_mode_label}**) wird unten in WFA/Ensemble/Monte-Carlo verwendet — "
+            f"stell ihn ggf. um, falls der andere Modus hier besser abschneidet.")
 
     # ════════════════════════════════════════════════════════════════════════
     # WALK-FORWARD ANALYSE
