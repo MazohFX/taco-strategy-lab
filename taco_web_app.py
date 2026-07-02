@@ -6952,6 +6952,14 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
     st.caption(f"Strategie: Montag-Entry / Mittwoch-Exit auf {_dax_ticker} (DAX/GER40) · Pepperstone-MT5-Daily-Daten · Rollierender IS/OOS-Test")
 
+    st.markdown(
+        '<div style="background:#1e293b55;border:1px solid rgba(148,163,184,.25);border-radius:8px;'
+        'padding:10px 16px;font-size:.85rem;color:#94a3b8;margin:4px 0 16px 0;">'
+        '📌 <b>Referenz-Ergebnis (WFA vom 2026-07-02, enger Standard-Suchraum SL 1.0–2.0% / MA 100–200 / Trail 0.1–0.2%):</b><br>'
+        'Robustestes Setup: SL 2.00% · Trail-Trigger 0.10% · Trail-Abstand 0.10% · MA 100 · Filter: Kein Filter (nur Zeit) '
+        '→ 100% Konsistenz · Ø OOS PF 4.63 · Ø OOS Ret 21.62% — mit Spread 1,5 Pkt / 0% Kommission gerechnet.'
+        '</div>', unsafe_allow_html=True)
+
     # ════════════════════════════════════════════════════════════════════════
     # SIDEBAR — Strategie-Parameter (vorausgefüllt mit TradingView-Bestresultat)
     # ════════════════════════════════════════════════════════════════════════
@@ -7017,17 +7025,21 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
     # ── Grid-Suchraum ─────────────────────────────────────────────────────
     with st.expander("Grid-Suchraum (IS-Optimierung)"):
+        st.caption("Standard-Suchraum bewusst breiter als bei Crypto: testet auch WEITE Trailing-Abstände (bis 1.0%), "
+                   "nicht nur enge — sonst gewinnt der engste Trail per Konstruktion, weil er nie zur Auswahl stand.")
         gc1, gc2, gc3 = st.columns(3)
         with gc1:
-            g_sl   = st.multiselect("SL %",           [0.5,1.0,1.5,1.8,2.0,2.5,3.0], default=[1.0,1.5,2.0],      key="dax_gsl")
-            g_ma   = st.multiselect("MA-Periode",      [20,50,100,200],                default=[100,200],          key="dax_gma")
+            g_sl   = st.multiselect("SL %",           [0.5,1.0,1.5,1.8,2.0,2.5,3.0], default=[1.0,1.5,2.0,2.5],  key="dax_gsl")
+            g_ma   = st.multiselect("MA-Periode",      [20,50,100,200],                default=[50,100,200],       key="dax_gma")
         with gc2:
             g_fm   = st.multiselect("Filter-Modus",   ["Kein Filter (nur Zeit)","Close > MA","MA steigt"],
-                                     default=["Kein Filter (nur Zeit)","Close > MA"],   key="dax_gfm")
+                                     default=["Kein Filter (nur Zeit)","Close > MA","MA steigt"],   key="dax_gfm")
             g_adx  = st.multiselect("ADX-Schwelle",   [15,20,25,30],                  default=[20],               key="dax_gadx")
         with gc3:
-            g_tt   = st.multiselect("Trail-Trigger %",[0.1,0.2,0.3,0.5],              default=[0.1,0.2],          key="dax_gtt")
-            g_to   = st.multiselect("Trail-Abstand %",[0.1,0.2,0.3,0.4],              default=[0.1,0.2],          key="dax_gto")
+            g_tt   = st.multiselect("Trail-Trigger %",[0.1,0.2,0.3,0.5,0.75,1.0],     default=[0.1,0.3,0.5,1.0],  key="dax_gtt")
+            g_to   = st.multiselect("Trail-Abstand %",[0.1,0.2,0.3,0.4,0.75,1.0],     default=[0.1,0.3,0.4,1.0],  key="dax_gto")
+        n_grid_combos = len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)
+        st.caption(f"Aktueller Suchraum: {n_grid_combos} Kombinationen je Fold — bei vielen Folds kann ein Lauf mehrere Minuten dauern.")
 
         st.markdown("---")
         _opt_days = st.checkbox("Entry/Exit-Tag mit optimieren", value=False, key="dax_opt_days",
