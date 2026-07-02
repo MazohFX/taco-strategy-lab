@@ -4711,6 +4711,9 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     params-Keys: entry_dow, exit_dow, entry_hour, entry_min, exit_hour, exit_min,
                  ma_type, ma_period, filter_mode, use_adx, adx_thresh,
                  sl_pct, use_trail, trail_trig, trail_off
+    Optionale Kosten-Keys (Default 0 → kein Effekt, rückwärtskompatibel):
+                 spread_pts (Round-Turn-Spread in Punkten), commission_pct (Round-Turn-Kommission
+                 in % der Notional)
     Gibt (df_trades, equity_series) zurück.
     """
     ma_period   = params["ma_period"]
@@ -4765,6 +4768,8 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     use_trail = params["use_trail"]
     trail_trig = params["trail_trig"]
     trail_off  = params["trail_off"]
+    half_spread    = params.get("spread_pts", 0.0) / 2.0
+    commission_pct = params.get("commission_pct", 0.0)
 
     for ts, row in df.iterrows():
         c, h, l = float(row["Close"]), float(row["High"]), float(row["Low"])
@@ -4784,15 +4789,20 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
                 exit_price, reason = c, "Time Exit"
 
             if exit_price is not None:
-                pnl = (exit_price - entry_price) * qty
+                # Verkauf zum Bid (Close/Stop minus halber Spread) + optionale Kommission
+                exit_price_net = exit_price - half_spread
+                pnl = (exit_price_net - entry_price) * qty
+                if commission_pct > 0:
+                    pnl -= qty * entry_price * (commission_pct / 100)
                 capital += pnl
-                trades.append({"Zeit": ts, "Entry": entry_price, "Exit": exit_price,
+                trades.append({"Zeit": ts, "Entry": entry_price, "Exit": exit_price_net,
                                 "PnL $": round(pnl, 2), "Grund": reason})
                 position, trail_active = 0, False
 
         if position == 0 and row["entry_signal"]:
-            entry_price    = c
-            sl_price       = c * (1 - sl_pct / 100)
+            # Kauf zum Ask (Close plus halber Spread)
+            entry_price    = c + half_spread
+            sl_price       = entry_price * (1 - sl_pct / 100)
             risk_per_trade = capital * (params.get("risk_pct", 1.0) / 100)
             risk_per_unit  = entry_price - sl_price
             qty            = (risk_per_trade / risk_per_unit) if risk_per_unit > 0 else 0
@@ -6916,6 +6926,14 @@ ist das hier **keine Approximation**, sondern dieselbe Bar-Auflösung und Datenq
 
 ---
 
+**Handelskosten:**
+
+Spread und Kommission werden in JEDEM Backtest berücksichtigt (Full-Sample, WFA, Ensemble, Monte-Carlo-Trades) — nicht nur zur Anzeige.
+Der Spread wird hälftig auf Entry (Kauf zum Ask) und Exit (Verkauf zum Bid) angerechnet, die Kommission als % der Positionsgröße pro Round-Turn.
+Defaults (Pepperstone GER40): **1,5 Punkte Spread**, **0% Kommission** (Pepperstone erhebt auf Index-CFDs standardmäßig keine Kommission — die Kosten stecken im Spread). Beides ist links einstellbar; 0/0 rechnet wie zuvor ohne Kosten.
+
+---
+
 **Walk-Forward Analyse (WFA) — wie es funktioniert:**
 
 Der gesamte Zeitraum wird in mehrere **Folds** aufgeteilt. Jeder Fold besteht aus zwei Phasen:
@@ -6946,7 +6964,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
     # ── Strategie-Parameter ──────────────────────────────────────────────
     st.subheader("Strategie-Parameter")
-    pc1, pc2, pc3 = st.columns(3)
+    pc1, pc2, pc3, pc4 = st.columns(4)
     with pc1:
         st.markdown("**Entry / Exit**")
         day_map_full = {"Montag":0,"Dienstag":1,"Mittwoch":2,"Donnerstag":3,"Freitag":4,"Samstag":5,"Sonntag":6}
@@ -6972,6 +6990,16 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         st.markdown("---")
         risk_pct   = st.number_input("Risiko pro Trade %", 0.1, 5.0, 1.0, step=0.1, key="dax_risk",
                                      help="1% = bei 100.000€ Konto riskierst du 1.000€ pro Trade (basierend auf SL-Abstand)")
+    with pc4:
+        st.markdown("**Handelskosten**")
+        spread_pts = st.number_input("Spread (Punkte, Round-Turn)", 0.0, 20.0, 1.5, step=0.1, key="dax_spread",
+                                     help="Pepperstone GER40: Ø ca. 1.0–1.5 Punkte je nach Marktlage/Rollover. "
+                                          "Wird hälftig auf Entry (Ask) und Exit (Bid) angerechnet.")
+        commission_pct = st.number_input("Kommission (% Notional, Round-Turn)", 0.0, 1.0, 0.0, step=0.01, key="dax_comm",
+                                         help="Pepperstone erhebt auf Index-CFDs standardmäßig KEINE Kommission — "
+                                              "Kosten stecken komplett im Spread. Nur für Razor-artige Konten mit "
+                                              "separater Kommission relevant.")
+        st.caption("0 Punkte / 0% = wie bisher ohne Handelskosten rechnen.")
 
     # ── WFA-Konfiguration ─────────────────────────────────────────────────
     st.markdown("---")
@@ -7081,6 +7109,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         "trail_trig":  float(trail_trig),
         "trail_off":   float(trail_off),
         "risk_pct":    float(risk_pct),
+        "spread_pts":     float(spread_pts),
+        "commission_pct": float(commission_pct),
     }
 
     with st.spinner("Full-Sample Backtest …"):
