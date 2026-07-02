@@ -7852,7 +7852,7 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
         st.info("ℹ️ Kein Zeitlimit — die Simulation läuft bis das Profit-Ziel erreicht **oder** "
                 "die Drawdown-Grenze verletzt wird. Genau wie moderne Prop Firms.")
 
-        mc1, mc2 = st.columns(2)
+        mc1, mc2, mc3 = st.columns(3)
         with mc1:
             st.markdown("**Challenge-Regeln (Prop Firm)**")
             challenge_capital    = st.number_input("Startkapital ($)", 10_000, 200_000, 100_000, step=10_000, key="dax_mc_cap")
@@ -7870,6 +7870,13 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
             max_trades_sim = st.number_input("Max. Trades pro Simulation", 10, 500, 100, step=10, key="dax_mc_maxt",
                                               help="Sicherheitsnetz: nach X Trades ohne Ergebnis gilt die Sim als 'nicht bestanden'")
             risk_per_trade = st.number_input("Risiko pro Trade (%)", 0.1, 5.0, 1.0, step=0.1, key="dax_mc_risk")
+        with mc3:
+            st.markdown("**Funded Account — Payout-Ziele**")
+            payout1_pct = st.number_input("1. Payout-Ziel (%)", 0.5, 20.0, 1.0, step=0.5, key="dax_mc_payout1",
+                                          help="Profitziel im Funded Account für den ersten Payout")
+            payout2_pct = st.number_input("2. Payout-Ziel (%)", 0.5, 20.0, 2.0, step=0.5, key="dax_mc_payout2",
+                                          help="Profitziel im Funded Account für den zweiten, höheren Payout")
+            st.caption("Simuliert wird ab dem Kapital am Ende von Phase 2 weiter, mit denselben DD-Regeln — nur für Sims, die Phase 1+2 bestanden haben.")
 
         run_mc = st.button("▶ Monte Carlo starten", type="primary", key="dax_mc_run_btn")
         if run_mc:
@@ -7922,6 +7929,40 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
                 passed    = not failed and final_pct >= target_pct
                 return passed, reason, n_trades, final_pct, path
 
+            def _run_funded_phase(cap, target1_pct, target2_pct, norm_r, risk_pct, dd_total, dd_daily, max_t):
+                """Simuliert den Funded Account nach bestandener Phase 2; trackt zwei Payout-Meilensteine
+                entlang EINES durchgehenden Pfads (kein Reset zwischen den Zielen)."""
+                capital   = float(cap)
+                peak      = capital
+                day_start = capital
+                n_trades  = 0
+                p1_ok, p1_trades = False, 0
+                p2_ok, p2_trades = False, 0
+                stop_target = max(target1_pct, target2_pct)
+                while True:
+                    nr      = norm_r[np.random.randint(len(norm_r))]
+                    pnl     = capital * (risk_pct / 100) * nr
+                    capital += pnl
+                    peak    = max(peak, capital)
+                    n_trades += 1
+                    daily_dd = (capital - day_start) / day_start * 100
+                    if daily_dd < -dd_daily:
+                        break
+                    day_start = capital
+                    total_dd = (capital - peak) / peak * 100
+                    if total_dd < -dd_total:
+                        break
+                    profit = (capital - cap) / cap * 100
+                    if not p1_ok and profit >= target1_pct:
+                        p1_ok, p1_trades = True, n_trades
+                    if not p2_ok and profit >= target2_pct:
+                        p2_ok, p2_trades = True, n_trades
+                    if profit >= stop_target:
+                        break
+                    if n_trades >= max_t:
+                        break
+                return p1_ok, p1_trades, p2_ok, p2_trades
+
             for sim_i in range(n_sims_int):
                 # ── Phase 1 ──
                 p1_passed, p1_reason, p1_trades, p1_pct, p1_path = _run_phase(
@@ -7935,6 +7976,14 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
                         challenge_capital, profit_target_p2_pct, norm_rets,
                         risk_per_trade, max_total_dd_pct, max_daily_dd_pct, int(max_trades_sim))
 
+                # ── Funded Account: Payout-Meilensteine (nur wenn Phase 2 bestanden) ──
+                fp1_ok, fp1_trades, fp2_ok, fp2_trades = False, 0, False, 0
+                if p2_passed:
+                    funded_start_cap = challenge_capital * (1 + p2_pct / 100)
+                    fp1_ok, fp1_trades, fp2_ok, fp2_trades = _run_funded_phase(
+                        funded_start_cap, payout1_pct, payout2_pct, norm_rets,
+                        risk_per_trade, max_total_dd_pct, max_daily_dd_pct, int(max_trades_sim))
+
                 results.append({
                     "p1_passed":  p1_passed,
                     "p1_reason":  p1_reason,
@@ -7945,6 +7994,10 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
                     "p2_trades":  p2_trades,
                     "p2_pct":     p2_pct,
                     "payout":     p1_passed and p2_passed,
+                    "fp1_ok":     fp1_ok,
+                    "fp1_trades": fp1_trades,
+                    "fp2_ok":     fp2_ok,
+                    "fp2_trades": fp2_trades,
                 })
                 if sim_i < 200:
                     all_paths_p1.append(p1_path)
@@ -7957,9 +8010,10 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
             df_res = pd.DataFrame(results)
             n_p1_pass  = df_res["p1_passed"].sum()
             n_p1_fail  = (~df_res["p1_passed"]).sum()
-            n_p2_pass  = df_res["p2_passed"].sum()   # = payout
+            n_p2_pass  = df_res["p2_passed"].sum()   # = payout = Funded-Basis
             n_p2_fail  = (df_res["p1_passed"] & ~df_res["p2_passed"]).sum()
             n_payout   = df_res["payout"].sum()
+            n_funded   = n_p2_pass
 
             p1_pct_val   = n_p1_pass / n_sims_int * 100
             p2_cond_pct  = n_p2_pass / n_p1_pass * 100 if n_p1_pass > 0 else 0   # P(P2|P1)
@@ -7967,6 +8021,20 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
 
             avg_t_p1 = df_res.loc[df_res["p1_passed"], "p1_trades"].mean() if n_p1_pass > 0 else 0
             avg_t_p2 = df_res.loc[df_res["p2_passed"], "p2_trades"].mean() if n_p2_pass > 0 else 0
+
+            # ── Funded-Payout-Kennzahlen ────────────────────────────────────
+            n_payout1 = df_res["fp1_ok"].sum()
+            n_payout2 = df_res["fp2_ok"].sum()
+            pct_payout1_funded = n_payout1 / n_funded * 100 if n_funded > 0 else 0
+            pct_payout2_funded = n_payout2 / n_funded * 100 if n_funded > 0 else 0
+            pct_payout1_all    = n_payout1 / n_sims_int * 100
+            pct_payout2_all    = n_payout2 / n_sims_int * 100
+            avg_wk_fp1 = df_res.loc[df_res["fp1_ok"], "fp1_trades"].mean() if n_payout1 > 0 else 0
+            avg_wk_fp2 = df_res.loc[df_res["fp2_ok"], "fp2_trades"].mean() if n_payout2 > 0 else 0
+            _full1 = df_res[df_res["fp1_ok"]]
+            _full2 = df_res[df_res["fp2_ok"]]
+            avg_total_wk_payout1 = (_full1["p1_trades"] + _full1["p2_trades"] + _full1["fp1_trades"]).mean() if len(_full1) > 0 else 0
+            avg_total_wk_payout2 = (_full2["p1_trades"] + _full2["p2_trades"] + _full2["fp2_trades"]).mean() if len(_full2) > 0 else 0
 
             # ── Payout Badge ──────────────────────────────────────────────
             if payout_pct >= 40:
@@ -8089,6 +8157,65 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
                             xaxis_title="Trades/Wochen", yaxis_title="Anzahl",
                             margin=dict(t=40, b=30, l=50, r=10))
                         st.plotly_chart(fig_tw2, use_container_width=True)
+
+            # ════════════════════════════════════════════════════════════════
+            # FUNDED ACCOUNT — PAYOUT-WAHRSCHEINLICHKEIT (1% / 2%)
+            # ════════════════════════════════════════════════════════════════
+            st.markdown("---")
+            st.subheader("Funded Account — Payout-Wahrscheinlichkeit")
+            st.caption(f"Simuliert wird ab dem Kapital am Ende von Phase 2 weiter (gleiche DD-Regeln) — "
+                       f"Basis: {n_funded}/{n_sims_int} Sims, die Phase 1 + Phase 2 bestanden haben (Funded Account).")
+
+            fp_c1, fp_c2, fp_c3, fp_c4 = st.columns(4)
+            fp_c1.metric(f"{payout1_pct:.1f}% Payout | Funded", f"{pct_payout1_funded:.1f}%",
+                         f"{n_payout1}/{n_funded if n_funded else '\u2013'}",
+                         help="Anteil der Funded-Sims, die im Funded Account das erste Payout-Ziel erreichen")
+            fp_c2.metric(f"{payout1_pct:.1f}% Payout | alle Sims", f"{pct_payout1_all:.1f}%", f"{n_payout1}/{n_sims_int}",
+                         help="Gleiche Kennzahl, aber bezogen auf ALLE Simulationen (inkl. an Phase 1/2 gescheiterte)")
+            fp_c3.metric(f"{payout2_pct:.1f}% Payout | Funded", f"{pct_payout2_funded:.1f}%",
+                         f"{n_payout2}/{n_funded if n_funded else '\u2013'}",
+                         help="Anteil der Funded-Sims, die im Funded Account das zweite, höhere Payout-Ziel erreichen")
+            fp_c4.metric(f"{payout2_pct:.1f}% Payout | alle Sims", f"{pct_payout2_all:.1f}%", f"{n_payout2}/{n_sims_int}",
+                         help="Gleiche Kennzahl, aber bezogen auf ALLE Simulationen (inkl. an Phase 1/2 gescheiterte)")
+
+            fp_w1, fp_w2 = st.columns(2)
+            fp_w1.metric(f"Ø Wochen im Funded Account bis {payout1_pct:.1f}% Payout",
+                         f"{avg_wk_fp1:.0f} Wo." if avg_wk_fp1 > 0 else "\u2013")
+            fp_w2.metric(f"Ø Wochen im Funded Account bis {payout2_pct:.1f}% Payout",
+                         f"{avg_wk_fp2:.0f} Wo." if avg_wk_fp2 > 0 else "\u2013")
+
+            st.markdown("#### Zusammenfassung — Gesamtdauer bis zum Payout")
+            st.caption("Phase 1 + Phase 2 + Funded Account zusammengerechnet, nur für Sims die den jeweiligen Payout tatsächlich erreichen.")
+            sum_c1, sum_c2 = st.columns(2)
+            sum_c1.metric(f"Ø Wochen gesamt bis {payout1_pct:.1f}% Payout",
+                          f"{avg_total_wk_payout1:.0f} Wo." if avg_total_wk_payout1 > 0 else "\u2013")
+            sum_c2.metric(f"Ø Wochen gesamt bis {payout2_pct:.1f}% Payout",
+                          f"{avg_total_wk_payout2:.0f} Wo." if avg_total_wk_payout2 > 0 else "\u2013")
+
+            if n_payout1 > 0 or n_payout2 > 0:
+                fp_h1, fp_h2 = st.columns(2)
+                with fp_h1:
+                    if n_payout1 > 0:
+                        fig_fp1 = go.Figure(go.Histogram(
+                            x=df_res.loc[df_res["fp1_ok"], "fp1_trades"], nbinsx=20,
+                            marker_color="#ffa726"))
+                        fig_fp1.update_layout(
+                            title=f"{payout1_pct:.1f}% Payout: Wochen im Funded Account (Ø {avg_wk_fp1:.0f} Wo.)",
+                            height=220, template="plotly_dark",
+                            xaxis_title="Trades/Wochen", yaxis_title="Anzahl",
+                            margin=dict(t=40, b=30, l=50, r=10))
+                        st.plotly_chart(fig_fp1, use_container_width=True)
+                with fp_h2:
+                    if n_payout2 > 0:
+                        fig_fp2 = go.Figure(go.Histogram(
+                            x=df_res.loc[df_res["fp2_ok"], "fp2_trades"], nbinsx=20,
+                            marker_color="#ab47bc"))
+                        fig_fp2.update_layout(
+                            title=f"{payout2_pct:.1f}% Payout: Wochen im Funded Account (Ø {avg_wk_fp2:.0f} Wo.)",
+                            height=220, template="plotly_dark",
+                            xaxis_title="Trades/Wochen", yaxis_title="Anzahl",
+                            margin=dict(t=40, b=30, l=50, r=10))
+                        st.plotly_chart(fig_fp2, use_container_width=True)
 
             if n_real < 30:
                 st.warning(f"⚠️ Nur {n_real} echte Trades — Monte Carlo Ergebnisse haben hohe Unsicherheit. "
