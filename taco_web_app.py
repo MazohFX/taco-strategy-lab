@@ -8039,9 +8039,24 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
                    f"Win-Rate: {(real_rets > 0).mean()*100:.1f}% · "
                    f"Ø Trade: {real_rets.mean():.2f}$ · "
                    f"Trades/Jahr: ~{n_real / max(1, (df_raw.index[-1]-df_raw.index[0]).days / 365):.0f}")
-        st.caption(f"📌 Diese Trades (und damit die Monte-Carlo-Simulation unten) basieren auf dem aktuell oben "
-                   f"gewählten Fill-Modus: **{fill_mode_label}**. Ändere ihn oben in den Strategie-Parametern, "
-                   f"um mit dem anderen Modus zu simulieren — die Trades aktualisieren sich automatisch.")
+        _dow_label = {"Montag":"Mo","Dienstag":"Di","Mittwoch":"Mi","Donnerstag":"Do","Freitag":"Fr","Samstag":"Sa","Sonntag":"So"}
+        st.markdown(
+            '<div style="background:#1e293b55;border:1px solid rgba(148,163,184,.25);border-radius:8px;'
+            'padding:10px 16px;font-size:.85rem;color:#94a3b8;margin:8px 0 12px 0;">'
+            '📌 <b>Genau diese Strategie/Parameter werden hier simuliert</b> '
+            '(Full-Sample-Backtest mit aktuellen Strategie-Parametern oben — <u>nicht</u> die WFA-Fold-optimierten '
+            'oder die Ensemble-"robustesten" Werte, die sind nur Empfehlungen für die manuelle Eingabe hier):<br>'
+            f'Entry <b>{_dow_label.get(entry_day, entry_day)}</b> → Exit <b>{_dow_label.get(exit_day, exit_day)}</b> · '
+            f'Fill-Modus: <b>{fill_mode_label}</b> · '
+            f'MA: <b>{ma_type} {ma_period}</b> · Filter: <b>{filter_mode}</b> · '
+            f'ADX-Filter: <b>{"an, Schwelle " + str(adx_thresh) if use_adx else "aus"}</b><br>'
+            f'SL: <b>{sl_pct if use_sl else "aus"}%</b> · '
+            f'Trailing: <b>{("Trigger " + str(trail_trig) + "% / Abstand " + str(trail_off) + "%") if use_trail else "aus"}</b> · '
+            f'Spread: <b>{spread_pts:.1f} Pkt</b> · Kommission: <b>{commission_pct:.2f}%</b> · '
+            f'Risiko/Trade: <b>{risk_pct:.1f}%</b>'
+            '</div>', unsafe_allow_html=True)
+        st.caption("Ändere Parameter oben in den Strategie-Parametern, um mit anderen Werten zu simulieren — "
+                   "die Trades hier aktualisieren sich automatisch bei jedem Rerun.")
 
         if n_real < 20:
             st.warning(f"⚠️ Nur {n_real} Trades — Monte Carlo Ergebnisse haben hohe Unsicherheit. "
