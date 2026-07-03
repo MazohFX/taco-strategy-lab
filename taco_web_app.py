@@ -7093,6 +7093,12 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             g_entry_dows = [day_map_full[entry_day]]
             g_exit_dows  = [day_map_full[exit_day]]
 
+    test_both_fills = st.checkbox(
+        "Beide Fill-Modi automatisch testen & speichern (Montag Close + Dienstag Open)",
+        value=True, key="dax_test_both_fills",
+        help="WFA und Ensemble berechnen dann bei jedem Start BEIDE Varianten und speichern sie getrennt — "
+             "kein manuelles Umschalten + erneutes Starten nötig, um sie zu vergleichen. Dauert etwa doppelt so lange.")
+
     _btn_col1, _btn_col2 = st.columns([1, 1])
     with _btn_col1:
         run_btn = st.button("🔄 WFA starten", type="primary", use_container_width=True, key="dax_run")
@@ -7244,18 +7250,21 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             st.info(f"**{len(folds)} Folds** · IS {is_months}M / OOS {oos_months}M  "
                     f"· Grid-Größe: {len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)} Kombinationen je Fold")
 
-    wfa_cache_key = (f"dax_wfa_results_{_dax_ticker}_{dax_start}_{dax_end}"
-                     f"_{is_months}_{oos_months}_{entry_day}_{exit_day}"
-                     f"_{ma_type}_{sl_pct}_{use_trail}_{trail_trig}_{trail_off}"
-                     f"_{fill_mode}_{spread_pts}_{commission_pct}")
+    def _dax_wfa_cache_key(_fm: str) -> str:
+        return (f"dax_wfa_results_{_dax_ticker}_{dax_start}_{dax_end}"
+                f"_{is_months}_{oos_months}_{entry_day}_{exit_day}"
+                f"_{ma_type}_{sl_pct}_{use_trail}_{trail_trig}_{trail_off}"
+                f"_{_fm}_{spread_pts}_{commission_pct}")
 
-    if _wfa_enabled and (run_btn or wfa_cache_key not in st.session_state):
-        progress = st.progress(0, text="Walk-Forward läuft …")
+    wfa_cache_key = _dax_wfa_cache_key(fill_mode)
+
+    def _run_dax_wfa(_base_params_variant: dict, _mode_label: str) -> dict:
+        progress = st.progress(0, text=f"Walk-Forward läuft ({_mode_label}) …")
         wfa_rows, oos_equities = [], []
         param_stability: dict = {}
 
         for fi, fold in enumerate(folds):
-            progress.progress(fi / len(folds), text=f"Fold {fi+1}/{len(folds)} — optimiere IS …")
+            progress.progress(fi / len(folds), text=f"{_mode_label}: Fold {fi+1}/{len(folds)} — optimiere IS …")
 
             df_is  = df_raw[(df_raw.index >= fold["is_start"]) & (df_raw.index < fold["is_end"])].copy()
             df_oos = df_raw[(df_raw.index >= fold["oos_start"]) & (df_raw.index < fold["oos_end"])].copy()
@@ -7271,7 +7280,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     g_sl, g_ma, g_fm, adx_grid, g_tt, g_to, g_entry_dows, g_exit_dows):
                 if ed_ == xd_:
                     continue  # Entry- und Exit-Tag müssen verschieden sein
-                p = {**base_params,
+                p = {**_base_params_variant,
                      "sl_pct":      sl_,
                      "ma_period":   ma_,
                      "filter_mode": fm_,
@@ -7340,15 +7349,23 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 "Status":        "✅ Bestanden" if ok else "❌ Fail",
             })
 
-            progress.progress(1.0, text="Walk-Forward abgeschlossen ✓")
-        st.session_state[wfa_cache_key] = {
+        progress.progress(1.0, text=f"Walk-Forward ({_mode_label}) abgeschlossen ✓")
+        _tr_full_variant, _ = _momi_backtest_engine(df_raw.copy(), _base_params_variant)
+        return {
             "wfa_rows":        wfa_rows,
             "oos_equities":    oos_equities,
             "param_stability": param_stability,
-            "base_params":     base_params,
+            "base_params":     _base_params_variant,
             "grids":           (g_sl, g_ma, g_fm, g_tt, g_to),
-            "full_trades":     tr_full,
+            "full_trades":     _tr_full_variant,
         }
+
+    if _wfa_enabled and (run_btn or wfa_cache_key not in st.session_state):
+        _modes_to_run = ["close", "next_open"] if (run_btn and test_both_fills) else [fill_mode]
+        for _fm in _modes_to_run:
+            _mode_label = "Montag Close" if _fm == "close" else "Dienstag Open"
+            _variant_params = {**base_params, "fill_mode": _fm}
+            st.session_state[_dax_wfa_cache_key(_fm)] = _run_dax_wfa(_variant_params, _mode_label)
         # Trades auch direkt unter Ticker-Key speichern — MC findet sie ohne exakten Cache-Key
         st.session_state[f"dax_mc_trades_{_dax_ticker}"] = tr_full
 
@@ -7397,6 +7414,32 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         st.caption(f"📌 Getesteter Fill-Modus in diesem WFA-Lauf: **{_wfa_fill_label}** · "
                    f"Spread {base_params.get('spread_pts', 0):.1f} Pkt · Kommission {base_params.get('commission_pct', 0):.2f}% — "
                    f"ändere den Fill-Modus oben und klicke erneut 'WFA starten', um den anderen Modus zu testen.")
+
+        # ── Vergleich: beide Fill-Modi (falls beide schon berechnet wurden) ────
+        _cmp_rows = []
+        for _fm, _label in [("close", "Montag Close"), ("next_open", "Dienstag Open")]:
+            _k = _dax_wfa_cache_key(_fm)
+            if _k in st.session_state:
+                _c = st.session_state[_k]
+                _c_df = pd.DataFrame(_c["wfa_rows"])
+                if not _c_df.empty:
+                    _c_ok  = (_c_df["Status"] == "✅ Bestanden").sum()
+                    _c_tot = len(_c_df)
+                    _c_pfs = [r["OOS PF"] for r in _c["wfa_rows"] if isinstance(r["OOS PF"], (int,float))]
+                    _c_rets = [r["OOS Ret %"] for r in _c["wfa_rows"] if isinstance(r["OOS Ret %"], (int,float))]
+                    _c_shs = [r["OOS Sharpe"] for r in _c["wfa_rows"] if isinstance(r.get("OOS Sharpe"), (int,float))]
+                    _cmp_rows.append({
+                        "Fill-Modus": _label, "Folds bestanden": f"{_c_ok}/{_c_tot}",
+                        "Ø OOS PF": round(np.mean(_c_pfs), 2) if _c_pfs else "–",
+                        "Ø OOS Rendite %": round(np.mean(_c_rets), 1) if _c_rets else "–",
+                        "Ø OOS Sharpe": round(np.mean(_c_shs), 2) if _c_shs else "–",
+                    })
+        if len(_cmp_rows) == 2:
+            st.markdown("#### Vergleich: Montag Close vs. Dienstag Open (WFA)")
+            st.dataframe(pd.DataFrame(_cmp_rows), use_container_width=True, hide_index=True)
+        elif len(_cmp_rows) == 1:
+            st.caption("ℹ️ Nur ein Fill-Modus bisher getestet — Checkbox oben aktivieren und 'WFA starten' "
+                       "klicken, um beide zu speichern und hier zu vergleichen.")
 
         # ── KPI-Zusammenfassung über alle OOS-Folds ───────────────────────────
         oos_pfs   = [r["OOS PF"]    for r in wfa_rows if isinstance(r["OOS PF"],    (int,float))]
@@ -7643,8 +7686,11 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         if "dax_ens_running" not in st.session_state:
             st.session_state["dax_ens_running"] = False
 
+        def _dax_ens_cache_key(_fm: str) -> str:
+            return f"dax_ens_results_{_dax_ticker}_{_fm}"
+
         # Status-Badge: Ensemble bereits gelaufen?
-        _ens_status_key = f"dax_ens_results_{_dax_ticker}"
+        _ens_status_key = _dax_ens_cache_key(fill_mode)
         if _ens_status_key in st.session_state:
             _es = st.session_state[_ens_status_key]
             st.success(f"✅ Ensemble bereits gelaufen — {_es['n_runs']} Läufe · Zeitraum: {_es['tested_period']} · "
@@ -7658,74 +7704,79 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             st.session_state["dax_ens_running"] = True
 
         if st.session_state["dax_ens_running"]:
-            st.info(f"Starte {n_runs} WFA-Läufe mit versetzten Startdaten …")
-            ens_progress = st.progress(0, text="Ensemble läuft …")
+            _modes_to_run = ["close", "next_open"] if test_both_fills else [fill_mode]
+            st.info(f"Starte {n_runs} WFA-Läufe mit versetzten Startdaten … ({len(_modes_to_run)} Fill-Modus/-Modi)")
 
-            ensemble_stability: dict = {}  # key=(sl,tt,to,ma,fm) → list of OOS metrics über ALLE Läufe
+            for _fm in _modes_to_run:
+                _mode_label = "Montag Close" if _fm == "close" else "Dienstag Open"
+                _variant_params = {**base_params, "fill_mode": _fm}
+                ens_progress = st.progress(0, text=f"Ensemble läuft ({_mode_label}) …")
 
-            for run_i in range(int(n_runs)):
-                run_start = pd.Timestamp(dax_start) + pd.DateOffset(months=run_i)
-                df_run    = df_raw[df_raw.index >= run_start].copy()
+                ensemble_stability: dict = {}  # key=(sl,tt,to,ma,fm) → list of OOS metrics über ALLE Läufe
 
-                if len(df_run) < 60:
-                    continue
+                for run_i in range(int(n_runs)):
+                    run_start = pd.Timestamp(dax_start) + pd.DateOffset(months=run_i)
+                    df_run    = df_raw[df_raw.index >= run_start].copy()
 
-                # Folds für diesen Lauf
-                is_d_r  = pd.DateOffset(months=int(is_months))
-                oos_d_r = pd.DateOffset(months=int(oos_months))
-                folds_r, fs_r = [], df_run.index[0]
-                while True:
-                    ie_r = fs_r + is_d_r
-                    oe_r = ie_r + oos_d_r
-                    if oe_r > df_run.index[-1]:
-                        break
-                    folds_r.append({"is_start": fs_r, "is_end": ie_r,
-                                     "oos_start": ie_r, "oos_end": oe_r})
-                    fs_r = fs_r + oos_d_r
-
-                if len(folds_r) < 2:
-                    continue
-
-                adx_grid_r = g_adx if use_adx else [float(adx_thresh)]
-
-                for fold_r in folds_r:
-                    df_is_r  = df_run[(df_run.index >= fold_r["is_start"]) & (df_run.index < fold_r["is_end"])].copy()
-                    df_oos_r = df_run[(df_run.index >= fold_r["oos_start"]) & (df_run.index < fold_r["oos_end"])].copy()
-
-                    if len(df_is_r) < 30 or len(df_oos_r) < 5:
+                    if len(df_run) < 60:
                         continue
 
-                    for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid_r, g_tt, g_to):
-                        p = {**base_params,
-                             "sl_pct":      sl_,
-                             "ma_period":   ma_,
-                             "filter_mode": fm_,
-                             "adx_thresh":  adx_,
-                             "trail_trig":  tt_,
-                             "trail_off":   to_}
-                        try:
-                            tr_is_r, _ = _momi_backtest_engine(df_is_r.copy(), p)
-                            if len(tr_is_r) < int(min_trades):
-                                continue
-                            tr_oos_r, eq_oos_r = _momi_backtest_engine(df_oos_r.copy(), p)
-                            m_oos_r = _momi_metrics(tr_oos_r, eq_oos_r)
-                            key = (sl_, tt_, to_, ma_, fm_)
-                            if key not in ensemble_stability:
-                                ensemble_stability[key] = []
-                            ensemble_stability[key].append(m_oos_r)
-                        except Exception:
+                    # Folds für diesen Lauf
+                    is_d_r  = pd.DateOffset(months=int(is_months))
+                    oos_d_r = pd.DateOffset(months=int(oos_months))
+                    folds_r, fs_r = [], df_run.index[0]
+                    while True:
+                        ie_r = fs_r + is_d_r
+                        oe_r = ie_r + oos_d_r
+                        if oe_r > df_run.index[-1]:
+                            break
+                        folds_r.append({"is_start": fs_r, "is_end": ie_r,
+                                         "oos_start": ie_r, "oos_end": oe_r})
+                        fs_r = fs_r + oos_d_r
+
+                    if len(folds_r) < 2:
+                        continue
+
+                    adx_grid_r = g_adx if use_adx else [float(adx_thresh)]
+
+                    for fold_r in folds_r:
+                        df_is_r  = df_run[(df_run.index >= fold_r["is_start"]) & (df_run.index < fold_r["is_end"])].copy()
+                        df_oos_r = df_run[(df_run.index >= fold_r["oos_start"]) & (df_run.index < fold_r["oos_end"])].copy()
+
+                        if len(df_is_r) < 30 or len(df_oos_r) < 5:
                             continue
 
-                ens_progress.progress((run_i + 1) / int(n_runs),
-                                       text=f"Lauf {run_i+1}/{int(n_runs)} abgeschlossen")
+                        for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid_r, g_tt, g_to):
+                            p = {**_variant_params,
+                                 "sl_pct":      sl_,
+                                 "ma_period":   ma_,
+                                 "filter_mode": fm_,
+                                 "adx_thresh":  adx_,
+                                 "trail_trig":  tt_,
+                                 "trail_off":   to_}
+                            try:
+                                tr_is_r, _ = _momi_backtest_engine(df_is_r.copy(), p)
+                                if len(tr_is_r) < int(min_trades):
+                                    continue
+                                tr_oos_r, eq_oos_r = _momi_backtest_engine(df_oos_r.copy(), p)
+                                m_oos_r = _momi_metrics(tr_oos_r, eq_oos_r)
+                                key = (sl_, tt_, to_, ma_, fm_)
+                                if key not in ensemble_stability:
+                                    ensemble_stability[key] = []
+                                ensemble_stability[key].append(m_oos_r)
+                            except Exception:
+                                continue
 
-            ens_progress.progress(1.0, text=f"Ensemble abgeschlossen ✓  ({int(n_runs)} Läufe)")
-            st.session_state["dax_ens_running"] = False
+                    ens_progress.progress((run_i + 1) / int(n_runs),
+                                           text=f"{_mode_label}: Lauf {run_i+1}/{int(n_runs)} abgeschlossen")
 
-            # Auswertung
-            if not ensemble_stability:
-                st.error("Keine Ensemble-Ergebnisse — Grid oder Zeitraum anpassen.")
-            else:
+                ens_progress.progress(1.0, text=f"Ensemble ({_mode_label}) abgeschlossen ✓  ({int(n_runs)} Läufe)")
+
+                # Auswertung
+                if not ensemble_stability:
+                    st.error(f"Keine Ensemble-Ergebnisse für {_mode_label} — Grid oder Zeitraum anpassen.")
+                    continue
+
                 # Buy & Hold Referenz für den gesamten Zeitraum
                 bh_start_price = float(df_raw["Close"].iloc[0])
                 bh_end_price   = float(df_raw["Close"].iloc[-1])
@@ -7760,139 +7811,168 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                         "Zeitraum":         tested_period,
                     })
 
-                if ens_rows:
-                    df_ens = pd.DataFrame(ens_rows).sort_values(
-                        ["Konsistenz %", "Ø OOS PF"], ascending=[False, False]
-                    ).reset_index(drop=True)
+                if not ens_rows:
+                    st.info(f"Zu wenig Daten für {_mode_label} Ensemble-Auswertung.")
+                    continue
 
-                    # Ergebnisse persistent im Session-State speichern
-                    _ens_cache_key = f"dax_ens_results_{_dax_ticker}"
-                    display_cols_ens = ["SL %","Trail-Trig %","Trail-Off %","MA","Filter",
-                                        "Konsistenz %","Ø OOS PF","Ø OOS Ret %","Ø Profit/Trade %","Ø OOS Sharpe","Zeitraum"]
-                    st.session_state[_ens_cache_key] = {
-                        "df_ens":       df_ens,
-                        "bh_total_ret": bh_total_ret,
-                        "tested_period": tested_period,
-                        "n_runs":       int(n_runs),
-                        "display_cols": display_cols_ens,
-                        "fill_mode_label": fill_mode_label,
-                    }
+                df_ens = pd.DataFrame(ens_rows).sort_values(
+                    ["Konsistenz %", "Ø OOS PF"], ascending=[False, False]
+                ).reset_index(drop=True)
 
-                    st.success(f"**Ensemble abgeschlossen** — {len(df_ens)} Kombinationen über {int(n_runs)} Läufe · Zeitraum: {tested_period}")
+                # Ergebnisse persistent im Session-State speichern (getrennt je Fill-Modus)
+                display_cols_ens = ["SL %","Trail-Trig %","Trail-Off %","MA","Filter",
+                                    "Konsistenz %","Ø OOS PF","Ø OOS Ret %","Ø Profit/Trade %","Ø OOS Sharpe","Zeitraum"]
+                st.session_state[_dax_ens_cache_key(_fm)] = {
+                    "df_ens":       df_ens,
+                    "bh_total_ret": bh_total_ret,
+                    "tested_period": tested_period,
+                    "n_runs":       int(n_runs),
+                    "display_cols": display_cols_ens,
+                    "fill_mode_label": _mode_label,
+                }
 
-                    # ── Top-10 Tabelle ────────────────────────────────────────────
-                    st.markdown(f"### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
-                    st.caption(f"Zeitraum: **{tested_period}** · Buy & Hold DAX in diesem Zeitraum: **{bh_total_ret:+.1f}%**")
-                    st.caption(f"📌 Getesteter Fill-Modus: **{fill_mode_label}** — Modus oben ändern und "
-                               f"'Ensemble WFA starten' erneut klicken, um den anderen Modus zu testen.")
+                if _fm != fill_mode:
+                    # Nicht aktuell ausgewählter Modus: nur speichern, keine volle Anzeige (siehe Vergleichstabelle unten)
+                    st.success(f"✅ {_mode_label}: {len(df_ens)} Kombinationen gespeichert · "
+                               f"Top-Konsistenz {int(df_ens.iloc[0]['Konsistenz %'])}% · Ø OOS PF {df_ens.iloc[0]['Ø OOS PF']}")
+                    continue
 
-                    top10_ens = df_ens.head(10)[display_cols_ens].copy()
-                    top10_ens["Ø OOS Ret %"]      = top10_ens["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%")
-                    top10_ens["Ø Profit/Trade %"] = top10_ens["Ø Profit/Trade %"].apply(lambda v: f"{v:.3f}%")
+                st.success(f"**Ensemble abgeschlossen** — {len(df_ens)} Kombinationen über {int(n_runs)} Läufe · Zeitraum: {tested_period}")
 
-                    def _hl_k(v):
-                        if not isinstance(v, (int, float)): return ""
-                        if v >= 80: return "color:#22c55e;font-weight:700"
-                        if v >= 60: return "color:#f0c040"
-                        return "color:#ef5350"
-                    st.dataframe(top10_ens.style.map(_hl_k, subset=["Konsistenz %"]),
-                                 use_container_width=True, hide_index=True)
+                # ── Top-10 Tabelle ────────────────────────────────────────────
+                st.markdown(f"### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
+                st.caption(f"Zeitraum: **{tested_period}** · Buy & Hold DAX in diesem Zeitraum: **{bh_total_ret:+.1f}%**")
+                st.caption(f"📌 Getesteter Fill-Modus: **{_mode_label}** — Modus oben ändern und "
+                           f"'Ensemble WFA starten' erneut klicken, um den anderen Modus zu testen.")
 
-                    best_ens = df_ens.iloc[0]
-                    st.success(
-                        f"**Robustestes Setup:** SL {best_ens['SL %']} · "
-                        f"Trail-Trigger {best_ens['Trail-Trig %']} · Trail-Abstand {best_ens['Trail-Off %']} · "
-                        f"MA {best_ens['MA']} · Filter: {best_ens['Filter']} → "
-                        f"**{int(best_ens['Konsistenz %'])}% Konsistenz** · "
-                        f"Ø OOS PF {best_ens['Ø OOS PF']} · Ø OOS Ret {best_ens['Ø OOS Ret %']:.2f}%"
-                    )
+                top10_ens = df_ens.head(10)[display_cols_ens].copy()
+                top10_ens["Ø OOS Ret %"]      = top10_ens["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%")
+                top10_ens["Ø Profit/Trade %"] = top10_ens["Ø Profit/Trade %"].apply(lambda v: f"{v:.3f}%")
 
-                    # ── Equity Kurve vs Buy & Hold für Top-10 ────────────────────
-                    st.markdown("### Equity Kurve vs Buy & Hold — Top-10 Setups")
-                    st.caption("Strategie (orange) vs reines DAX halten (blau) über den gesamten Testzeitraum")
+                def _hl_k(v):
+                    if not isinstance(v, (int, float)): return ""
+                    if v >= 80: return "color:#22c55e;font-weight:700"
+                    if v >= 60: return "color:#f0c040"
+                    return "color:#ef5350"
+                st.dataframe(top10_ens.style.map(_hl_k, subset=["Konsistenz %"]),
+                             use_container_width=True, hide_index=True)
 
-                    bh_equity = df_raw["Close"] / df_raw["Close"].iloc[0] * 10_000
+                best_ens = df_ens.iloc[0]
+                st.success(
+                    f"**Robustestes Setup:** SL {best_ens['SL %']} · "
+                    f"Trail-Trigger {best_ens['Trail-Trig %']} · Trail-Abstand {best_ens['Trail-Off %']} · "
+                    f"MA {best_ens['MA']} · Filter: {best_ens['Filter']} → "
+                    f"**{int(best_ens['Konsistenz %'])}% Konsistenz** · "
+                    f"Ø OOS PF {best_ens['Ø OOS PF']} · Ø OOS Ret {best_ens['Ø OOS Ret %']:.2f}%"
+                )
 
-                    for rank, row in df_ens.head(10).iterrows():
-                        p_full = {**base_params,
-                                  "sl_pct":      row["_sl"],
-                                  "ma_period":   int(row["_ma"]),
-                                  "filter_mode": row["_fm"],
-                                  "trail_trig":  row["_tt"],
-                                  "trail_off":   row["_to"]}
-                        try:
-                            tr_f, eq_f = _momi_backtest_engine(df_raw.copy(), p_full)
-                            m_f = _momi_metrics(tr_f, eq_f)
-                        except Exception:
-                            continue
+                # ── Equity Kurve vs Buy & Hold für Top-10 ────────────────────
+                st.markdown("### Equity Kurve vs Buy & Hold — Top-10 Setups")
+                st.caption("Strategie (orange) vs reines DAX halten (blau) über den gesamten Testzeitraum")
 
-                        total_ret_f = m_f["total_ret"]
-                        label = (f"#{rank+1} · SL {row['SL %']} · Trail {row['Trail-Trig %']} · "
-                                 f"MA {row['MA']} · {row['Filter']}")
+                bh_equity = df_raw["Close"] / df_raw["Close"].iloc[0] * 10_000
 
-                        with st.expander(f"#{rank+1} — Rendite: {total_ret_f:+.1f}% vs Buy&Hold: {bh_total_ret:+.1f}% · {label}"):
-                            # KPI-Zeile
-                            k1,k2,k3,k4,k5 = st.columns(5)
-                            k1.metric("Gesamt-Rendite",  f"{total_ret_f:+.1f}%")
-                            k2.metric("Buy & Hold",      f"{bh_total_ret:+.1f}%")
-                            k3.metric("Outperformance",  f"{total_ret_f - bh_total_ret:+.1f}%")
-                            k4.metric("Trades",          m_f["n"])
-                            k5.metric("Profit Factor",   f"{m_f['pf']:.2f}")
+                for rank, row in df_ens.head(10).iterrows():
+                    p_full = {**_variant_params,
+                              "sl_pct":      row["_sl"],
+                              "ma_period":   int(row["_ma"]),
+                              "filter_mode": row["_fm"],
+                              "trail_trig":  row["_tt"],
+                              "trail_off":   row["_to"]}
+                    try:
+                        tr_f, eq_f = _momi_backtest_engine(df_raw.copy(), p_full)
+                        m_f = _momi_metrics(tr_f, eq_f)
+                    except Exception:
+                        continue
 
-                            k6,k7,k8 = st.columns(3)
-                            k6.metric("Win-Rate",        f"{m_f['wr']:.1f}%")
-                            k7.metric("Max Drawdown",    f"{m_f['max_dd']:.1f}%")
-                            k8.metric("Sharpe",          f"{m_f['sharpe']:.2f}")
+                    total_ret_f = m_f["total_ret"]
+                    label = (f"#{rank+1} · SL {row['SL %']} · Trail {row['Trail-Trig %']} · "
+                             f"MA {row['MA']} · {row['Filter']}")
 
-                            # Chart
-                            fig_vs = go.Figure()
-                            fig_vs.add_trace(go.Scatter(
-                                x=bh_equity.index, y=bh_equity.values,
-                                name="Buy & Hold DAX",
-                                line=dict(color="#4a9eff", width=2),
-                                fill="tozeroy", fillcolor="rgba(74,158,255,0.05)"))
-                            fig_vs.add_trace(go.Scatter(
-                                x=eq_f.index, y=eq_f.values,
-                                name="Strategie",
-                                line=dict(color="#f7931a", width=2.5),
-                                fill="tozeroy", fillcolor="rgba(247,147,26,0.1)"))
-                            fig_vs.add_hline(y=10_000, line_color="white",
-                                             line_dash="dash", line_width=1)
-                            fig_vs.update_layout(
-                                title=f"Setup #{rank+1}: {label}",
-                                height=350, template="plotly_dark",
-                                yaxis_title="Kapital (€)",
-                                legend=dict(orientation="h", y=1.05),
-                                margin=dict(t=50, b=20, l=60, r=20))
-                            st.plotly_chart(fig_vs, use_container_width=True)
+                    with st.expander(f"#{rank+1} — Rendite: {total_ret_f:+.1f}% vs Buy&Hold: {bh_total_ret:+.1f}% · {label}"):
+                        # KPI-Zeile
+                        k1,k2,k3,k4,k5 = st.columns(5)
+                        k1.metric("Gesamt-Rendite",  f"{total_ret_f:+.1f}%")
+                        k2.metric("Buy & Hold",      f"{bh_total_ret:+.1f}%")
+                        k3.metric("Outperformance",  f"{total_ret_f - bh_total_ret:+.1f}%")
+                        k4.metric("Trades",          m_f["n"])
+                        k5.metric("Profit Factor",   f"{m_f['pf']:.2f}")
 
-                    # ── Heatmap ───────────────────────────────────────────────────
-                    st.markdown("### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
-                    pivot_ens = df_ens.copy()
-                    pivot_ens["SL_num"] = pivot_ens["SL %"].str.replace("%","").astype(float)
-                    pivot_ens["TT_num"] = pivot_ens["Trail-Trig %"].str.replace("%","").astype(float)
-                    heat_ens = pivot_ens.pivot_table(
-                        values="Konsistenz %", index="SL_num", columns="TT_num", aggfunc="mean").round(0)
-                    fig_heat_ens = go.Figure(go.Heatmap(
-                        z=heat_ens.values,
-                        x=[f"Trail {c}%" for c in heat_ens.columns],
-                        y=[f"SL {r}%"    for r in heat_ens.index],
-                        colorscale="RdYlGn", zmin=0, zmax=100,
-                        text=heat_ens.values.round(0).astype(str),
-                        texttemplate="%{text}%", showscale=True,
-                        colorbar=dict(title="Konsistenz %")))
-                    fig_heat_ens.update_layout(
-                        title=f"Ensemble-Konsistenz über {int(n_runs)} Läufe",
-                        height=350, template="plotly_dark",
-                        margin=dict(t=50, b=30, l=80, r=20))
-                    st.plotly_chart(fig_heat_ens, use_container_width=True)
+                        k6,k7,k8 = st.columns(3)
+                        k6.metric("Win-Rate",        f"{m_f['wr']:.1f}%")
+                        k7.metric("Max Drawdown",    f"{m_f['max_dd']:.1f}%")
+                        k8.metric("Sharpe",          f"{m_f['sharpe']:.2f}")
 
-                    st.download_button("⬇️ Ensemble-Ergebnis als CSV",
-                                       data=df_ens[display_cols_ens].to_csv(index=False).encode(),
-                                       file_name="dax_ensemble_wfa.csv", mime="text/csv")
+                        # Chart
+                        fig_vs = go.Figure()
+                        fig_vs.add_trace(go.Scatter(
+                            x=bh_equity.index, y=bh_equity.values,
+                            name="Buy & Hold DAX",
+                            line=dict(color="#4a9eff", width=2),
+                            fill="tozeroy", fillcolor="rgba(74,158,255,0.05)"))
+                        fig_vs.add_trace(go.Scatter(
+                            x=eq_f.index, y=eq_f.values,
+                            name="Strategie",
+                            line=dict(color="#f7931a", width=2.5),
+                            fill="tozeroy", fillcolor="rgba(247,147,26,0.1)"))
+                        fig_vs.add_hline(y=10_000, line_color="white",
+                                         line_dash="dash", line_width=1)
+                        fig_vs.update_layout(
+                            title=f"Setup #{rank+1}: {label}",
+                            height=350, template="plotly_dark",
+                            yaxis_title="Kapital (€)",
+                            legend=dict(orientation="h", y=1.05),
+                            margin=dict(t=50, b=20, l=60, r=20))
+                        st.plotly_chart(fig_vs, use_container_width=True)
+
+                # ── Heatmap ───────────────────────────────────────────────────
+                st.markdown("### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
+                pivot_ens = df_ens.copy()
+                pivot_ens["SL_num"] = pivot_ens["SL %"].str.replace("%","").astype(float)
+                pivot_ens["TT_num"] = pivot_ens["Trail-Trig %"].str.replace("%","").astype(float)
+                heat_ens = pivot_ens.pivot_table(
+                    values="Konsistenz %", index="SL_num", columns="TT_num", aggfunc="mean").round(0)
+                fig_heat_ens = go.Figure(go.Heatmap(
+                    z=heat_ens.values,
+                    x=[f"Trail {c}%" for c in heat_ens.columns],
+                    y=[f"SL {r}%"    for r in heat_ens.index],
+                    colorscale="RdYlGn", zmin=0, zmax=100,
+                    text=heat_ens.values.round(0).astype(str),
+                    texttemplate="%{text}%", showscale=True,
+                    colorbar=dict(title="Konsistenz %")))
+                fig_heat_ens.update_layout(
+                    title=f"Ensemble-Konsistenz über {int(n_runs)} Läufe",
+                    height=350, template="plotly_dark",
+                    margin=dict(t=50, b=30, l=80, r=20))
+                st.plotly_chart(fig_heat_ens, use_container_width=True)
+
+                st.download_button("⬇️ Ensemble-Ergebnis als CSV",
+                                   data=df_ens[display_cols_ens].to_csv(index=False).encode(),
+                                   file_name="dax_ensemble_wfa.csv", mime="text/csv",
+                                   key=f"dax_ens_dl_{_fm}")
+
+            st.session_state["dax_ens_running"] = False
+
+            # ── Vergleich beider Fill-Modi (falls beide vorhanden) ──────────
+            _ens_cmp_rows = []
+            for _fm2, _label2 in [("close", "Montag Close"), ("next_open", "Dienstag Open")]:
+                _k2 = _dax_ens_cache_key(_fm2)
+                if _k2 in st.session_state:
+                    _e2 = st.session_state[_k2]
+                    _best2 = _e2["df_ens"].iloc[0]
+                    _ens_cmp_rows.append({
+                        "Fill-Modus": _label2,
+                        "Top-Konsistenz %": int(_best2["Konsistenz %"]),
+                        "Ø OOS PF": _best2["Ø OOS PF"],
+                        "Ø OOS Ret %": _best2["Ø OOS Ret %"],
+                        "Ø OOS Sharpe": _best2["Ø OOS Sharpe"],
+                    })
+            if len(_ens_cmp_rows) == 2:
+                st.markdown("#### Vergleich: Montag Close vs. Dienstag Open (Ensemble, jeweils bestes Setup)")
+                st.dataframe(pd.DataFrame(_ens_cmp_rows), use_container_width=True, hide_index=True)
 
         # ── Gespeicherte Ensemble-Ergebnisse anzeigen (auch nach Reload) ──────
-        _ens_cache_key = f"dax_ens_results_{_dax_ticker}"
+        _ens_cache_key = _dax_ens_cache_key(fill_mode)
         if not st.session_state.get("dax_ens_running") and _ens_cache_key in st.session_state:
             _ec = st.session_state[_ens_cache_key]
             _df_ens_c   = _ec["df_ens"]
