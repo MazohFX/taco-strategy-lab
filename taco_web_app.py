@@ -7246,7 +7246,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
     wfa_cache_key = (f"dax_wfa_results_{_dax_ticker}_{dax_start}_{dax_end}"
                      f"_{is_months}_{oos_months}_{entry_day}_{exit_day}"
-                     f"_{ma_type}_{sl_pct}_{use_trail}_{trail_trig}_{trail_off}")
+                     f"_{ma_type}_{sl_pct}_{use_trail}_{trail_trig}_{trail_off}"
+                     f"_{fill_mode}_{spread_pts}_{commission_pct}")
 
     if _wfa_enabled and (run_btn or wfa_cache_key not in st.session_state):
         progress = st.progress(0, text="Walk-Forward läuft …")
@@ -7391,6 +7392,11 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             f'<div style="background:{bc}22;border:2px solid {bc};border-radius:10px;'
             f'padding:16px 24px;font-weight:800;font-size:1.2rem;color:{bc};margin:16px 0;">'
             f'{bt}</div>', unsafe_allow_html=True)
+
+        _wfa_fill_label = "Montag Close (Signal-Bar)" if base_params.get("fill_mode", "close") == "close" else "Dienstag Open (nächster Bar)"
+        st.caption(f"📌 Getesteter Fill-Modus in diesem WFA-Lauf: **{_wfa_fill_label}** · "
+                   f"Spread {base_params.get('spread_pts', 0):.1f} Pkt · Kommission {base_params.get('commission_pct', 0):.2f}% — "
+                   f"ändere den Fill-Modus oben und klicke erneut 'WFA starten', um den anderen Modus zu testen.")
 
         # ── KPI-Zusammenfassung über alle OOS-Folds ───────────────────────────
         oos_pfs   = [r["OOS PF"]    for r in wfa_rows if isinstance(r["OOS PF"],    (int,float))]
@@ -7769,6 +7775,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                         "tested_period": tested_period,
                         "n_runs":       int(n_runs),
                         "display_cols": display_cols_ens,
+                        "fill_mode_label": fill_mode_label,
                     }
 
                     st.success(f"**Ensemble abgeschlossen** — {len(df_ens)} Kombinationen über {int(n_runs)} Läufe · Zeitraum: {tested_period}")
@@ -7776,6 +7783,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     # ── Top-10 Tabelle ────────────────────────────────────────────
                     st.markdown(f"### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
                     st.caption(f"Zeitraum: **{tested_period}** · Buy & Hold DAX in diesem Zeitraum: **{bh_total_ret:+.1f}%**")
+                    st.caption(f"📌 Getesteter Fill-Modus: **{fill_mode_label}** — Modus oben ändern und "
+                               f"'Ensemble WFA starten' erneut klicken, um den anderen Modus zu testen.")
 
                     top10_ens = df_ens.head(10)[display_cols_ens].copy()
                     top10_ens["Ø OOS Ret %"]      = top10_ens["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%")
@@ -7891,9 +7900,12 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             _period_c   = _ec["tested_period"]
             _n_runs_c   = _ec["n_runs"]
             _dcols_c    = _ec["display_cols"]
+            _fill_c     = _ec.get("fill_mode_label", "unbekannt (vor diesem Update gelaufen)")
             st.markdown("---")
             st.markdown(f"### 🏆 Top-10 Ensemble-Setups ({_n_runs_c} Läufe) — gespeichertes Ergebnis")
             st.caption(f"Zeitraum: **{_period_c}** · Buy & Hold: **{_bh_ret_c:+.1f}%**")
+            st.caption(f"📌 Getesteter Fill-Modus: **{_fill_c}** — Modus oben ändern und "
+                       f"'Ensemble WFA starten' erneut klicken, um den anderen Modus zu testen.")
 
             _t10 = _df_ens_c.head(10)[_dcols_c].copy()
             _t10["Ø OOS Ret %"]      = _t10["Ø OOS Ret %"].apply(lambda v: f"{v:.2f}%" if isinstance(v, (int,float)) else v)
@@ -7947,6 +7959,9 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
                    f"Win-Rate: {(real_rets > 0).mean()*100:.1f}% · "
                    f"Ø Trade: {real_rets.mean():.2f}$ · "
                    f"Trades/Jahr: ~{n_real / max(1, (df_raw.index[-1]-df_raw.index[0]).days / 365):.0f}")
+        st.caption(f"📌 Diese Trades (und damit die Monte-Carlo-Simulation unten) basieren auf dem aktuell oben "
+                   f"gewählten Fill-Modus: **{fill_mode_label}**. Ändere ihn oben in den Strategie-Parametern, "
+                   f"um mit dem anderen Modus zu simulieren — die Trades aktualisieren sich automatisch.")
 
         if n_real < 20:
             st.warning(f"⚠️ Nur {n_real} Trades — Monte Carlo Ergebnisse haben hohe Unsicherheit. "
