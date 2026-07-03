@@ -7260,7 +7260,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
     def _run_dax_wfa(_base_params_variant: dict, _mode_label: str) -> dict:
         progress = st.progress(0, text=f"Walk-Forward läuft ({_mode_label}) …")
-        wfa_rows, oos_equities = [], []
+        wfa_rows, oos_equities, oos_trades_all = [], [], []
         param_stability: dict = {}
 
         for fi, fold in enumerate(folds):
@@ -7327,6 +7327,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             m_oos = _momi_metrics(tr_oos, eq_oos)
 
             oos_equities.append((fi+1, eq_oos))
+            if not tr_oos.empty:
+                oos_trades_all.append(tr_oos)
 
             ok = m_oos["n"] >= 1 and m_oos["pf"] > 1.0 and m_oos["total_ret"] > 0
             _dow_names = {0:"Mo",1:"Di",2:"Mi",3:"Do",4:"Fr",5:"Sa",6:"So"}
@@ -7351,6 +7353,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
         progress.progress(1.0, text=f"Walk-Forward ({_mode_label}) abgeschlossen ✓")
         _tr_full_variant, _ = _momi_backtest_engine(df_raw.copy(), _base_params_variant)
+        _oos_trades_concat = pd.concat(oos_trades_all, ignore_index=True) if oos_trades_all else pd.DataFrame()
         return {
             "wfa_rows":        wfa_rows,
             "oos_equities":    oos_equities,
@@ -7358,6 +7361,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             "base_params":     _base_params_variant,
             "grids":           (g_sl, g_ma, g_fm, g_tt, g_to),
             "full_trades":     _tr_full_variant,
+            "oos_trades":      _oos_trades_concat,
         }
 
     if _wfa_enabled and (run_btn or wfa_cache_key not in st.session_state):
@@ -7378,6 +7382,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         wfa_rows, oos_equities, param_stability = [], [], {}
         base_params_display = base_params
         g_sl, g_ma, g_fm, g_tt, g_to = [], [], [], [], []
+        wfa_oos_trades = pd.DataFrame()
         _wfa_enabled = False
     else:
         wfa_rows        = _cached["wfa_rows"]
@@ -7385,10 +7390,13 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         param_stability = _cached["param_stability"]
         base_params     = _cached["base_params"]
         g_sl, g_ma, g_fm, g_tt, g_to = _cached["grids"]
+        wfa_oos_trades  = _cached.get("oos_trades", pd.DataFrame())
 
     if _wfa_enabled and not wfa_rows:
         st.error("Keine WFA-Ergebnisse — Parameter oder Zeitraum anpassen.")
         _wfa_enabled = False
+
+    _wfa_best_setup = None  # wird unten gefüllt, falls Parameter-Stabilitätsanalyse ein Ergebnis liefert
 
     if _wfa_enabled:
         wfa_df = pd.DataFrame(wfa_rows)
@@ -7585,6 +7593,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     continue
 
                 stab_rows.append({
+                    "_sl": sl_, "_tt": tt_, "_to": to_, "_ma": ma_, "_fm": fm_,
                     "SL %":             f"{sl_:.2f}%",
                     "Trail-Trig %":     f"{tt_:.2f}%",
                     "Trail-Off %":      f"{to_:.2f}%",
@@ -7665,6 +7674,15 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     f"**{int(best['Konsistenz %'])}% Konsistenz** · "
                     f"Ø OOS PF {best['Ø OOS PF']} · Ø OOS Ret {best['Ø OOS Ret %']}"
                 )
+                _wfa_best_setup = {
+                    "sl_pct":      float(best["_sl"]),
+                    "ma_period":   int(best["_ma"]),
+                    "filter_mode": best["_fm"],
+                    "trail_trig":  float(best["_tt"]),
+                    "trail_off":   float(best["_to"]),
+                    "label":       (f"SL {best['SL %']} · Trail {best['Trail-Trig %']}/{best['Trail-Off %']} · "
+                                    f"MA {best['MA']} · {best['Filter']} ({int(best['Konsistenz %'])}% Konsistenz)"),
+                }
 
                 # Download
                 st.download_button("⬇️ Stabilitätsanalyse als CSV",
@@ -8022,41 +8040,85 @@ Simuliert **1.000 mögliche Zukunften** deiner Strategie durch zufälliges Misch
 Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — bevor du echtes Geld riskierst.
     """)
 
-    # Trades aus Full-Sample Backtest holen — wird immer berechnet (oben)
-    mc_trades_raw = st.session_state.get(f"dax_mc_trades_{_dax_ticker}")
-    if mc_trades_raw is None or mc_trades_raw.empty:
-        mc_trades_raw = st.session_state.get(wfa_cache_key, {}).get("full_trades")
-    # Letzter Fallback: tr_full liegt im aktuellen Scope
-    if (mc_trades_raw is None or mc_trades_raw.empty) and not tr_full.empty:
-        mc_trades_raw = tr_full
+    # ── Trade-Quelle für Monte Carlo auswählen ─────────────────────────────
+    _mc_source_options = ["Manuelle Strategie-Parameter (aktuell oben)"]
+    if _wfa_best_setup is not None:
+        _mc_source_options.append("WFA robustestes Setup — Full-Sample")
+    if wfa_oos_trades is not None and not wfa_oos_trades.empty:
+        _mc_source_options.append("WFA kombinierte OOS-Trades (empfohlen)")
+
+    _mc_default_idx = len(_mc_source_options) - 1  # bevorzugt die "beste" verfügbare Quelle
+    mc_source = st.radio(
+        "Trade-Quelle für Monte Carlo", _mc_source_options, index=_mc_default_idx, key="dax_mc_source",
+        help="Manuell: nutzt die oben eingestellten Strategie-Parameter (Full-Sample-Backtest).\n"
+             "WFA robustestes Setup: nimmt das stabilste Setup aus der Parameter-Stabilitätsanalyse und backtestet "
+             "es über den kompletten Zeitraum (einfach, aber leicht optimistisch, da diese Parameter anhand der "
+             "OOS-Performance ausgewählt wurden).\n"
+             "WFA kombinierte OOS-Trades: nutzt NUR die echten Out-of-Sample-Trades aus allen WFA-Folds — "
+             "methodisch am saubersten, da diese Trades nie zur Parameter-Wahl benutzt wurden.")
+
+    if mc_source == "WFA robustestes Setup — Full-Sample":
+        _p_best = {**base_params, **{k: v for k, v in _wfa_best_setup.items() if k != "label"}}
+        mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), _p_best)
+        _mc_source_label = f"WFA robustestes Setup — {_wfa_best_setup['label']}"
+    elif mc_source == "WFA kombinierte OOS-Trades (empfohlen)":
+        mc_trades_raw = wfa_oos_trades
+        _mc_source_label = "WFA kombinierte OOS-Trades (alle Folds, blind getestet)"
+    else:
+        # Trades aus Full-Sample Backtest holen — wird immer berechnet (oben)
+        mc_trades_raw = st.session_state.get(f"dax_mc_trades_{_dax_ticker}")
+        if mc_trades_raw is None or mc_trades_raw.empty:
+            mc_trades_raw = st.session_state.get(wfa_cache_key, {}).get("full_trades")
+        # Letzter Fallback: tr_full liegt im aktuellen Scope
+        if (mc_trades_raw is None or mc_trades_raw.empty) and not tr_full.empty:
+            mc_trades_raw = tr_full
+        _mc_source_label = f"Manuelle Strategie-Parameter (Fill-Modus: {fill_mode_label})"
 
     if mc_trades_raw is None or mc_trades_raw.empty:
         st.info("Kein Backtest-Ergebnis — Seite neu laden und Parameter prüfen.")
     else:
         n_real = len(mc_trades_raw)
         real_rets = mc_trades_raw["PnL $"].values
-        st.success(f"**{n_real} echte Trades** aus dem Full-Sample Backtest geladen · "
+        st.success(f"**{n_real} echte Trades** geladen ({_mc_source_label}) · "
                    f"Win-Rate: {(real_rets > 0).mean()*100:.1f}% · "
                    f"Ø Trade: {real_rets.mean():.2f}$ · "
                    f"Trades/Jahr: ~{n_real / max(1, (df_raw.index[-1]-df_raw.index[0]).days / 365):.0f}")
         _dow_label = {"Montag":"Mo","Dienstag":"Di","Mittwoch":"Mi","Donnerstag":"Do","Freitag":"Fr","Samstag":"Sa","Sonntag":"So"}
-        st.markdown(
-            '<div style="background:#1e293b55;border:1px solid rgba(148,163,184,.25);border-radius:8px;'
-            'padding:10px 16px;font-size:.85rem;color:#94a3b8;margin:8px 0 12px 0;">'
-            '📌 <b>Genau diese Strategie/Parameter werden hier simuliert</b> '
-            '(Full-Sample-Backtest mit aktuellen Strategie-Parametern oben — <u>nicht</u> die WFA-Fold-optimierten '
-            'oder die Ensemble-"robustesten" Werte, die sind nur Empfehlungen für die manuelle Eingabe hier):<br>'
-            f'Entry <b>{_dow_label.get(entry_day, entry_day)}</b> → Exit <b>{_dow_label.get(exit_day, exit_day)}</b> · '
-            f'Fill-Modus: <b>{fill_mode_label}</b> · '
-            f'MA: <b>{ma_type} {ma_period}</b> · Filter: <b>{filter_mode}</b> · '
-            f'ADX-Filter: <b>{"an, Schwelle " + str(adx_thresh) if use_adx else "aus"}</b><br>'
-            f'SL: <b>{sl_pct if use_sl else "aus"}%</b> · '
-            f'Trailing: <b>{("Trigger " + str(trail_trig) + "% / Abstand " + str(trail_off) + "%") if use_trail else "aus"}</b> · '
-            f'Spread: <b>{spread_pts:.1f} Pkt</b> · Kommission: <b>{commission_pct:.2f}%</b> · '
-            f'Risiko/Trade: <b>{risk_pct:.1f}%</b>'
-            '</div>', unsafe_allow_html=True)
-        st.caption("Ändere Parameter oben in den Strategie-Parametern, um mit anderen Werten zu simulieren — "
-                   "die Trades hier aktualisieren sich automatisch bei jedem Rerun.")
+        if mc_source == "Manuelle Strategie-Parameter (aktuell oben)":
+            st.markdown(
+                '<div style="background:#1e293b55;border:1px solid rgba(148,163,184,.25);border-radius:8px;'
+                'padding:10px 16px;font-size:.85rem;color:#94a3b8;margin:8px 0 12px 0;">'
+                '📌 <b>Genau diese Strategie/Parameter werden hier simuliert</b> (Full-Sample-Backtest mit den '
+                'aktuellen Strategie-Parametern oben):<br>'
+                f'Entry <b>{_dow_label.get(entry_day, entry_day)}</b> → Exit <b>{_dow_label.get(exit_day, exit_day)}</b> · '
+                f'Fill-Modus: <b>{fill_mode_label}</b> · '
+                f'MA: <b>{ma_type} {ma_period}</b> · Filter: <b>{filter_mode}</b> · '
+                f'ADX-Filter: <b>{"an, Schwelle " + str(adx_thresh) if use_adx else "aus"}</b><br>'
+                f'SL: <b>{sl_pct if use_sl else "aus"}%</b> · '
+                f'Trailing: <b>{("Trigger " + str(trail_trig) + "% / Abstand " + str(trail_off) + "%") if use_trail else "aus"}</b> · '
+                f'Spread: <b>{spread_pts:.1f} Pkt</b> · Kommission: <b>{commission_pct:.2f}%</b> · '
+                f'Risiko/Trade: <b>{risk_pct:.1f}%</b>'
+                '</div>', unsafe_allow_html=True)
+            st.caption("Ändere Parameter oben in den Strategie-Parametern, um mit anderen Werten zu simulieren — "
+                       "die Trades hier aktualisieren sich automatisch bei jedem Rerun.")
+        elif mc_source == "WFA robustestes Setup — Full-Sample":
+            st.markdown(
+                '<div style="background:#1e293b55;border:1px solid rgba(148,163,184,.25);border-radius:8px;'
+                'padding:10px 16px;font-size:.85rem;color:#94a3b8;margin:8px 0 12px 0;">'
+                f'📌 <b>Getestetes Setup (WFA robustestes, Full-Sample):</b> {_wfa_best_setup["label"]} · '
+                f'Entry <b>{_dow_label.get(entry_day, entry_day)}</b> → Exit <b>{_dow_label.get(exit_day, exit_day)}</b> · '
+                f'Fill-Modus: <b>{fill_mode_label}</b><br>'
+                '⚠️ Leicht optimistisch: dieses Setup wurde anhand seiner Performance über genau diesen Zeitraum '
+                '(inkl. der OOS-Fenster) als "robustestes" ausgewählt.'
+                '</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(
+                '<div style="background:#1e293b55;border:1px solid rgba(148,163,184,.25);border-radius:8px;'
+                'padding:10px 16px;font-size:.85rem;color:#94a3b8;margin:8px 0 12px 0;">'
+                '📌 <b>Getestet: echte Out-of-Sample-Trades aus allen WFA-Folds</b> — jeder Fold nutzte sein eigenes, '
+                'nur auf dem IS-Fenster optimiertes bestes Setup, hier siehst du die Ergebnisse zusammengefasst. '
+                'Methodisch am saubersten, da diese Trades nie zur Parameter-Auswahl verwendet wurden.'
+                '</div>', unsafe_allow_html=True)
 
         if n_real < 20:
             st.warning(f"⚠️ Nur {n_real} Trades — Monte Carlo Ergebnisse haben hohe Unsicherheit. "
