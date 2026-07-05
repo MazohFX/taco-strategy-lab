@@ -7756,6 +7756,11 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         n_runs = ec1.number_input("Anzahl Läufe", min_value=3, max_value=10, value=5, step=1, key="dax_ens_runs")
         if ec2.button("▶ Ensemble WFA starten", type="primary", key="dax_ens_run_btn"):
             st.session_state["dax_ens_running"] = True
+        _ens_n_combos = len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)
+        _ens_modes_factor = 2 if test_both_fills else 1
+        st.caption(f"⏱️ Grober Richtwert: {_ens_n_combos} Kombinationen × ~{n_runs} Läufe × {_ens_modes_factor} Fill-Modus/-Modi — "
+                   f"bei breitem Suchraum kann das **mehrere Dutzend Minuten** dauern. Die Fortschrittsanzeige aktualisiert sich "
+                   f"jetzt pro Fold statt nur pro Lauf, sollte also nicht mehr eingefroren wirken.")
 
         if st.session_state["dax_ens_running"]:
             _modes_to_run = ["close", "next_open"] if test_both_fills else [fill_mode]
@@ -7793,7 +7798,11 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
                     adx_grid_r = g_adx if use_adx else [float(adx_thresh)]
 
-                    for fold_r in folds_r:
+                    for fold_idx, fold_r in enumerate(folds_r):
+                        ens_progress.progress(
+                            min(0.999, (run_i + fold_idx / max(1, len(folds_r))) / int(n_runs)),
+                            text=f"{_mode_label}: Lauf {run_i+1}/{int(n_runs)} — Fold {fold_idx+1}/{len(folds_r)} …")
+
                         df_is_r  = df_run[(df_run.index >= fold_r["is_start"]) & (df_run.index < fold_r["is_end"])].copy()
                         df_oos_r = df_run[(df_run.index >= fold_r["oos_start"]) & (df_run.index < fold_r["oos_end"])].copy()
 
