@@ -35,6 +35,7 @@ def _save_notes(notes: dict) -> None:
     _NOTES_FILE.write_text(json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+@st.cache_data(ttl=6 * 60 * 60)
 def load_ohlc_data(symbol: str, source: str = "mt5", fallback_to_yahoo: bool = False):
     from pathlib import Path as _Path
     _mt5_dir = _Path(__file__).parent / "data" / "mt5"
