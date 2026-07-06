@@ -333,6 +333,7 @@ def make_demo_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     return ohlc_from_close(asset_close), ohlc_from_close(comp_close)
 
 
+@st.cache_data(ttl=6 * 60 * 60)
 def load_yahoo(symbol: str) -> pd.DataFrame | None:
     try:
         import yfinance as yf
