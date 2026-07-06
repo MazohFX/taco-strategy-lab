@@ -1448,6 +1448,72 @@ def _render_muster_detail() -> None:
         st.warning("Kein DataFrame verfügbar — Scanner nochmal starten.")
         return
 
+    # ── Bessere Zeiten im Jahr für dieses Muster ─────────────────────────────
+    _alt_cal_hold = _cur_exit_doy - _cur_entry_doy
+    if _alt_cal_hold > 0:
+        _alt_dir_str = richtung.lower()
+        _alt_wr_key  = f"WR {lookback}J %"
+        _alt_key = f"muster_alt_scan_{symbol_str}_{_cur_entry_doy}_{_cur_exit_doy}_{_alt_dir_str}_{lookback}"
+        if _alt_key not in st.session_state:
+            with st.spinner("Suche bessere Zeitfenster im Jahresverlauf …"):
+                st.session_state[_alt_key] = scan_seasonality_patterns(
+                    df_sym, lookback_years=lookback, min_winrate=0.0,
+                    holding_periods=[_alt_cal_hold], directions=[_alt_dir_str],
+                )
+        _alt_scan = st.session_state[_alt_key]
+
+        with st.expander(
+            "🔍 Andere Zeiten im Jahr für dieses Muster (gleiche Haltedauer, gleiche Richtung)",
+            expanded=False,
+        ):
+            _cur_wr = row.get(_alt_wr_key, float("nan"))
+            if _alt_scan is None or _alt_scan.empty or _alt_wr_key not in _alt_scan.columns:
+                st.info("Keine ausreichenden Daten für einen Jahresvergleich gefunden.")
+            else:
+                _cand = _alt_scan[_alt_scan["Richtung"] == richtung].copy()
+                _cand = _cand[(_cand["_entry_doy"] - _cur_entry_doy).abs() > 10]
+                _cand = _cand[_cand[_alt_wr_key].notna()]
+                if pd.notna(_cur_wr):
+                    _cand = _cand[_cand[_alt_wr_key] > _cur_wr]
+                _cand = _cand.sort_values(_alt_wr_key, ascending=False).head(5)
+                if _cand.empty:
+                    st.success(
+                        f"Keine besseren Zeitfenster gefunden — {row['Entry']} → {row['Exit']} "
+                        f"scheint für {symbol_str} {richtung} im Jahresvergleich bereits stark zu sein."
+                    )
+                else:
+                    _cur_wr_str = f"{_cur_wr:.1f}%" if pd.notna(_cur_wr) else "—"
+                    st.caption(
+                        f"Aktuelles Fenster: {_alt_wr_key.strip()} {_cur_wr_str} · gesucht: gleiche Haltedauer "
+                        f"({_alt_cal_hold} Kalendertage), andere Jahreszeit, höhere Winrate."
+                    )
+                    for _ai, _arow in _cand.iterrows():
+                        _a_c1, _a_c2 = st.columns([6, 1])
+                        with _a_c1:
+                            st.markdown(
+                                f"📅 **{_arow['Entry']} → {_arow['Exit']}** · {_alt_wr_key.strip()}: "
+                                f"**{_arow[_alt_wr_key]:.1f}%** (statt {_cur_wr_str}) · "
+                                f"Ø Profit {_arow['Ø Profit %']:+.2f}% · {_arow['Robustheit']} · "
+                                f"{'⭐' * int(_arow['⭐ Rating'])}"
+                            )
+                        with _a_c2:
+                            if st.button("→ Laden", key=f"alt_load_{_ai}_{_alt_key}"):
+                                _new_detail = {
+                                    "row": _arow.to_dict(),
+                                    "symbol": symbol_str,
+                                    "lookback": lookback,
+                                    "from_analyse": _from_analyse,
+                                }
+                                st.session_state["muster_detail"] = _new_detail
+                                if _from_analyse:
+                                    # render_muster_analyse() seedet "muster_detail" bei jedem Rerun
+                                    # aus diesem Key neu — muss mit aktualisiert werden.
+                                    st.session_state["muster_analyse_detail"] = {
+                                        "detail": _new_detail,
+                                        "dfs": saved_dfs,
+                                    }
+                                st.rerun()
+
     _month_map_d = {
         "Jan": 1, "Feb": 2, "Mär": 3, "Mar": 3, "Apr": 4, "Mai": 5, "May": 5,
         "Jun": 6, "Jul": 7, "Aug": 8, "Sep": 9, "Okt": 10, "Oct": 10,
@@ -3421,6 +3487,92 @@ def render_seasonality_lab() -> None:
     if trades.empty:
         st.warning("Der gewaehlte saisonale Zeitraum enthaelt keine vollstaendigen historischen Pattern-Trades.")
         return
+
+    # ── Bessere Zeiten im Jahr für dieses Muster ─────────────────────────────
+    _sl_crosses_year = (analysis_end_marker.month, analysis_end_marker.day) < (analysis_start_marker.month, analysis_start_marker.day)
+    _sl_hold_days = 0 if _sl_crosses_year else (analysis_end_marker - analysis_start_marker).days
+    if _sl_hold_days > 0:
+        _sl_cur_entry_doy = int(analysis_start_marker.dayofyear)
+        _sl_key = (
+            f"season_alt_scan_{symbol.strip()}_{data_source_label}_"
+            f"{'-'.join(str(y) for y in sorted(active_years))}_{_sl_cur_entry_doy}_{_sl_hold_days}"
+        )
+        if _sl_key not in st.session_state:
+            with st.spinner("Suche bessere Zeitfenster im Jahresverlauf …"):
+                _sl_year_data: dict = {}
+                _sl_sub = df[df.index.year.isin(active_years)]
+                for _yr, _grp in _sl_sub.groupby(_sl_sub.index.year):
+                    _doys = _grp.index.dayofyear.values.astype(int)
+                    _sidx = np.argsort(_doys)
+                    _sl_year_data[int(_yr)] = {
+                        "doys":   _doys[_sidx],
+                        "closes": _grp["close"].values.astype(float)[_sidx],
+                    }
+                _sl_min_trades = max(3, len(active_years) // 2)
+                _sl_rows = []
+                for _entry_doy in range(1, 363):
+                    _exit_doy = _entry_doy + _sl_hold_days
+                    if _exit_doy > 365:
+                        continue
+                    _rets = []
+                    for _yr in active_years:
+                        _yd = _sl_year_data.get(int(_yr))
+                        if _yd is None:
+                            continue
+                        _doys = _yd["doys"]
+                        _ei = int(np.searchsorted(_doys, _entry_doy))
+                        _xi = int(np.searchsorted(_doys, _exit_doy))
+                        if _ei >= len(_doys) or _xi >= len(_doys) or _xi <= _ei:
+                            continue
+                        _ep, _xp = _yd["closes"][_ei], _yd["closes"][_xi]
+                        _rets.append((_xp - _ep) / _ep * 100)
+                    if len(_rets) >= _sl_min_trades:
+                        _rets_arr = np.array(_rets)
+                        _sl_rows.append({
+                            "entry_doy": _entry_doy, "exit_doy": _exit_doy,
+                            "wr": float((_rets_arr > 0).mean() * 100),
+                            "avg_ret": float(_rets_arr.mean()),
+                            "n": len(_rets),
+                        })
+                st.session_state[_sl_key] = pd.DataFrame(_sl_rows)
+        _sl_scan = st.session_state[_sl_key]
+
+        with st.expander("🔍 Andere Zeiten im Jahr für dieses Muster (gleiche Haltedauer)", expanded=False):
+            if _sl_scan is None or _sl_scan.empty:
+                st.info("Keine ausreichenden Daten für einen Jahresvergleich gefunden.")
+            else:
+                _sl_cand = _sl_scan[(_sl_scan["entry_doy"] - _sl_cur_entry_doy).abs() > 10].copy()
+                _sl_cand = _sl_cand[_sl_cand["wr"] > rise_probability]
+                _sl_cand = _sl_cand.sort_values("wr", ascending=False).head(5)
+                if _sl_cand.empty:
+                    st.success(
+                        f"Keine besseren Zeitfenster gefunden — {period_text} scheint für "
+                        f"{symbol.strip()} im Jahresvergleich bereits stark zu sein."
+                    )
+                else:
+                    st.caption(
+                        f"Aktuelles Fenster: Rise odds {rise_probability:.1f}% · gesucht: gleiche Haltedauer "
+                        f"({_sl_hold_days} Kalendertage), andere Jahreszeit, höhere Trefferquote."
+                    )
+                    for _si, _srow in _sl_cand.iterrows():
+                        _s_start = pd.Timestamp(year=2001, month=1, day=1) + pd.Timedelta(days=int(_srow["entry_doy"]) - 1)
+                        _s_end   = pd.Timestamp(year=2001, month=1, day=1) + pd.Timedelta(days=int(_srow["exit_doy"]) - 1)
+                        _s_c1, _s_c2 = st.columns([6, 1])
+                        with _s_c1:
+                            st.markdown(
+                                f"📅 **{_s_start.strftime('%d.%m')} → {_s_end.strftime('%d.%m')}** · "
+                                f"Rise odds: **{_srow['wr']:.1f}%** (statt {rise_probability:.1f}%) · "
+                                f"Ø Return {_srow['avg_ret']:+.2f}% · n={int(_srow['n'])}"
+                            )
+                        with _s_c2:
+                            if st.button("→ Laden", key=f"sl_alt_load_{_si}_{_sl_key}"):
+                                st.session_state.pop("seasonality_manual_period", None)
+                                st.session_state.pop("seasonality_chart_selection_active", None)
+                                st.session_state.pop("seasonality_just_set_manual_period", None)
+                                st.session_state["seasonality_pending_period_text"] = (
+                                    f"{_s_start.day:02d}.{_s_start.month:02d} - {_s_end.day:02d}.{_s_end.month:02d}"
+                                )
+                                st.rerun()
 
     if is_nasdaq_asset(asset_label, symbol):
         render_mag7_panel()
