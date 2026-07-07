@@ -5181,8 +5181,19 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     # "next_open" = Fill zum Open des NÄCHSTEN Bars (z.B. Dienstag-Open) — Pine-Default ohne process_orders_on_close
     fill_mode = params.get("fill_mode", "close")
 
-    for ts, row in df.iterrows():
-        c, h, l, o = float(row["Close"]), float(row["High"]), float(row["Low"]), float(row["Open"])
+    # Rohe numpy-Arrays statt df.iterrows() — iterrows() baut pro Zeile ein komplettes
+    # Series-Objekt (teuer) und ist bei Grid-Searches mit zehntausenden Aufrufen der
+    # dominante Flaschenhals (Ensemble: Modi × Läufe × Folds × Grid-Kombinationen).
+    close_arr        = df["Close"].to_numpy(dtype=float)
+    high_arr         = df["High"].to_numpy(dtype=float)
+    low_arr          = df["Low"].to_numpy(dtype=float)
+    open_arr         = df["Open"].to_numpy(dtype=float)
+    exit_time_arr    = df["exit_time"].to_numpy()
+    entry_signal_arr = df["entry_signal"].to_numpy()
+    idx              = df.index
+
+    for i in range(len(df)):
+        c, h, l, o = close_arr[i], high_arr[i], low_arr[i], open_arr[i]
 
         # Entry vom Vortag fällig (next_open-Modus): jetzt zum Open dieses Bars füllen
         if pending_entry and position == 0:
@@ -5207,7 +5218,7 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
             exit_price, reason = None, None
             if l <= sl_price:
                 exit_price, reason = sl_price, "SL"
-            elif bool(row["exit_time"]):
+            elif exit_time_arr[i]:
                 exit_price, reason = c, "Time Exit"
 
             if exit_price is not None:
@@ -5217,11 +5228,11 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
                 if commission_pct > 0:
                     pnl -= qty * entry_price * (commission_pct / 100)
                 capital += pnl
-                trades.append({"Zeit": ts, "Entry": entry_price, "Exit": exit_price_net,
+                trades.append({"Zeit": idx[i], "Entry": entry_price, "Exit": exit_price_net,
                                 "PnL $": round(pnl, 2), "Grund": reason})
                 position, trail_active = 0, False
 
-        if position == 0 and not pending_entry and row["entry_signal"]:
+        if position == 0 and not pending_entry and entry_signal_arr[i]:
             if fill_mode == "next_open":
                 # Erst am nächsten Bar-Open füllen (siehe oben) — hier nur vormerken
                 pending_entry = True
