@@ -504,6 +504,46 @@ def build_seasonal_curve(df: pd.DataFrame, selected_years: list[int]) -> pd.Data
     return curve[["plot_date", "day_label", "month", "day", "indexed"]]
 
 
+def build_seasonal_hilo_curve(df: pd.DataFrame, selected_years: list[int]) -> pd.DataFrame:
+    if df is None or df.empty or not selected_years:
+        return pd.DataFrame()
+
+    frames = []
+    for year in selected_years:
+        year_df = df[df.index.year == int(year)].copy()
+        year_df = year_df[~((year_df.index.month == 2) & (year_df.index.day == 29))]
+        if len(year_df) < 20:
+            continue
+        base = float(year_df["close"].iloc[0])
+        if not base:
+            continue
+        frames.append(
+            pd.DataFrame(
+                {
+                    "month": year_df.index.month,
+                    "day": year_df.index.day,
+                    "year": int(year),
+                    "indexed_close": year_df["close"].to_numpy() / base * 100,
+                    "indexed_high": year_df["high"].to_numpy() / base * 100,
+                    "indexed_low": year_df["low"].to_numpy() / base * 100,
+                }
+            )
+        )
+
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(frames, ignore_index=True)
+    curve = combined.groupby(["month", "day"], as_index=False).agg(
+        indexed_close=("indexed_close", "mean"),
+        indexed_high=("indexed_high", "mean"),
+        indexed_low=("indexed_low", "mean"),
+    )
+    curve["plot_date"] = [pd.Timestamp(year=2001, month=int(m), day=int(d)) for m, d in zip(curve["month"], curve["day"])]
+    curve = curve.sort_values("plot_date").reset_index(drop=True)
+    return curve[["plot_date", "month", "day", "indexed_close", "indexed_high", "indexed_low"]]
+
+
 def analyze_seasonal_window(
     df: pd.DataFrame,
     start_month: int,
@@ -3577,6 +3617,8 @@ def render_seasonality_lab() -> None:
     else:
         next30_display_start = next30_display_end = None
 
+    forecast_hilo = build_seasonal_hilo_curve(df, active_years)
+
     next30_chart_selection = None
     with next30_col:
         forecast_rows = []
@@ -3585,22 +3627,29 @@ def render_seasonality_lab() -> None:
             lookup_month, lookup_day = real_date.month, real_date.day
             if lookup_month == 2 and lookup_day == 29:
                 lookup_day = 28
-            match = chart_curve[(chart_curve["month"] == lookup_month) & (chart_curve["day"] == lookup_day)]
+            match = forecast_hilo[(forecast_hilo["month"] == lookup_month) & (forecast_hilo["day"] == lookup_day)]
             if match.empty:
                 continue
-            forecast_rows.append({"date": pd.Timestamp(real_date), "indexed": float(match["indexed_display"].iloc[0])})
+            forecast_rows.append(
+                {
+                    "date": pd.Timestamp(real_date),
+                    "close": float(match["indexed_close"].iloc[0]),
+                    "high": float(match["indexed_high"].iloc[0]),
+                    "low": float(match["indexed_low"].iloc[0]),
+                }
+            )
         forecast_df = pd.DataFrame(forecast_rows)
         if forecast_df.empty:
             st.info("Keine Daten fuer die naechsten 30 Tage verfuegbar.")
         else:
-            forecast_floor = min(float(forecast_df["indexed"].min()), 100.0)
-            forecast_ceiling = max(float(forecast_df["indexed"].max()), 100.0)
+            forecast_floor = min(float(forecast_df["low"].min()), 100.0)
+            forecast_ceiling = max(float(forecast_df["high"].max()), 100.0)
             forecast_padding = max((forecast_ceiling - forecast_floor) * 0.16, 1.0)
             forecast_label_y = forecast_ceiling + forecast_padding * 0.58
 
             def forecast_marker_value(marker: pd.Timestamp) -> float:
                 nearest_idx = (forecast_df["date"] - marker).abs().idxmin()
-                return float(forecast_df.loc[nearest_idx, "indexed"])
+                return float(forecast_df.loc[nearest_idx, "close"])
 
             if next30_display_start is not None and next30_display_end is not None:
                 next30_start_value = forecast_marker_value(next30_display_start)
@@ -3612,24 +3661,37 @@ def render_seasonality_lab() -> None:
             forecast_fig.add_trace(
                 go.Scatter(
                     x=forecast_df["date"],
-                    y=forecast_df["indexed"],
+                    y=forecast_df["high"],
                     mode="lines",
-                    line={"color": "rgba(98,200,232,.18)", "width": 0},
-                    fill="tozeroy",
-                    fillcolor="rgba(98,200,232,.13)",
-                    hoverinfo="skip",
+                    line={"color": "rgba(98,200,232,.25)", "width": 1, "shape": "linear"},
+                    hovertemplate="%{x|%d %b}<br>Hoch %{y:.2f}<extra></extra>",
+                    name="Hoch",
                     showlegend=False,
                 )
             )
             forecast_fig.add_trace(
                 go.Scatter(
                     x=forecast_df["date"],
-                    y=forecast_df["indexed"],
+                    y=forecast_df["low"],
+                    mode="lines",
+                    line={"color": "rgba(98,200,232,.25)", "width": 1, "shape": "linear"},
+                    fill="tonexty",
+                    fillcolor="rgba(98,200,232,.16)",
+                    hovertemplate="%{x|%d %b}<br>Tief %{y:.2f}<extra></extra>",
+                    name="Tief",
+                    showlegend=False,
+                )
+            )
+            forecast_fig.add_trace(
+                go.Scatter(
+                    x=forecast_df["date"],
+                    y=forecast_df["close"],
                     mode="lines+markers",
                     name="Next 30 Days",
-                    line={"color": "#62c8e8", "width": 2.1, "shape": "spline", "smoothing": 0.55},
-                    marker={"size": 4},
-                    hovertemplate="%{x|%d %b}<br>Index %{y:.2f}<extra></extra>",
+                    line={"color": "#62c8e8", "width": 2.1, "shape": "linear"},
+                    marker={"size": 5},
+                    customdata=forecast_df[["high", "low"]].to_numpy(),
+                    hovertemplate="%{x|%d %b}<br>Schluss %{y:.2f}<br>Hoch %{customdata[0]:.2f} · Tief %{customdata[1]:.2f}<extra></extra>",
                     showlegend=False,
                 )
             )
@@ -3671,7 +3733,7 @@ def render_seasonality_lab() -> None:
                 on_select="rerun",
                 selection_mode=("box",),
             )
-            st.caption("Abschnitt im Chart auswaehlen (Box-Select), um Winrate & Bewegung fuer genau dieses Zeitfenster zu sehen.")
+            st.caption("Schattierung zeigt den durchschnittlichen Tages-Hoch/Tief-Bereich. Abschnitt auswaehlen (Box-Select), um Winrate & Bewegung fuer genau dieses Zeitfenster zu sehen.")
 
     selected_next30_period = parse_absolute_chart_period(next30_chart_selection)
     if selected_next30_period:
