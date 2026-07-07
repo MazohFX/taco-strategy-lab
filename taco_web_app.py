@@ -5168,7 +5168,7 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     capital = 10_000.0
     position, entry_price, sl_price = 0, 0.0, 0.0
     trail_high, qty, trail_active = 0.0, 0.0, False
-    pending_entry = False
+    pending_entry, entry_ts = False, None
     trades, equity_curve = [], []
 
     sl_pct    = params["sl_pct"]
@@ -5177,6 +5177,10 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     trail_off  = params["trail_off"]
     half_spread    = params.get("spread_pts", 0.0) / 2.0
     commission_pct = params.get("commission_pct", 0.0)
+    # Swap/Übernacht-Finanzierung: einmal pro KALENDER-Nacht zwischen Entry- und Exit-Datum,
+    # nicht pro Handelstag — eine übers Wochenende gehaltene Position zahlt so automatisch für
+    # alle Wochenend-Nächte, unabhängig davon, an welchem Tag der Broker das intern verbucht.
+    swap_pts_per_night = params.get("swap_pts_per_night", 0.0)
     # "close"     = Fill zum Signal-Bar-Close (z.B. Montag-Close) — Standardverhalten
     # "next_open" = Fill zum Open des NÄCHSTEN Bars (z.B. Dienstag-Open) — Pine-Default ohne process_orders_on_close
     fill_mode = params.get("fill_mode", "close")
@@ -5206,6 +5210,7 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
             trail_active   = False
             position       = 1
             pending_entry  = False
+            entry_ts       = idx[i]
 
         if position == 1:
             if use_trail and trail_active:
@@ -5227,9 +5232,14 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
                 pnl = (exit_price_net - entry_price) * qty
                 if commission_pct > 0:
                     pnl -= qty * entry_price * (commission_pct / 100)
+                nights_held = max((idx[i] - entry_ts).days, 0) if entry_ts is not None else 0
+                swap_cost = nights_held * swap_pts_per_night * qty
+                if swap_cost:
+                    pnl -= swap_cost
                 capital += pnl
                 trades.append({"Zeit": idx[i], "Entry": entry_price, "Exit": exit_price_net,
-                                "PnL $": round(pnl, 2), "Grund": reason})
+                                "PnL $": round(pnl, 2), "Grund": reason,
+                                "Naechte": nights_held, "Swap $": round(swap_cost, 2)})
                 position, trail_active = 0, False
 
         if position == 0 and not pending_entry and entry_signal_arr[i]:
@@ -5246,6 +5256,7 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
                 trail_high     = c
                 trail_active   = False
                 position       = 1
+                entry_ts       = idx[i]
 
         equity_curve.append(capital)
 
@@ -7590,6 +7601,13 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                                          help="Pepperstone erhebt auf Index-CFDs standardmäßig KEINE Kommission — "
                                               "Kosten stecken komplett im Spread. Nur für Razor-artige Konten mit "
                                               "separater Kommission relevant.")
+        swap_pts_per_night = st.number_input("Swap Long (Punkte pro gehaltene Nacht)", 0.0, 20.0, 0.0, step=0.1, key="dax_swap",
+                                             help="Übernacht-Finanzierungskosten für gehaltene Long-Positionen — im Backtest bisher "
+                                                  "komplett ignoriert, kann bei mehrtägigem Halten spürbar sein. Trag hier den echten "
+                                                  "Swap-Long-Wert für GER40 aus deinem Pepperstone-Kontoauszug ein (in Punkten pro Nacht) "
+                                                  "— den kenne ich nicht, der ändert sich mit den Zinsen und ist je Kontotyp verschieden. "
+                                                  "Zählt EINE Nacht pro Kalendertag zwischen Entry und Exit — auch Wochenend-Nächte, falls "
+                                                  "eine Position übers Wochenende läuft (0 = wie bisher, keine Swap-Kosten).")
         st.caption("0 Punkte / 0% = wie bisher ohne Handelskosten rechnen.")
 
     # ── WFA-Konfiguration ─────────────────────────────────────────────────
@@ -7712,6 +7730,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         "risk_pct":    float(risk_pct),
         "spread_pts":     float(spread_pts),
         "commission_pct": float(commission_pct),
+        "swap_pts_per_night": float(swap_pts_per_night),
         "fill_mode":      fill_mode,
     }
 
