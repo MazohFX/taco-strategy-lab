@@ -5818,12 +5818,13 @@ def _wfa_json_decode(obj):
         return [_wfa_json_decode(x) for x in obj]
     return obj
 
-def _save_wfa_result(slot: str, payload: dict) -> None:
-    """Speichert ein WFA/Ensemble-Ergebnis dauerhaft im GitHub Gist unter einem festen Slot-Namen."""
+def _save_wfa_result(slot: str, payload: dict) -> bool:
+    """Speichert ein WFA/Ensemble-Ergebnis dauerhaft im GitHub Gist unter einem festen Slot-Namen.
+    Gibt True zurück, wenn das Speichern nachweislich geklappt hat (für UI-Feedback)."""
     import requests
     token = _gist_token()
     if not token:
-        return
+        return False
     try:
         headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
         gist_id = _find_gist_id(token)
@@ -5838,11 +5839,12 @@ def _save_wfa_result(slot: str, payload: dict) -> None:
         gist_payload = {"description": _GIST_DESCRIPTION, "public": False,
                          "files": {_WFA_RESULT_GIST_FILENAME: {"content": json.dumps(existing)}}}
         if gist_id:
-            requests.patch(f"https://api.github.com/gists/{gist_id}", headers=headers, json=gist_payload, timeout=20)
+            resp = requests.patch(f"https://api.github.com/gists/{gist_id}", headers=headers, json=gist_payload, timeout=20)
         else:
-            requests.post("https://api.github.com/gists", headers=headers, json=gist_payload, timeout=20)
+            resp = requests.post("https://api.github.com/gists", headers=headers, json=gist_payload, timeout=20)
+        return resp.status_code in (200, 201)
     except Exception:
-        pass
+        return False
 
 def _load_wfa_result(slot: str) -> dict | None:
     """Lädt ein zuvor gespeichertes WFA/Ensemble-Ergebnis aus dem GitHub Gist, falls vorhanden."""
@@ -7802,6 +7804,12 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                         _restored.setdefault("param_stability_trades", {})
                     st.session_state[_k] = _restored
                     st.session_state["dax_wfa_ran"] = True
+                    st.session_state.setdefault("dax_wfa_restored_modes", []).append(_fm)
+
+    if st.session_state.get("dax_wfa_restored_modes"):
+        _restored_labels = ", ".join("Montag Close" if m == "close" else "Dienstag Open"
+                                      for m in st.session_state.pop("dax_wfa_restored_modes"))
+        st.caption(f"☁️ WFA-Ergebnis aus dem Cloud-Speicher wiederhergestellt ({_restored_labels}) — keine Neuberechnung nötig.")
 
     def _dax_wfa_persist_blob(_full_result: dict) -> dict:
         """Kompakte Version des WFA-Ergebnisses fürs Gist: lässt die Trades JEDER Grid-Kombi weg
@@ -7928,13 +7936,18 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         }
 
     if _wfa_enabled and (run_btn or wfa_cache_key not in st.session_state):
-        _modes_to_run = ["close", "next_open"] if (run_btn and test_both_fills) else [fill_mode]
+        _other_fm = "next_open" if fill_mode == "close" else "close"
+        _modes_to_run = [fill_mode, _other_fm] if (run_btn and test_both_fills) else [fill_mode]
         for _fm in _modes_to_run:
             _mode_label = "Montag Close" if _fm == "close" else "Dienstag Open"
             _variant_params = {**base_params, "fill_mode": _fm}
             _wfa_result = _run_dax_wfa(_variant_params, _mode_label)
             st.session_state[_dax_wfa_cache_key(_fm)] = _wfa_result
-            _save_wfa_result(f"dax_wfa_{_fm}", _dax_wfa_persist_blob(_wfa_result))
+            if _save_wfa_result(f"dax_wfa_{_fm}", _dax_wfa_persist_blob(_wfa_result)):
+                st.caption(f"☁️ {_mode_label}: WFA-Ergebnis dauerhaft gespeichert — übersteht Reboots/Neustarts.")
+            else:
+                st.caption(f"⚠️ {_mode_label}: Konnte nicht dauerhaft gespeichert werden (Gist/Token-Problem) — "
+                           f"bleibt nur für diese Browser-Session erhalten.")
         # Trades auch direkt unter Ticker-Key speichern — MC findet sie ohne exakten Cache-Key
         st.session_state[f"dax_mc_trades_{_dax_ticker}"] = tr_full
 
@@ -8278,6 +8291,12 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     _restored_ens = _load_wfa_result(f"dax_ens_{_fm}")
                     if _restored_ens is not None:
                         st.session_state[_k] = _restored_ens
+                        st.session_state.setdefault("dax_ens_restored_modes", []).append(_fm)
+
+        if st.session_state.get("dax_ens_restored_modes"):
+            _restored_ens_labels = ", ".join("Montag Close" if m == "close" else "Dienstag Open"
+                                              for m in st.session_state.pop("dax_ens_restored_modes"))
+            st.caption(f"☁️ Ensemble-Ergebnis aus dem Cloud-Speicher wiederhergestellt ({_restored_ens_labels}) — keine Neuberechnung nötig.")
 
         # Status-Badge: Ensemble bereits gelaufen?
         _ens_status_key = _dax_ens_cache_key(fill_mode)
@@ -8299,7 +8318,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                    f"jetzt pro Fold statt nur pro Lauf, sollte also nicht mehr eingefroren wirken.")
 
         if st.session_state["dax_ens_running"]:
-            _modes_to_run = ["close", "next_open"] if test_both_fills else [fill_mode]
+            _other_fm_ens = "next_open" if fill_mode == "close" else "close"
+            _modes_to_run = [fill_mode, _other_fm_ens] if test_both_fills else [fill_mode]
             st.info(f"Starte {n_runs} WFA-Läufe mit versetzten Startdaten … ({len(_modes_to_run)} Fill-Modus/-Modi)")
 
             for _fm in _modes_to_run:
@@ -8430,15 +8450,20 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     "fill_mode_label": _mode_label,
                 }
                 st.session_state[_dax_ens_cache_key(_fm)] = _ens_result
-                _save_wfa_result(f"dax_ens_{_fm}", _ens_result)
+                _ens_saved = _save_wfa_result(f"dax_ens_{_fm}", _ens_result)
+
+                _ens_persist_note = ("☁️ dauerhaft gespeichert" if _ens_saved
+                                     else "⚠️ nur für diese Session (Gist/Token-Problem)")
 
                 if _fm != fill_mode:
                     # Nicht aktuell ausgewählter Modus: nur speichern, keine volle Anzeige (siehe Vergleichstabelle unten)
                     st.success(f"✅ {_mode_label}: {len(df_ens)} Kombinationen gespeichert · "
-                               f"Top-Konsistenz {int(df_ens.iloc[0]['Konsistenz %'])}% · Ø OOS PF {df_ens.iloc[0]['Ø OOS PF']}")
+                               f"Top-Konsistenz {int(df_ens.iloc[0]['Konsistenz %'])}% · Ø OOS PF {df_ens.iloc[0]['Ø OOS PF']} · "
+                               f"{_ens_persist_note}")
                     continue
 
-                st.success(f"**Ensemble abgeschlossen** — {len(df_ens)} Kombinationen über {int(n_runs)} Läufe · Zeitraum: {tested_period}")
+                st.success(f"**Ensemble abgeschlossen** — {len(df_ens)} Kombinationen über {int(n_runs)} Läufe · "
+                           f"Zeitraum: {tested_period} · {_ens_persist_note}")
 
                 # ── Top-10 Tabelle ────────────────────────────────────────────
                 st.markdown(f"### 🏆 Top-10 stabilste Setups über {int(n_runs)} Läufe")
