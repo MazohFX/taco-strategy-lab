@@ -564,6 +564,215 @@ def analyze_seasonal_window(
     return pd.DataFrame(rows)
 
 
+def compute_season_stats(df: pd.DataFrame, trades: pd.DataFrame, active_years: list[int], all_years) -> dict:
+    profit_pct = trades["Profit %"] if not trades.empty else pd.Series(dtype=float)
+    profit_points = trades["Profit"] if not trades.empty else pd.Series(dtype=float)
+    avg_return = profit_pct.mean() if not profit_pct.empty else np.nan
+    std_return = profit_pct.std(ddof=1) if len(profit_pct) > 1 else np.nan
+    sharpe = avg_return / std_return if std_return and not pd.isna(std_return) else np.nan
+    if not trades.empty:
+        holding_days = (
+            pd.to_datetime(trades["End Date"]) - pd.to_datetime(trades["Start Date"])
+        ).dt.days.clip(lower=1)
+        avg_holding_days = float(holding_days.mean())
+    else:
+        avg_holding_days = np.nan
+    if pd.isna(avg_return) or pd.isna(avg_holding_days) or avg_holding_days <= 0:
+        annualized_window_return = np.nan
+    else:
+        annualized_window_return = ((1 + avg_return / 100) ** (365.25 / avg_holding_days) - 1) * 100
+    if not trades.empty:
+        trading_day_counts = []
+        for _, trade in trades.iterrows():
+            start_dt = pd.Timestamp(trade["Start Date"])
+            end_dt = pd.Timestamp(trade["End Date"])
+            trading_day_counts.append(len(df[(df.index >= start_dt) & (df.index <= end_dt)]))
+        avg_trading_days = float(np.mean(trading_day_counts)) if trading_day_counts else np.nan
+        gains_count = int((profit_pct > 0).sum())
+        losses_count = int((profit_pct < 0).sum())
+        sorted_returns = trades.sort_values("Year")["Profit %"].to_list()
+        current_streak = 0
+        current_side = "none"
+        for value in reversed(sorted_returns):
+            side = "gains" if value > 0 else "losses" if value < 0 else "flat"
+            if current_streak == 0:
+                current_side = side
+                current_streak = 1 if side != "flat" else 0
+            elif side == current_side:
+                current_streak += 1
+            else:
+                break
+        downside_std = profit_pct[profit_pct < 0].std(ddof=1)
+        sortino = avg_return / abs(downside_std) if downside_std and not pd.isna(downside_std) else np.nan
+    else:
+        avg_trading_days = np.nan
+        gains_count = losses_count = current_streak = 0
+        current_side = "none"
+        sortino = np.nan
+    stats = {
+        "Pattern-Jahre": len(active_years),
+        "Rest-Jahre": max(len(all_years) - len(active_years), 0),
+        "Trades": len(trades),
+        "Gains": gains_count,
+        "Losses": losses_count,
+        "Current Streak": current_streak,
+        "Trading Days": avg_trading_days,
+        "Calendar Days": avg_holding_days,
+        "Annualized Return": annualized_window_return,
+        "Average Return": avg_return,
+        "Median Return": profit_pct.median() if not profit_pct.empty else np.nan,
+        "Winning Trades %": (profit_pct.gt(0).mean() * 100) if not profit_pct.empty else np.nan,
+        "Avg Profit Punkte": profit_points.mean() if not profit_points.empty else np.nan,
+        "Average Profit %": avg_return,
+        "Average Gain": profit_pct[profit_pct > 0].mean() if not profit_pct.empty else np.nan,
+        "Average Loss": profit_pct[profit_pct < 0].mean() if not profit_pct.empty else np.nan,
+        "Max Profit": profit_points.max() if not profit_points.empty else np.nan,
+        "Max Loss": profit_points.min() if not profit_points.empty else np.nan,
+        "Standard Deviation": std_return,
+        "Sharpe Ratio": sharpe,
+        "Sortino Ratio": sortino,
+        "Volatility": std_return,
+    }
+    if len(trades) > 0:
+        rise_probability = gains_count / len(trades) * 100
+        fall_probability = losses_count / len(trades) * 100
+        flat_count = max(len(trades) - gains_count - losses_count, 0)
+    else:
+        rise_probability = fall_probability = np.nan
+        flat_count = 0
+    if pd.isna(rise_probability) or pd.isna(fall_probability):
+        dominant_probability = np.nan
+        dominant_label = "n/a"
+    else:
+        dominant_probability = rise_probability if rise_probability >= fall_probability else fall_probability
+        dominant_label = "Rise" if rise_probability >= fall_probability else "Fall"
+    dominant_color = "#62c8e8" if dominant_label == "Rise" else "#c25f50"
+    streak_label = f"{current_streak} {current_side}" if current_streak else "0"
+    return {
+        "trades": trades,
+        "stats": stats,
+        "profit_points": profit_points,
+        "rise_probability": rise_probability,
+        "fall_probability": fall_probability,
+        "flat_count": flat_count,
+        "dominant_probability": dominant_probability,
+        "dominant_label": dominant_label,
+        "dominant_color": dominant_color,
+        "streak_label": streak_label,
+        "gains_count": gains_count,
+        "losses_count": losses_count,
+    }
+
+
+def render_season_stats_panel(result: dict, key_suffix: str = "") -> None:
+    trades = result["trades"]
+    stats = result["stats"]
+    profit_points = result["profit_points"]
+    rise_probability = result["rise_probability"]
+    fall_probability = result["fall_probability"]
+    flat_count = result["flat_count"]
+    dominant_probability = result["dominant_probability"]
+    dominant_label = result["dominant_label"]
+    dominant_color = result["dominant_color"]
+    streak_label = result["streak_label"]
+    gains_count = result["gains_count"]
+    losses_count = result["losses_count"]
+
+    def fmt_stat(value: float, suffix: str = "", digits: int = 2) -> str:
+        if pd.isna(value):
+            return "n/a"
+        if digits == 0:
+            return f"{value:,.0f}{suffix}"
+        return f"{value:,.{digits}f}{suffix}"
+
+    donut_values = [gains_count, losses_count, flat_count]
+    if sum(donut_values) == 0:
+        donut_values = [1, 0, 0]
+    donut = go.Figure(
+        go.Pie(
+            labels=["Rise", "Fall", "Flat"],
+            values=donut_values,
+            hole=0.62,
+            marker={"colors": ["#62c8e8", "#c25f50", "#334155"]},
+            textinfo="none",
+            sort=False,
+        )
+    )
+    donut.update_layout(**_seasonality_base_layout("", 172))
+    donut.update_layout(showlegend=False, margin={"l": 12, "r": 12, "t": 8, "b": 8})
+    donut.add_annotation(
+        text="n/a" if pd.isna(dominant_probability) else f"{dominant_probability:.0f}%",
+        x=0.5,
+        y=0.55,
+        showarrow=False,
+        font={"color": dominant_color, "size": 20},
+    )
+    donut.add_annotation(
+        text=dominant_label,
+        x=0.5,
+        y=0.40,
+        showarrow=False,
+        font={"color": "#cbd5e1", "size": 10},
+    )
+    st.plotly_chart(donut, width="stretch", config={"displayModeBar": False}, key=f"season_stats_donut_{key_suffix}")
+    st.markdown(
+        f"""
+        <div class="season-panel">
+            <div class="season-panel-title">Probability</div>
+            <div class="season-stat-grid">
+                <div class="season-stat"><strong>{fmt_stat(rise_probability, "%")}</strong>Rise odds</div>
+                <div class="season-stat negative"><strong>{fmt_stat(fall_probability, "%")}</strong>Fall odds</div>
+                <div class="season-stat neutral"><strong>{stats["Gains"]}</strong>Rise years</div>
+                <div class="season-stat neutral"><strong>{stats["Losses"]}</strong>Fall years</div>
+            </div>
+        </div>
+        <div class="season-panel">
+            <div class="season-panel-title">Return</div>
+            <div class="season-stat-grid">
+                <div class="season-stat"><strong>{fmt_stat(stats["Annualized Return"], "%")}</strong>Annualized</div>
+                <div class="season-stat"><strong>{fmt_stat(stats["Winning Trades %"], "%")}</strong>Winning trades</div>
+                <div class="season-stat"><strong>{fmt_stat(stats["Average Return"], "%")}</strong>Average return</div>
+                <div class="season-stat"><strong>{fmt_stat(stats["Median Return"], "%")}</strong>Median return</div>
+            </div>
+        </div>
+        <div class="season-panel">
+            <div class="season-panel-title">Profit</div>
+            <div class="season-stat-grid">
+                <div class="season-stat"><strong>{fmt_stat(profit_points.sum(), " pts")}</strong>Total profit</div>
+                <div class="season-stat"><strong>{fmt_stat(stats["Avg Profit Punkte"], " pts")}</strong>Average profit</div>
+                <div class="season-stat"><strong>{fmt_stat(stats["Max Profit"], " pts")}</strong>Max profit</div>
+                <div class="season-stat negative"><strong>{fmt_stat(stats["Max Loss"], " pts")}</strong>Max loss</div>
+            </div>
+        </div>
+        <div class="season-panel">
+            <div class="season-panel-title">Gains / Losses</div>
+            <div class="season-stat-grid">
+                <div class="season-stat"><strong>{stats["Gains"]}</strong>Gains</div>
+                <div class="season-stat negative"><strong>{stats["Losses"]}</strong>Losses</div>
+                <div class="season-stat"><strong>{fmt_stat(stats["Average Gain"], "%")}</strong>Avg gain</div>
+                <div class="season-stat negative"><strong>{fmt_stat(stats["Average Loss"], "%")}</strong>Avg loss</div>
+                <div class="season-stat"><strong>{fmt_stat(trades["Max Rise"].max() if not trades.empty else np.nan, "%")}</strong>Max rise</div>
+                <div class="season-stat negative"><strong>{fmt_stat(trades["Max Drop"].min() if not trades.empty else np.nan, "%")}</strong>Max drop</div>
+            </div>
+        </div>
+        <div class="season-panel">
+            <div class="season-panel-title">Miscellaneous</div>
+            <div class="season-stat-grid">
+                <div class="season-stat neutral"><strong>{stats["Trades"]}</strong>Trades</div>
+                <div class="season-stat neutral"><strong>{streak_label}</strong>Current streak</div>
+                <div class="season-stat neutral"><strong>{fmt_stat(stats["Trading Days"], "", 0)}</strong>Trading days</div>
+                <div class="season-stat neutral"><strong>{fmt_stat(stats["Calendar Days"], "", 0)}</strong>Calendar days</div>
+                <div class="season-stat neutral"><strong>{fmt_stat(stats["Standard Deviation"], "%")}</strong>Std. deviation</div>
+                <div class="season-stat neutral"><strong>{fmt_stat(stats["Sharpe Ratio"], "")}</strong>Sharpe ratio</div>
+                <div class="season-stat neutral"><strong>{fmt_stat(stats["Sortino Ratio"], "")}</strong>Sortino ratio</div>
+                <div class="season-stat neutral"><strong>{fmt_stat(stats["Volatility"], "%")}</strong>Volatility</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 MAG7_TICKERS = {
     "AAPL": "Apple",
     "MSFT": "Microsoft",
@@ -3135,6 +3344,51 @@ def render_seasonality_lab() -> None:
             pd.Timestamp(year=2001, month=int(end.month), day=int(end.day)),
         )
 
+    def parse_absolute_chart_period(selection_state) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+        if not selection_state:
+            return None
+        selection = getattr(selection_state, "selection", None)
+        if selection is None and isinstance(selection_state, dict):
+            selection = selection_state.get("selection")
+        if not selection:
+            return None
+        boxes = getattr(selection, "box", None)
+        if boxes is None and isinstance(selection, dict):
+            boxes = selection.get("box", [])
+        for box in boxes or []:
+            raw_range = getattr(box, "range", None)
+            if raw_range is None and isinstance(box, dict):
+                raw_range = box.get("range")
+            raw_x = None
+            if raw_range is not None:
+                raw_x = getattr(raw_range, "x", None)
+                if raw_x is None and isinstance(raw_range, dict):
+                    raw_x = raw_range.get("x")
+            if raw_x is None:
+                raw_x = getattr(box, "x", None)
+                if raw_x is None and isinstance(box, dict):
+                    raw_x = box.get("x")
+            if raw_x is None or len(raw_x) < 2:
+                continue
+            start = pd.Timestamp(raw_x[0])
+            end = pd.Timestamp(raw_x[1])
+            if end < start:
+                start, end = end, start
+            return (start, end)
+        points = getattr(selection, "points", None)
+        if points is None and isinstance(selection, dict):
+            points = selection.get("points", [])
+        x_values = []
+        for point in points or []:
+            raw_x = getattr(point, "x", None)
+            if raw_x is None and isinstance(point, dict):
+                raw_x = point.get("x")
+            if raw_x is not None:
+                x_values.append(pd.Timestamp(raw_x))
+        if len(x_values) < 2:
+            return None
+        return (min(x_values), max(x_values))
+
     def chart_selection_is_empty(selection_state) -> bool:
         if not selection_state:
             return False
@@ -3306,189 +3560,25 @@ def render_seasonality_lab() -> None:
         active_years,
     )
 
-    profit_pct = trades["Profit %"] if not trades.empty else pd.Series(dtype=float)
-    profit_points = trades["Profit"] if not trades.empty else pd.Series(dtype=float)
-    avg_return = profit_pct.mean() if not profit_pct.empty else np.nan
-    std_return = profit_pct.std(ddof=1) if len(profit_pct) > 1 else np.nan
-    sharpe = avg_return / std_return if std_return and not pd.isna(std_return) else np.nan
-    if not trades.empty:
-        holding_days = (
-            pd.to_datetime(trades["End Date"]) - pd.to_datetime(trades["Start Date"])
-        ).dt.days.clip(lower=1)
-        avg_holding_days = float(holding_days.mean())
-    else:
-        avg_holding_days = np.nan
-    if pd.isna(avg_return) or pd.isna(avg_holding_days) or avg_holding_days <= 0:
-        annualized_window_return = np.nan
-    else:
-        annualized_window_return = ((1 + avg_return / 100) ** (365.25 / avg_holding_days) - 1) * 100
-    if not trades.empty:
-        trading_day_counts = []
-        for _, trade in trades.iterrows():
-            start_dt = pd.Timestamp(trade["Start Date"])
-            end_dt = pd.Timestamp(trade["End Date"])
-            trading_day_counts.append(len(df[(df.index >= start_dt) & (df.index <= end_dt)]))
-        avg_trading_days = float(np.mean(trading_day_counts)) if trading_day_counts else np.nan
-        gains_count = int((profit_pct > 0).sum())
-        losses_count = int((profit_pct < 0).sum())
-        sorted_returns = trades.sort_values("Year")["Profit %"].to_list()
-        current_streak = 0
-        current_side = "none"
-        for value in reversed(sorted_returns):
-            side = "gains" if value > 0 else "losses" if value < 0 else "flat"
-            if current_streak == 0:
-                current_side = side
-                current_streak = 1 if side != "flat" else 0
-            elif side == current_side:
-                current_streak += 1
-            else:
-                break
-        downside_std = profit_pct[profit_pct < 0].std(ddof=1)
-        sortino = avg_return / abs(downside_std) if downside_std and not pd.isna(downside_std) else np.nan
-    else:
-        avg_trading_days = np.nan
-        gains_count = losses_count = current_streak = 0
-        current_side = "none"
-        sortino = np.nan
-    stats = {
-        "Pattern-Jahre": len(active_years),
-        "Rest-Jahre": max(len(all_years) - len(active_years), 0),
-        "Trades": len(trades),
-        "Gains": gains_count,
-        "Losses": losses_count,
-        "Current Streak": current_streak,
-        "Trading Days": avg_trading_days,
-        "Calendar Days": avg_holding_days,
-        "Annualized Return": annualized_window_return,
-        "Average Return": avg_return,
-        "Median Return": profit_pct.median() if not profit_pct.empty else np.nan,
-        "Winning Trades %": (profit_pct.gt(0).mean() * 100) if not profit_pct.empty else np.nan,
-        "Avg Profit Punkte": profit_points.mean() if not profit_points.empty else np.nan,
-        "Average Profit %": avg_return,
-        "Average Gain": profit_pct[profit_pct > 0].mean() if not profit_pct.empty else np.nan,
-        "Average Loss": profit_pct[profit_pct < 0].mean() if not profit_pct.empty else np.nan,
-        "Max Profit": profit_points.max() if not profit_points.empty else np.nan,
-        "Max Loss": profit_points.min() if not profit_points.empty else np.nan,
-        "Standard Deviation": std_return,
-        "Sharpe Ratio": sharpe,
-        "Sortino Ratio": sortino,
-        "Volatility": std_return,
-    }
-    def fmt_stat(value: float, suffix: str = "", digits: int = 2) -> str:
-        if pd.isna(value):
-            return "n/a"
-        if digits == 0:
-            return f"{value:,.0f}{suffix}"
-        return f"{value:,.{digits}f}{suffix}"
-
-    if len(trades) > 0:
-        rise_probability = gains_count / len(trades) * 100
-        fall_probability = losses_count / len(trades) * 100
-        flat_count = max(len(trades) - gains_count - losses_count, 0)
-        flat_probability = flat_count / len(trades) * 100
-    else:
-        rise_probability = fall_probability = flat_probability = np.nan
-        flat_count = 0
-    if pd.isna(rise_probability) or pd.isna(fall_probability):
-        dominant_probability = np.nan
-        dominant_label = "n/a"
-    else:
-        dominant_probability = rise_probability if rise_probability >= fall_probability else fall_probability
-        dominant_label = "Rise" if rise_probability >= fall_probability else "Fall"
-    dominant_color = "#62c8e8" if dominant_label == "Rise" else "#c25f50"
-    streak_label = f"{current_streak} {current_side}" if current_streak else "0"
+    season_result = compute_season_stats(df, trades, active_years, all_years)
+    rise_probability = season_result["rise_probability"]
     with stat_col:
-        donut_values = [gains_count, losses_count, flat_count]
-        if sum(donut_values) == 0:
-            donut_values = [1, 0, 0]
-        donut = go.Figure(
-            go.Pie(
-                labels=["Rise", "Fall", "Flat"],
-                values=donut_values,
-                hole=0.62,
-                marker={"colors": ["#62c8e8", "#c25f50", "#334155"]},
-                textinfo="none",
-                sort=False,
-            )
-        )
-        donut.update_layout(**_seasonality_base_layout("", 172))
-        donut.update_layout(showlegend=False, margin={"l": 12, "r": 12, "t": 8, "b": 8})
-        donut.add_annotation(
-            text="n/a" if pd.isna(dominant_probability) else f"{dominant_probability:.0f}%",
-            x=0.5,
-            y=0.55,
-            showarrow=False,
-            font={"color": dominant_color, "size": 20},
-        )
-        donut.add_annotation(
-            text=dominant_label,
-            x=0.5,
-            y=0.40,
-            showarrow=False,
-            font={"color": "#cbd5e1", "size": 10},
-        )
-        st.plotly_chart(donut, width="stretch", config={"displayModeBar": False})
-        st.markdown(
-            f"""
-            <div class="season-panel">
-                <div class="season-panel-title">Probability</div>
-                <div class="season-stat-grid">
-                    <div class="season-stat"><strong>{fmt_stat(rise_probability, "%")}</strong>Rise odds</div>
-                    <div class="season-stat negative"><strong>{fmt_stat(fall_probability, "%")}</strong>Fall odds</div>
-                    <div class="season-stat neutral"><strong>{stats["Gains"]}</strong>Rise years</div>
-                    <div class="season-stat neutral"><strong>{stats["Losses"]}</strong>Fall years</div>
-                </div>
-            </div>
-            <div class="season-panel">
-                <div class="season-panel-title">Return</div>
-                <div class="season-stat-grid">
-                    <div class="season-stat"><strong>{fmt_stat(stats["Annualized Return"], "%")}</strong>Annualized</div>
-                    <div class="season-stat"><strong>{fmt_stat(stats["Winning Trades %"], "%")}</strong>Winning trades</div>
-                    <div class="season-stat"><strong>{fmt_stat(stats["Average Return"], "%")}</strong>Average return</div>
-                    <div class="season-stat"><strong>{fmt_stat(stats["Median Return"], "%")}</strong>Median return</div>
-                </div>
-            </div>
-            <div class="season-panel">
-                <div class="season-panel-title">Profit</div>
-                <div class="season-stat-grid">
-                    <div class="season-stat"><strong>{fmt_stat(profit_points.sum(), " pts")}</strong>Total profit</div>
-                    <div class="season-stat"><strong>{fmt_stat(stats["Avg Profit Punkte"], " pts")}</strong>Average profit</div>
-                    <div class="season-stat"><strong>{fmt_stat(stats["Max Profit"], " pts")}</strong>Max profit</div>
-                    <div class="season-stat negative"><strong>{fmt_stat(stats["Max Loss"], " pts")}</strong>Max loss</div>
-                </div>
-            </div>
-            <div class="season-panel">
-                <div class="season-panel-title">Gains / Losses</div>
-                <div class="season-stat-grid">
-                    <div class="season-stat"><strong>{stats["Gains"]}</strong>Gains</div>
-                    <div class="season-stat negative"><strong>{stats["Losses"]}</strong>Losses</div>
-                    <div class="season-stat"><strong>{fmt_stat(stats["Average Gain"], "%")}</strong>Avg gain</div>
-                    <div class="season-stat negative"><strong>{fmt_stat(stats["Average Loss"], "%")}</strong>Avg loss</div>
-                    <div class="season-stat"><strong>{fmt_stat(trades["Max Rise"].max() if not trades.empty else np.nan, "%")}</strong>Max rise</div>
-                    <div class="season-stat negative"><strong>{fmt_stat(trades["Max Drop"].min() if not trades.empty else np.nan, "%")}</strong>Max drop</div>
-                </div>
-            </div>
-            <div class="season-panel">
-                <div class="season-panel-title">Miscellaneous</div>
-                <div class="season-stat-grid">
-                    <div class="season-stat neutral"><strong>{stats["Trades"]}</strong>Trades</div>
-                    <div class="season-stat neutral"><strong>{streak_label}</strong>Current streak</div>
-                    <div class="season-stat neutral"><strong>{fmt_stat(stats["Trading Days"], "", 0)}</strong>Trading days</div>
-                    <div class="season-stat neutral"><strong>{fmt_stat(stats["Calendar Days"], "", 0)}</strong>Calendar days</div>
-                    <div class="season-stat neutral"><strong>{fmt_stat(stats["Standard Deviation"], "%")}</strong>Std. deviation</div>
-                    <div class="season-stat neutral"><strong>{fmt_stat(stats["Sharpe Ratio"], "")}</strong>Sharpe ratio</div>
-                    <div class="season-stat neutral"><strong>{fmt_stat(stats["Sortino Ratio"], "")}</strong>Sortino ratio</div>
-                    <div class="season-stat neutral"><strong>{fmt_stat(stats["Volatility"], "%")}</strong>Volatility</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        render_season_stats_panel(season_result, key_suffix="main")
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    next30_col, _next30_spacer = st.columns([4.35, 1.2])
+    next30_col, next30_stat_col = st.columns([4.35, 1.2])
+    real_today = date.today()
+    forecast_end = real_today + pd.Timedelta(days=30)
+
+    next30_manual_period = st.session_state.get("seasonality_next30_manual_period")
+    if next30_manual_period:
+        next30_display_start = pd.Timestamp(next30_manual_period[0])
+        next30_display_end = pd.Timestamp(next30_manual_period[1])
+    else:
+        next30_display_start = next30_display_end = None
+
+    next30_chart_selection = None
     with next30_col:
-        real_today = date.today()
         forecast_rows = []
         for offset in range(31):
             real_date = real_today + pd.Timedelta(days=offset)
@@ -3506,6 +3596,18 @@ def render_seasonality_lab() -> None:
             forecast_floor = min(float(forecast_df["indexed"].min()), 100.0)
             forecast_ceiling = max(float(forecast_df["indexed"].max()), 100.0)
             forecast_padding = max((forecast_ceiling - forecast_floor) * 0.16, 1.0)
+            forecast_label_y = forecast_ceiling + forecast_padding * 0.58
+
+            def forecast_marker_value(marker: pd.Timestamp) -> float:
+                nearest_idx = (forecast_df["date"] - marker).abs().idxmin()
+                return float(forecast_df.loc[nearest_idx, "indexed"])
+
+            if next30_display_start is not None and next30_display_end is not None:
+                next30_start_value = forecast_marker_value(next30_display_start)
+                next30_end_value = forecast_marker_value(next30_display_end)
+            else:
+                next30_start_value = next30_end_value = None
+
             forecast_fig = go.Figure()
             forecast_fig.add_trace(
                 go.Scatter(
@@ -3532,18 +3634,87 @@ def render_seasonality_lab() -> None:
                 )
             )
             forecast_fig.add_vline(x=forecast_df["date"].iloc[0], line_color="#c0267a", line_width=2)
+            if next30_display_start is not None and next30_display_end is not None:
+                forecast_fig.add_vline(x=next30_display_start, line_color="rgba(226,232,240,.82)", line_width=1.3)
+                forecast_fig.add_vline(x=next30_display_end, line_color="rgba(226,232,240,.82)", line_width=1.3)
+                forecast_fig.add_vrect(x0=next30_display_start, x1=next30_display_end, fillcolor="#62c8e8", opacity=0.11, line_width=0)
+                for marker, marker_value in [(next30_display_start, next30_start_value), (next30_display_end, next30_end_value)]:
+                    forecast_fig.add_annotation(
+                        x=marker,
+                        y=forecast_label_y,
+                        text=f"{marker.strftime('%d %b')}: {marker_value:.2f}",
+                        showarrow=False,
+                        bgcolor="rgba(31,41,55,.92)",
+                        bordercolor="rgba(226,232,240,.22)",
+                        borderpad=4,
+                        font={"size": 10, "color": "#dbeafe"},
+                    )
             forecast_fig.update_layout(
                 **_seasonality_base_layout(f"Seasonal Forecast of {asset_short} — Next 30 Days ({years_text})", 700)
             )
-            forecast_fig.update_layout(uirevision=f"seasonality_next30_{asset_short}_{active_years_token}")
+            forecast_fig.update_layout(
+                dragmode="select",
+                uirevision=f"seasonality_next30_{asset_short}_{active_years_token}",
+            )
             forecast_fig.update_xaxes(tickformat="%d %b", showspikes=False, fixedrange=True)
             forecast_fig.update_yaxes(title="", range=[forecast_floor - forecast_padding, forecast_ceiling + forecast_padding])
-            st.plotly_chart(
+            next30_chart_selection = st.plotly_chart(
                 forecast_fig,
                 width="stretch",
-                config={"displayModeBar": False},
+                config={
+                    "displayModeBar": False,
+                    "scrollZoom": False,
+                    "doubleClick": "reset",
+                    "staticPlot": False,
+                },
                 key="seasonality_next30_curve",
+                on_select="rerun",
+                selection_mode=("box",),
             )
+            st.caption("Abschnitt im Chart auswaehlen (Box-Select), um Winrate & Bewegung fuer genau dieses Zeitfenster zu sehen.")
+
+    selected_next30_period = parse_absolute_chart_period(next30_chart_selection)
+    if selected_next30_period:
+        selected_next30_token = tuple(marker.isoformat() for marker in selected_next30_period)
+        if selected_next30_token != tuple(st.session_state.get("seasonality_next30_manual_period", ())):
+            st.session_state["seasonality_next30_manual_period"] = selected_next30_token
+            st.session_state["seasonality_next30_selection_active"] = True
+            st.session_state["seasonality_next30_just_set_manual_period"] = selected_next30_token
+            st.rerun()
+        else:
+            st.session_state.pop("seasonality_next30_just_set_manual_period", None)
+    elif (
+        st.session_state.get("seasonality_next30_selection_active")
+        and st.session_state.get("seasonality_next30_manual_period")
+        and not active_years_changed
+        and chart_selection_is_empty(next30_chart_selection)
+    ):
+        just_set_next30 = st.session_state.pop("seasonality_next30_just_set_manual_period", None)
+        if just_set_next30 != tuple(st.session_state.get("seasonality_next30_manual_period", ())):
+            st.session_state.pop("seasonality_next30_manual_period", None)
+            st.session_state["seasonality_next30_selection_active"] = False
+            st.rerun()
+
+    next30_manual_period = st.session_state.get("seasonality_next30_manual_period")
+    if next30_manual_period:
+        forecast_start_marker = pd.Timestamp(next30_manual_period[0])
+        forecast_end_marker = pd.Timestamp(next30_manual_period[1])
+    else:
+        forecast_start_marker = pd.Timestamp(real_today)
+        forecast_end_marker = pd.Timestamp(forecast_end)
+
+    forecast_trades = analyze_seasonal_window(
+        df,
+        int(forecast_start_marker.month),
+        int(forecast_start_marker.day),
+        int(forecast_end_marker.month),
+        int(forecast_end_marker.day),
+        active_years,
+    )
+
+    with next30_stat_col:
+        forecast_result = compute_season_stats(df, forecast_trades, active_years, all_years)
+        render_season_stats_panel(forecast_result, key_suffix="next30")
 
     if trades.empty:
         st.warning("Der gewaehlte saisonale Zeitraum enthaelt keine vollstaendigen historischen Pattern-Trades.")
