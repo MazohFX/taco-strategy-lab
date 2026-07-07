@@ -3420,6 +3420,7 @@ def render_seasonality_lab() -> None:
     with main_col:
         chart_curve = curve.copy()
         chart_curve["indexed_display"] = chart_curve["indexed"].rolling(7, center=True, min_periods=1).mean()
+        chart_curve["indexed_short"] = chart_curve["indexed"].rolling(3, center=True, min_periods=1).mean()
         chart_floor = min(float(chart_curve["indexed_display"].min()), 100.0)
         chart_ceiling = max(float(chart_curve["indexed_display"].max()), 100.0)
         chart_padding = max((chart_ceiling - chart_floor) * 0.16, 1.5)
@@ -3570,6 +3571,13 @@ def render_seasonality_lab() -> None:
     real_today = date.today()
     forecast_end = real_today + pd.Timedelta(days=30)
 
+    next30_context_token = f"{symbol.strip()}_{active_years_token}"
+    if st.session_state.get("seasonality_next30_context_token") != next30_context_token:
+        st.session_state["seasonality_next30_context_token"] = next30_context_token
+        st.session_state.pop("seasonality_next30_manual_period", None)
+        st.session_state.pop("seasonality_next30_selection_active", None)
+        st.session_state.pop("seasonality_next30_just_set_manual_period", None)
+
     next30_manual_period = st.session_state.get("seasonality_next30_manual_period")
     if next30_manual_period:
         next30_display_start = pd.Timestamp(next30_manual_period[0])
@@ -3588,7 +3596,7 @@ def render_seasonality_lab() -> None:
             match = chart_curve[(chart_curve["month"] == lookup_month) & (chart_curve["day"] == lookup_day)]
             if match.empty:
                 continue
-            forecast_rows.append({"date": pd.Timestamp(real_date), "indexed": float(match["indexed"].iloc[0])})
+            forecast_rows.append({"date": pd.Timestamp(real_date), "indexed": float(match["indexed_short"].iloc[0])})
         forecast_df = pd.DataFrame(forecast_rows)
         if forecast_df.empty:
             st.info("Keine Daten fuer die naechsten 30 Tage verfuegbar.")
