@@ -481,12 +481,23 @@ def build_seasonal_curve(df: pd.DataFrame, selected_years: list[int]) -> pd.Data
         year_df = year_df[~((year_df.index.month == 2) & (year_df.index.day == 29))]
         if len(year_df) < 20:
             continue
-        normalized = year_df["close"] / year_df["close"].iloc[0] * 100
+        # Jede Kalendertag-Luecke (Wochenenden/Feiertage) mit dem letzten bekannten Schlusskurs
+        # auffuellen, damit jedes Jahr fuer JEDEN Kalendertag einen Wert liefert. Ohne das wechselt
+        # die Menge der beitragenden Jahre von Tag zu Tag (je nachdem wo Wochenenden/Feiertage genau
+        # liegen), was bei stark unterschiedlichen Jahresverlaeufen einen kuenstlichen Zickzack erzeugt.
+        full_range = pd.date_range(start=pd.Timestamp(year=int(year), month=1, day=1), end=pd.Timestamp(year=int(year), month=12, day=31), freq="D")
+        full_range = full_range[~((full_range.month == 2) & (full_range.day == 29))]
+        daily_close = year_df["close"].reindex(year_df.index.union(full_range)).sort_index().ffill().bfill()
+        daily_close = daily_close.reindex(full_range)
+        base = float(year_df["close"].iloc[0])
+        if not base:
+            continue
+        normalized = daily_close / base * 100
         frames.append(
             pd.DataFrame(
                 {
-                    "month": year_df.index.month,
-                    "day": year_df.index.day,
+                    "month": full_range.month,
+                    "day": full_range.day,
                     "year": int(year),
                     "indexed": normalized.to_numpy(),
                 }
@@ -3420,7 +3431,6 @@ def render_seasonality_lab() -> None:
     with main_col:
         chart_curve = curve.copy()
         chart_curve["indexed_display"] = chart_curve["indexed"].rolling(7, center=True, min_periods=1).mean()
-        chart_curve["indexed_short"] = chart_curve["indexed"].rolling(3, center=True, min_periods=1).mean()
         chart_floor = min(float(chart_curve["indexed_display"].min()), 100.0)
         chart_ceiling = max(float(chart_curve["indexed_display"].max()), 100.0)
         chart_padding = max((chart_ceiling - chart_floor) * 0.16, 1.5)
@@ -3596,7 +3606,7 @@ def render_seasonality_lab() -> None:
             match = chart_curve[(chart_curve["month"] == lookup_month) & (chart_curve["day"] == lookup_day)]
             if match.empty:
                 continue
-            forecast_rows.append({"date": pd.Timestamp(real_date), "indexed": float(match["indexed_short"].iloc[0])})
+            forecast_rows.append({"date": pd.Timestamp(real_date), "indexed": float(match["indexed_display"].iloc[0])})
         forecast_df = pd.DataFrame(forecast_rows)
         if forecast_df.empty:
             st.info("Keine Daten fuer die naechsten 30 Tage verfuegbar.")
