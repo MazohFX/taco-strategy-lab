@@ -5836,33 +5836,43 @@ def _wfa_json_decode(obj):
         return [_wfa_json_decode(x) for x in obj]
     return obj
 
-def _save_wfa_result(slot: str, payload: dict) -> bool:
+def _save_wfa_result(slot: str, payload: dict) -> tuple[bool, str]:
     """Speichert ein WFA/Ensemble-Ergebnis dauerhaft im GitHub Gist unter einem festen Slot-Namen.
-    Gibt True zurück, wenn das Speichern nachweislich geklappt hat (für UI-Feedback)."""
+    Gibt (erfolgreich, Grund) zurück — der Grund wird im UI angezeigt, damit ein Fehlschlag
+    (fehlender Token, Timeout, GitHub-API-Fehler …) nicht stillschweigend verschwindet."""
     import requests
     token = _gist_token()
     if not token:
-        return False
+        return False, "kein GITHUB_GIST_TOKEN in den Streamlit Secrets hinterlegt"
+    _payload_kb = 0
     try:
         headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
         gist_id = _find_gist_id(token)
         existing = {}
         if gist_id:
-            r = requests.get(f"https://api.github.com/gists/{gist_id}", headers=headers, timeout=10)
+            r = requests.get(f"https://api.github.com/gists/{gist_id}", headers=headers, timeout=15)
             if r.status_code == 200:
                 files = r.json().get("files", {}) or {}
                 if _WFA_RESULT_GIST_FILENAME in files:
                     existing = json.loads(files[_WFA_RESULT_GIST_FILENAME]["content"])
+            elif r.status_code not in (404,):
+                return False, f"GET Gist fehlgeschlagen (HTTP {r.status_code})"
         existing[slot] = _wfa_json_encode(payload)
+        content = json.dumps(existing)
+        _payload_kb = len(content) / 1024
         gist_payload = {"description": _GIST_DESCRIPTION, "public": False,
-                         "files": {_WFA_RESULT_GIST_FILENAME: {"content": json.dumps(existing)}}}
+                         "files": {_WFA_RESULT_GIST_FILENAME: {"content": content}}}
         if gist_id:
-            resp = requests.patch(f"https://api.github.com/gists/{gist_id}", headers=headers, json=gist_payload, timeout=20)
+            resp = requests.patch(f"https://api.github.com/gists/{gist_id}", headers=headers, json=gist_payload, timeout=45)
         else:
-            resp = requests.post("https://api.github.com/gists", headers=headers, json=gist_payload, timeout=20)
-        return resp.status_code in (200, 201)
-    except Exception:
-        return False
+            resp = requests.post("https://api.github.com/gists", headers=headers, json=gist_payload, timeout=45)
+        if resp.status_code in (200, 201):
+            return True, ""
+        return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+    except requests.exceptions.Timeout:
+        return False, f"Zeitüberschreitung beim Speichern ({_payload_kb:.0f} KB Payload)"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
 
 def _load_wfa_result(slot: str) -> dict | None:
     """Lädt ein zuvor gespeichertes WFA/Ensemble-Ergebnis aus dem GitHub Gist, falls vorhanden."""
@@ -7961,11 +7971,12 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             _variant_params = {**base_params, "fill_mode": _fm}
             _wfa_result = _run_dax_wfa(_variant_params, _mode_label)
             st.session_state[_dax_wfa_cache_key(_fm)] = _wfa_result
-            if _save_wfa_result(f"dax_wfa_{_fm}", _dax_wfa_persist_blob(_wfa_result)):
+            _wfa_saved, _wfa_save_reason = _save_wfa_result(f"dax_wfa_{_fm}", _dax_wfa_persist_blob(_wfa_result))
+            if _wfa_saved:
                 st.caption(f"☁️ {_mode_label}: WFA-Ergebnis dauerhaft gespeichert — übersteht Reboots/Neustarts.")
             else:
-                st.caption(f"⚠️ {_mode_label}: Konnte nicht dauerhaft gespeichert werden (Gist/Token-Problem) — "
-                           f"bleibt nur für diese Browser-Session erhalten.")
+                st.caption(f"⚠️ {_mode_label}: Konnte nicht dauerhaft gespeichert werden — {_wfa_save_reason}. "
+                           f"Bleibt nur für diese Browser-Session erhalten.")
         # Trades auch direkt unter Ticker-Key speichern — MC findet sie ohne exakten Cache-Key
         st.session_state[f"dax_mc_trades_{_dax_ticker}"] = tr_full
 
@@ -8468,10 +8479,10 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     "fill_mode_label": _mode_label,
                 }
                 st.session_state[_dax_ens_cache_key(_fm)] = _ens_result
-                _ens_saved = _save_wfa_result(f"dax_ens_{_fm}", _ens_result)
+                _ens_saved, _ens_save_reason = _save_wfa_result(f"dax_ens_{_fm}", _ens_result)
 
                 _ens_persist_note = ("☁️ dauerhaft gespeichert" if _ens_saved
-                                     else "⚠️ nur für diese Session (Gist/Token-Problem)")
+                                     else f"⚠️ nur für diese Session ({_ens_save_reason})")
 
                 if _fm != fill_mode:
                     # Nicht aktuell ausgewählter Modus: nur speichern, keine volle Anzeige (siehe Vergleichstabelle unten)
