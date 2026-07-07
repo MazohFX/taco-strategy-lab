@@ -3485,6 +3485,66 @@ def render_seasonality_lab() -> None:
             unsafe_allow_html=True,
         )
 
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    next30_col, _next30_spacer = st.columns([4.35, 1.2])
+    with next30_col:
+        real_today = date.today()
+        forecast_rows = []
+        for offset in range(31):
+            real_date = real_today + pd.Timedelta(days=offset)
+            lookup_month, lookup_day = real_date.month, real_date.day
+            if lookup_month == 2 and lookup_day == 29:
+                lookup_day = 28
+            match = chart_curve[(chart_curve["month"] == lookup_month) & (chart_curve["day"] == lookup_day)]
+            if match.empty:
+                continue
+            forecast_rows.append({"date": pd.Timestamp(real_date), "indexed": float(match["indexed_display"].iloc[0])})
+        forecast_df = pd.DataFrame(forecast_rows)
+        if forecast_df.empty:
+            st.info("Keine Daten fuer die naechsten 30 Tage verfuegbar.")
+        else:
+            forecast_floor = min(float(forecast_df["indexed"].min()), 100.0)
+            forecast_ceiling = max(float(forecast_df["indexed"].max()), 100.0)
+            forecast_padding = max((forecast_ceiling - forecast_floor) * 0.16, 1.0)
+            forecast_fig = go.Figure()
+            forecast_fig.add_trace(
+                go.Scatter(
+                    x=forecast_df["date"],
+                    y=forecast_df["indexed"],
+                    mode="lines",
+                    line={"color": "rgba(98,200,232,.18)", "width": 0},
+                    fill="tozeroy",
+                    fillcolor="rgba(98,200,232,.13)",
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
+            forecast_fig.add_trace(
+                go.Scatter(
+                    x=forecast_df["date"],
+                    y=forecast_df["indexed"],
+                    mode="lines+markers",
+                    name="Next 30 Days",
+                    line={"color": "#62c8e8", "width": 2.1, "shape": "spline", "smoothing": 0.55},
+                    marker={"size": 4},
+                    hovertemplate="%{x|%d %b}<br>Index %{y:.2f}<extra></extra>",
+                    showlegend=False,
+                )
+            )
+            forecast_fig.add_vline(x=forecast_df["date"].iloc[0], line_color="#c0267a", line_width=2)
+            forecast_fig.update_layout(
+                **_seasonality_base_layout(f"Seasonal Forecast of {asset_short} — Next 30 Days ({years_text})", 700)
+            )
+            forecast_fig.update_layout(uirevision=f"seasonality_next30_{asset_short}_{active_years_token}")
+            forecast_fig.update_xaxes(tickformat="%d %b", showspikes=False, fixedrange=True)
+            forecast_fig.update_yaxes(title="", range=[forecast_floor - forecast_padding, forecast_ceiling + forecast_padding])
+            st.plotly_chart(
+                forecast_fig,
+                width="stretch",
+                config={"displayModeBar": False},
+                key="seasonality_next30_curve",
+            )
+
     if trades.empty:
         st.warning("Der gewaehlte saisonale Zeitraum enthaelt keine vollstaendigen historischen Pattern-Trades.")
         return
@@ -5529,6 +5589,115 @@ def _load_coin_cache() -> dict:
             continue
     return result
 
+# ── Generischer WFA/Ensemble-Ergebnis-Cache (GitHub Gist, überlebt Reboots/Redeploys) ──
+# Nutzt denselben Gist wie der Coin-Cache oben (gleicher Token, gleiche Gist-ID), aber
+# eine eigene Datei darin — begrenzte Anzahl fester "Slots" (z.B. "dax_wfa_close"),
+# nicht pro Parameter-Kombination, damit die Gist-Datei nicht unbegrenzt wächst.
+_WFA_RESULT_GIST_FILENAME = "taco_wfa_result_cache.json"
+
+def _wfa_json_encode(obj):
+    """Wandelt DataFrames/Series/Tuple-Keys in JSON-kompatible Strukturen um (rekursiv)."""
+    if isinstance(obj, pd.DataFrame):
+        dt_cols = [c for c in obj.columns if pd.api.types.is_datetime64_any_dtype(obj[c])]
+        return {"__df__": True, "json": obj.to_json(orient="records", date_format="iso"), "dt_cols": dt_cols}
+    if isinstance(obj, pd.Series):
+        return {"__series__": True,
+                "index": [str(i) for i in obj.index],
+                "index_is_dt": isinstance(obj.index, pd.DatetimeIndex),
+                "values": [None if pd.isna(v) else float(v) for v in obj.values],
+                "name": obj.name}
+    if isinstance(obj, pd.Timestamp):
+        return {"__ts__": True, "iso": obj.isoformat()}
+    if isinstance(obj, dict):
+        if any(isinstance(k, tuple) for k in obj.keys()):
+            return {"__tdict__": True,
+                    "items": [[list(k) if isinstance(k, tuple) else k, _wfa_json_encode(v)] for k, v in obj.items()]}
+        return {k: _wfa_json_encode(v) for k, v in obj.items()}
+    if isinstance(obj, tuple):
+        return {"__tuple__": True, "items": [_wfa_json_encode(x) for x in obj]}
+    if isinstance(obj, list):
+        return [_wfa_json_encode(x) for x in obj]
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    return obj
+
+def _wfa_json_decode(obj):
+    import io
+    if isinstance(obj, dict):
+        if obj.get("__df__"):
+            df = pd.read_json(io.StringIO(obj["json"]), orient="records")
+            for c in obj.get("dt_cols", []):
+                if c in df.columns:
+                    df[c] = pd.to_datetime(df[c])
+            return df
+        if obj.get("__series__"):
+            idx = pd.to_datetime(obj["index"]) if obj.get("index_is_dt") else obj["index"]
+            return pd.Series(obj["values"], index=idx, name=obj.get("name"))
+        if obj.get("__ts__"):
+            return pd.Timestamp(obj["iso"])
+        if obj.get("__tdict__"):
+            return {tuple(k) if isinstance(k, list) else k: _wfa_json_decode(v) for k, v in obj["items"]}
+        if obj.get("__tuple__"):
+            return tuple(_wfa_json_decode(x) for x in obj["items"])
+        return {k: _wfa_json_decode(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_wfa_json_decode(x) for x in obj]
+    return obj
+
+def _save_wfa_result(slot: str, payload: dict) -> None:
+    """Speichert ein WFA/Ensemble-Ergebnis dauerhaft im GitHub Gist unter einem festen Slot-Namen."""
+    import requests
+    token = _gist_token()
+    if not token:
+        return
+    try:
+        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+        gist_id = _find_gist_id(token)
+        existing = {}
+        if gist_id:
+            r = requests.get(f"https://api.github.com/gists/{gist_id}", headers=headers, timeout=10)
+            if r.status_code == 200:
+                files = r.json().get("files", {}) or {}
+                if _WFA_RESULT_GIST_FILENAME in files:
+                    existing = json.loads(files[_WFA_RESULT_GIST_FILENAME]["content"])
+        existing[slot] = _wfa_json_encode(payload)
+        gist_payload = {"description": _GIST_DESCRIPTION, "public": False,
+                         "files": {_WFA_RESULT_GIST_FILENAME: {"content": json.dumps(existing)}}}
+        if gist_id:
+            requests.patch(f"https://api.github.com/gists/{gist_id}", headers=headers, json=gist_payload, timeout=20)
+        else:
+            requests.post("https://api.github.com/gists", headers=headers, json=gist_payload, timeout=20)
+    except Exception:
+        pass
+
+def _load_wfa_result(slot: str) -> dict | None:
+    """Lädt ein zuvor gespeichertes WFA/Ensemble-Ergebnis aus dem GitHub Gist, falls vorhanden."""
+    import requests
+    token = _gist_token()
+    if not token:
+        return None
+    try:
+        gist_id = _find_gist_id(token)
+        if not gist_id:
+            return None
+        r = requests.get(f"https://api.github.com/gists/{gist_id}",
+                          headers={"Authorization": f"token {token}"}, timeout=10)
+        if r.status_code != 200:
+            return None
+        files = r.json().get("files", {}) or {}
+        if _WFA_RESULT_GIST_FILENAME not in files:
+            return None
+        existing = json.loads(files[_WFA_RESULT_GIST_FILENAME]["content"])
+        if slot not in existing:
+            return None
+        return _wfa_json_decode(existing[slot])
+    except Exception:
+        return None
+
 def render_btc_wfa() -> None:
     """Crypto WeekdayMA WFA — Sonntag Entry / Montag Exit auf BTC-USD Daily."""
     import datetime as _dt
@@ -7446,6 +7615,37 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
     wfa_cache_key = _dax_wfa_cache_key(fill_mode)
 
+    # ── Einmalig pro Session: gespeicherte WFA-Ergebnisse aus dem GitHub Gist laden ──
+    # (überstehen App-Reboots/Redeploys — sonst wäre nach jedem Neustart alles weg)
+    if not st.session_state.get("dax_wfa_gist_restored"):
+        st.session_state["dax_wfa_gist_restored"] = True
+        for _fm in ("close", "next_open"):
+            _k = _dax_wfa_cache_key(_fm)
+            if _k not in st.session_state:
+                _restored = _load_wfa_result(f"dax_wfa_{_fm}")
+                if _restored is not None:
+                    if "best_setup_oos_trades" in _restored:
+                        _restored["param_stability_trades"] = {
+                            tuple(_restored["best_setup_key"]): [_restored["best_setup_oos_trades"]]
+                        }
+                    else:
+                        _restored.setdefault("param_stability_trades", {})
+                    st.session_state[_k] = _restored
+                    st.session_state["dax_wfa_ran"] = True
+
+    def _dax_wfa_persist_blob(_full_result: dict) -> dict:
+        """Kompakte Version des WFA-Ergebnisses fürs Gist: lässt die Trades JEDER Grid-Kombi weg
+        (würde die Gist-Datei sprengen) und behält nur die OOS-Trades des robustesten Setups —
+        genug für Charts, Tabellen und die 'empfohlene' Monte-Carlo-Quelle nach einem Neustart."""
+        _blob = {k: v for k, v in _full_result.items() if k != "param_stability_trades"}
+        _best = _dax_stability_best(_full_result["param_stability"])
+        if _best is not None:
+            _best_trades = _full_result["param_stability_trades"].get(_best["key"])
+            if _best_trades:
+                _blob["best_setup_key"] = list(_best["key"])
+                _blob["best_setup_oos_trades"] = pd.concat(_best_trades, ignore_index=True)
+        return _blob
+
     def _run_dax_wfa(_base_params_variant: dict, _mode_label: str) -> dict:
         progress = st.progress(0, text=f"Walk-Forward läuft ({_mode_label}) …")
         wfa_rows, oos_equities, oos_trades_all = [], [], []
@@ -7562,7 +7762,9 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         for _fm in _modes_to_run:
             _mode_label = "Montag Close" if _fm == "close" else "Dienstag Open"
             _variant_params = {**base_params, "fill_mode": _fm}
-            st.session_state[_dax_wfa_cache_key(_fm)] = _run_dax_wfa(_variant_params, _mode_label)
+            _wfa_result = _run_dax_wfa(_variant_params, _mode_label)
+            st.session_state[_dax_wfa_cache_key(_fm)] = _wfa_result
+            _save_wfa_result(f"dax_wfa_{_fm}", _dax_wfa_persist_blob(_wfa_result))
         # Trades auch direkt unter Ticker-Key speichern — MC findet sie ohne exakten Cache-Key
         st.session_state[f"dax_mc_trades_{_dax_ticker}"] = tr_full
 
@@ -7897,6 +8099,16 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         if "dax_ens_running" not in st.session_state:
             st.session_state["dax_ens_running"] = False
 
+        # Einmalig pro Session: gespeicherte Ensemble-Ergebnisse aus dem GitHub Gist laden
+        if not st.session_state.get("dax_ens_gist_restored"):
+            st.session_state["dax_ens_gist_restored"] = True
+            for _fm in ("close", "next_open"):
+                _k = _dax_ens_cache_key(_fm)
+                if _k not in st.session_state:
+                    _restored_ens = _load_wfa_result(f"dax_ens_{_fm}")
+                    if _restored_ens is not None:
+                        st.session_state[_k] = _restored_ens
+
         # Status-Badge: Ensemble bereits gelaufen?
         _ens_status_key = _dax_ens_cache_key(fill_mode)
         if _ens_status_key in st.session_state:
@@ -8039,7 +8251,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 # Ergebnisse persistent im Session-State speichern (getrennt je Fill-Modus)
                 display_cols_ens = ["SL %","Trail-Trig %","Trail-Off %","MA","Filter",
                                     "Konsistenz %","Ø OOS PF","Ø OOS Ret %","Ø Profit/Trade %","Ø OOS Sharpe","Zeitraum"]
-                st.session_state[_dax_ens_cache_key(_fm)] = {
+                _ens_result = {
                     "df_ens":       df_ens,
                     "bh_total_ret": bh_total_ret,
                     "tested_period": tested_period,
@@ -8047,6 +8259,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     "display_cols": display_cols_ens,
                     "fill_mode_label": _mode_label,
                 }
+                st.session_state[_dax_ens_cache_key(_fm)] = _ens_result
+                _save_wfa_result(f"dax_ens_{_fm}", _ens_result)
 
                 if _fm != fill_mode:
                     # Nicht aktuell ausgewählter Modus: nur speichern, keine volle Anzeige (siehe Vergleichstabelle unten)
