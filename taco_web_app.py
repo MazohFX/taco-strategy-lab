@@ -3588,7 +3588,7 @@ def render_seasonality_lab() -> None:
             match = chart_curve[(chart_curve["month"] == lookup_month) & (chart_curve["day"] == lookup_day)]
             if match.empty:
                 continue
-            forecast_rows.append({"date": pd.Timestamp(real_date), "indexed": float(match["indexed_display"].iloc[0])})
+            forecast_rows.append({"date": pd.Timestamp(real_date), "indexed": float(match["indexed"].iloc[0])})
         forecast_df = pd.DataFrame(forecast_rows)
         if forecast_df.empty:
             st.info("Keine Daten fuer die naechsten 30 Tage verfuegbar.")
