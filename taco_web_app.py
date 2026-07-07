@@ -7517,6 +7517,24 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                                   help="Pepperstone-MT5-Historie liefert vor diesem Datum nur Wochenbars, keine Tagesbars.")
         dax_end   = st.date_input("Daten bis", _dt.date.today(), key="dax_end")
 
+        st.markdown("---")
+        if st.button("🧪 Cloud-Speicher testen (paar Sekunden, ohne WFA)", key="dax_gist_test_btn",
+                     use_container_width=True,
+                     help="Prüft nur, ob Speichern/Laden im GitHub-Gist funktioniert — ohne die komplette "
+                          "Walk-Forward-Analyse neu zu rechnen. Für schnelles Debugging."):
+            import time as _time
+            _t0 = _time.time()
+            _test_ok, _test_reason = _save_wfa_result("connectivity_test", {"ping": str(_dt.datetime.now())})
+            _elapsed = _time.time() - _t0
+            if _test_ok:
+                _load_back = _load_wfa_result("connectivity_test")
+                if _load_back is not None:
+                    st.success(f"✅ Speichern + Laden funktioniert ({_elapsed:.1f}s)")
+                else:
+                    st.warning(f"⚠️ Speichern OK, aber Laden direkt danach fehlgeschlagen ({_elapsed:.1f}s)")
+            else:
+                st.error(f"❌ {_test_reason} ({_elapsed:.1f}s)")
+
     # ── Strategie-Parameter ──────────────────────────────────────────────
     st.subheader("Strategie-Parameter")
     pc1, pc2, pc3, pc4 = st.columns(4)
