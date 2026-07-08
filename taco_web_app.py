@@ -8011,6 +8011,35 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             "oos_trades":      _oos_trades_concat,
         }
 
+    def _run_dax_global_benchmark(_base_params_variant: dict) -> dict | None:
+        """Optimiert EINMAL auf dem GESAMTEN Zeitraum, ohne IS/OOS-Split — der klassische
+        Überanpassungs-Vergleichswert: wie gut sieht das im Nachhinein beste Setup aus, wenn
+        man (unehrlich) auf allen Daten gleichzeitig optimiert? Die Lücke zum echten WFA-OOS-
+        Ergebnis zeigt, wie stark die Strategie von der Walk-Forward-Disziplin abhängt."""
+        best_score, best_p = -np.inf, None
+        adx_grid = g_adx if use_adx else [float(adx_thresh)]
+        for sl_, ma_, fm_, adx_, tt_, to_, ed_, xd_ in _prod(
+                g_sl, g_ma, g_fm, adx_grid, g_tt, g_to, g_entry_dows, g_exit_dows):
+            if ed_ == xd_:
+                continue
+            p = {**_base_params_variant, "sl_pct": sl_, "ma_period": ma_, "filter_mode": fm_,
+                 "adx_thresh": adx_, "trail_trig": tt_, "trail_off": to_, "entry_dow": ed_, "exit_dow": xd_}
+            try:
+                tr_, eq_ = _momi_backtest_engine(df_raw.copy(), p)
+            except Exception:
+                continue
+            if len(tr_) < int(min_trades):
+                continue
+            m_ = _momi_metrics(tr_, eq_)
+            score = m_[opt_metric]
+            if score > best_score:
+                best_score, best_p = score, p.copy()
+        if best_p is None:
+            return None
+        tr_g, eq_g = _momi_backtest_engine(df_raw.copy(), best_p)
+        m_g = _momi_metrics(tr_g, eq_g)
+        return {"params": best_p, "metrics": m_g}
+
     if _wfa_enabled and (run_btn or wfa_cache_key not in st.session_state):
         _other_fm = "next_open" if fill_mode == "close" else "close"
         _modes_to_run = [fill_mode, _other_fm] if (run_btn and test_both_fills) else [fill_mode]
@@ -8018,6 +8047,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             _mode_label = "Montag Close" if _fm == "close" else "Dienstag Open"
             _variant_params = {**base_params, "fill_mode": _fm}
             _wfa_result = _run_dax_wfa(_variant_params, _mode_label)
+            with st.spinner(f"{_mode_label}: Globaler Benchmark (Überanpassungs-Check) …"):
+                _wfa_result["global_benchmark"] = _run_dax_global_benchmark(_variant_params)
             st.session_state[_dax_wfa_cache_key(_fm)] = _wfa_result
             _wfa_saved, _wfa_save_reason = _save_wfa_result(f"dax_wfa_{_fm}", _dax_wfa_persist_blob(_wfa_result))
             if _wfa_saved:
@@ -8038,6 +8069,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         base_params_display = base_params
         g_sl, g_ma, g_fm, g_tt, g_to = [], [], [], [], []
         wfa_oos_trades = pd.DataFrame()
+        _wfa_global_benchmark = None
         _wfa_enabled = False
     else:
         wfa_rows        = _cached["wfa_rows"]
@@ -8046,6 +8078,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         base_params     = _cached["base_params"]
         g_sl, g_ma, g_fm, g_tt, g_to = _cached["grids"]
         wfa_oos_trades  = _cached.get("oos_trades", pd.DataFrame())
+        # .get() statt [] — ältere gespeicherte Ergebnisse (vor diesem Feature) haben den Key noch nicht
+        _wfa_global_benchmark = _cached.get("global_benchmark")
 
     if _wfa_enabled and not wfa_rows:
         st.error("Keine WFA-Ergebnisse — Parameter oder Zeitraum anpassen.")
@@ -8077,6 +8111,33 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         st.caption(f"📌 Getesteter Fill-Modus in diesem WFA-Lauf: **{_wfa_fill_label}** · "
                    f"Spread {base_params.get('spread_pts', 0):.1f} Pkt · Kommission {base_params.get('commission_pct', 0):.2f}% — "
                    f"ändere den Fill-Modus oben und klicke erneut 'WFA starten', um den anderen Modus zu testen.")
+
+        # ── Statistische Signifikanz der gepoolten OOS-Trades (Wilcoxon + Wilson-CI) ──
+        # Beantwortet: ist die Kante über alle Folds hinweg von Zufall unterscheidbar,
+        # unabhängig davon wie viele Folds das grobe ✅/❌-Badge oben zählt.
+        if not wfa_oos_trades.empty:
+            _sig = evaluate_edge(wfa_oos_trades, min_trades=30, alpha=0.05, min_sharpe_oos=1.0, pnl_col="PnL $")
+            _sig_style = {"handelbar": ("#22c55e", "🟢 Statistisch signifikant"),
+                          "grenzwertig": ("#f0c040", "🟡 Grenzwertig"),
+                          "nicht handelbar": ("#ef5350", "🔴 Nicht signifikant")}
+            _sig_color, _sig_label = _sig_style[_sig["status"]]
+            _sig_p = "n/a" if math.isnan(_sig["p_value"]) else f"{_sig['p_value']:.4f}"
+            _sig_sharpe = "n/a" if math.isnan(_sig["sharpe_oos"]) else f"{_sig['sharpe_oos']:.2f}"
+            _sig_wlo, _sig_whi = _sig["wilson_ci"]
+            st.markdown(
+                f"""<div style="background:#0a1220;border:1px solid {_sig_color}55;border-radius:8px;
+                padding:12px 18px;margin:8px 0 14px 0;">
+                  <span style="background:{_sig_color}22;border:1px solid {_sig_color}55;border-radius:6px;
+                    padding:4px 12px;color:{_sig_color};font-weight:800;font-size:.95rem;">{_sig_label}</span>
+                  <span style="color:#9fb0c7;font-size:.85rem;margin-left:12px;">
+                    OOS-Trades gepoolt: n={_sig['n_trades']} · Wilcoxon p={_sig_p}
+                    · Sharpe OOS={_sig_sharpe} · Wilson-CI Winrate=[{_sig_wlo*100:.1f}%, {_sig_whi*100:.1f}%]
+                  </span>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            if _sig["reasons"]:
+                st.caption("⚠️ " + " · ".join(_sig["reasons"]))
 
         # ── Vergleich: beide Fill-Modi (falls beide schon berechnet wurden) ────
         _cmp_rows = []
@@ -8205,6 +8266,32 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 height=200, template="plotly_dark",
                 yaxis_title="DD %", margin=dict(t=40, b=20, l=70, r=20))
             st.plotly_chart(fig_dd, use_container_width=True)
+
+            # ── Überanpassungs-Gap ────────────────────────────────────────────
+            # WFA-OOS (blind, ehrlich) vs. Globaler Benchmark (im Nachhinein auf ALLEN
+            # Daten optimiert, kein OOS-Split — strukturell zu optimistisch). Große Lücke
+            # = das "beste" Setup ist stark an genau diese eine Historie angepasst.
+            if _wfa_global_benchmark is not None:
+                st.markdown("### 🎯 Überanpassungs-Gap")
+                _glob_ret = _wfa_global_benchmark["metrics"]["total_ret"]
+                _gap = _glob_ret - total_ret
+                gc1, gc2, gc3 = st.columns(3)
+                gc1.metric("WFA OOS Rendite (blind, ehrlich)", f"{total_ret:+.1f}%")
+                gc2.metric("Globaler Benchmark (im Nachhinein optimiert)", f"{_glob_ret:+.1f}%")
+                gc3.metric("Überanpassungs-Gap", f"{_gap:+.1f}%", delta_color="inverse")
+                _gp = _wfa_global_benchmark["params"]
+                st.caption(f"Bestes Setup im globalen Benchmark: SL {_gp['sl_pct']}% · Trail {_gp['trail_trig']}%/{_gp['trail_off']}% · "
+                           f"MA {_gp['ma_type']} {_gp['ma_period']} · Filter: {_gp['filter_mode']} — "
+                           f"auf dem GESAMTEN Zeitraum ohne OOS-Trennung gefunden, deshalb strukturell zu gut.")
+                if _gap > 15:
+                    st.warning(f"⚠️ Große Lücke ({_gap:+.1f}%) — das im Nachhinein beste Setup performt deutlich besser als "
+                               f"die ehrliche Walk-Forward-Auswahl. Hinweis auf Überanpassung an diese eine Historie.")
+                elif _gap < 5:
+                    st.success(f"✅ Kleine Lücke ({_gap:+.1f}%) — WFA-OOS liegt nah am optimistischen Bestfall, "
+                               f"spricht für eine robuste, nicht überangepasste Strategie.")
+            else:
+                st.caption("ℹ️ Kein globaler Benchmark verfügbar (z.B. altes gespeichertes Ergebnis vor diesem Feature) — "
+                           "einmal 'WFA starten' erneut klicken, um den Überanpassungs-Gap zu berechnen.")
 
             # ── Einzelne Folds übereinander (zum Vergleich) ───────────────────
             with st.expander("Einzelne OOS-Folds im Vergleich"):
