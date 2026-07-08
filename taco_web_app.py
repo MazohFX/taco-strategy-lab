@@ -5804,6 +5804,9 @@ def _load_coin_cache() -> dict:
 # eine eigene Datei darin — begrenzte Anzahl fester "Slots" (z.B. "dax_wfa_close"),
 # nicht pro Parameter-Kombination, damit die Gist-Datei nicht unbegrenzt wächst.
 _WFA_RESULT_GIST_FILENAME = "taco_wfa_result_cache.json"
+# Feste Feldreihenfolge für die komprimierte param_stability-Persistenz (Liste statt Dict
+# pro Fold-Eintrag — spart die wiederholten Schlüsselnamen bei vielen Grid-Kombinationen).
+_PARAM_STAB_FIELDS = ("n", "pf", "sharpe", "max_dd", "total_ret", "avg_ret")
 
 def _wfa_json_encode(obj):
     """Wandelt DataFrames/Series/Tuple-Keys in JSON-kompatible Strukturen um (rekursiv)."""
@@ -5858,6 +5861,18 @@ def _wfa_json_decode(obj):
         return [_wfa_json_decode(x) for x in obj]
     return obj
 
+def _fetch_gist_file_full_content(file_entry: dict, headers: dict) -> str:
+    """GitHub trunkiert 'content' in Gist-API-Antworten bei Dateien > 1MB und setzt
+    'truncated': true — in dem Fall muss der volle Inhalt separat über 'raw_url'
+    geholt werden, sonst ist die zurückgegebene 'content' kein valides JSON mehr."""
+    import requests
+    if file_entry.get("truncated") and file_entry.get("raw_url"):
+        r = requests.get(file_entry["raw_url"], headers=headers, timeout=30)
+        r.raise_for_status()
+        return r.text
+    return file_entry.get("content", "")
+
+
 def _save_wfa_result(slot: str, payload: dict) -> tuple[bool, str]:
     """Speichert ein WFA/Ensemble-Ergebnis dauerhaft im GitHub Gist unter einem festen Slot-Namen.
     Gibt (erfolgreich, Grund) zurück — der Grund wird im UI angezeigt, damit ein Fehlschlag
@@ -5876,7 +5891,13 @@ def _save_wfa_result(slot: str, payload: dict) -> tuple[bool, str]:
             if r.status_code == 200:
                 files = r.json().get("files", {}) or {}
                 if _WFA_RESULT_GIST_FILENAME in files:
-                    existing = json.loads(files[_WFA_RESULT_GIST_FILENAME]["content"])
+                    _raw = _fetch_gist_file_full_content(files[_WFA_RESULT_GIST_FILENAME], headers)
+                    try:
+                        existing = json.loads(_raw)
+                    except json.JSONDecodeError:
+                        # Vorhandene Datei ist beschädigt/nicht mehr lesbar — nicht abbrechen,
+                        # sondern beim nächsten Speichern mit frischem, validem Inhalt überschreiben.
+                        existing = {}
             elif r.status_code not in (404,):
                 return False, f"GET Gist fehlgeschlagen (HTTP {r.status_code})"
         existing[slot] = _wfa_json_encode(payload)
@@ -5906,14 +5927,18 @@ def _load_wfa_result(slot: str) -> dict | None:
         gist_id = _find_gist_id(token)
         if not gist_id:
             return None
-        r = requests.get(f"https://api.github.com/gists/{gist_id}",
-                          headers={"Authorization": f"token {token}"}, timeout=10)
+        _headers = {"Authorization": f"token {token}"}
+        r = requests.get(f"https://api.github.com/gists/{gist_id}", headers=_headers, timeout=15)
         if r.status_code != 200:
             return None
         files = r.json().get("files", {}) or {}
         if _WFA_RESULT_GIST_FILENAME not in files:
             return None
-        existing = json.loads(files[_WFA_RESULT_GIST_FILENAME]["content"])
+        _raw = _fetch_gist_file_full_content(files[_WFA_RESULT_GIST_FILENAME], _headers)
+        try:
+            existing = json.loads(_raw)
+        except json.JSONDecodeError:
+            return None
         if slot not in existing:
             return None
         return _wfa_json_decode(existing[slot])
@@ -7872,6 +7897,13 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             if _k not in st.session_state:
                 _restored = _load_wfa_result(f"dax_wfa_{_fm}")
                 if _restored is not None:
+                    # param_stability wurde fürs Gist auf reine Zahlenlisten komprimiert
+                    # (siehe _dax_wfa_persist_blob) — hier wieder in die Dict-Form zurück,
+                    # die _dax_stability_best() und die Stabilitätstabelle erwarten.
+                    _restored["param_stability"] = {
+                        key: [dict(zip(_PARAM_STAB_FIELDS, row)) for row in rows]
+                        for key, rows in _restored.get("param_stability", {}).items()
+                    }
                     if "best_setup_oos_trades" in _restored:
                         _restored["param_stability_trades"] = {
                             tuple(_restored["best_setup_key"]): [_restored["best_setup_oos_trades"]]
@@ -7890,8 +7922,15 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
     def _dax_wfa_persist_blob(_full_result: dict) -> dict:
         """Kompakte Version des WFA-Ergebnisses fürs Gist: lässt die Trades JEDER Grid-Kombi weg
         (würde die Gist-Datei sprengen) und behält nur die OOS-Trades des robustesten Setups —
-        genug für Charts, Tabellen und die 'empfohlene' Monte-Carlo-Quelle nach einem Neustart."""
+        genug für Charts, Tabellen und die 'empfohlene' Monte-Carlo-Quelle nach einem Neustart.
+        param_stability wird zusätzlich von Dicts auf reine Zahlenlisten komprimiert — bei
+        vielen Grid-Kombinationen × Folds sparen die wegfallenden Schlüsselnamen genug Platz,
+        um sicher unter GitHubs 1MB-Trunkierungsgrenze für Gist-Dateien zu bleiben."""
         _blob = {k: v for k, v in _full_result.items() if k != "param_stability_trades"}
+        _blob["param_stability"] = {
+            key: [[r.get(f, 0) for f in _PARAM_STAB_FIELDS] for r in results]
+            for key, results in _full_result["param_stability"].items()
+        }
         _best = _dax_stability_best(_full_result["param_stability"])
         if _best is not None:
             _best_trades = _full_result["param_stability_trades"].get(_best["key"])
