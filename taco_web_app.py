@@ -8139,6 +8139,26 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             if _sig["reasons"]:
                 st.caption("⚠️ " + " · ".join(_sig["reasons"]))
 
+        # ── Empfohlenes Setup, fett & prominent (nicht der Überanpassungs-Benchmark!) ──
+        # Dieselbe Auswahl-Logik, die auch die Monte-Carlo-Trade-Quelle "WFA robustestes
+        # Setup" speist — EIN Wert, keine zwei widersprüchlichen "besten" Setups mehr.
+        _wfa_recommended = _dax_stability_best(param_stability)
+        if _wfa_recommended is not None:
+            st.markdown(
+                f"""<div style="background:#052e1655;border:2px solid #22c55e;border-radius:10px;
+                padding:16px 22px;margin:10px 0 18px 0;">
+                  <div style="color:#4ade80;font-weight:800;font-size:.8rem;letter-spacing:.05em;
+                    text-transform:uppercase;margin-bottom:6px;">🏆 Empfohlenes Setup ({_wfa_fill_label})</div>
+                  <div style="color:#e2e8f0;font-weight:800;font-size:1.15rem;">{_wfa_recommended['label']}</div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            st.caption("Das ist die walk-forward-validierte Empfehlung (robustestes Setup über alle Folds) — "
+                       "nicht zu verwechseln mit dem 'Globalen Benchmark' oben, der bewusst überoptimiert ist "
+                       "und nur als Vergleichswert für den Überanpassungs-Check dient, nicht als Empfehlung.")
+        else:
+            st.info("Noch kein robustes Setup ermittelbar — Parameter-Stabilitätsanalyse weiter unten prüfen.")
+
         # ── Vergleich: beide Fill-Modi (falls beide schon berechnet wurden) ────
         _cmp_rows = []
         for _fm, _label in [("close", "Montag Close"), ("next_open", "Dienstag Open")]:
@@ -8280,9 +8300,12 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 gc2.metric("Globaler Benchmark (im Nachhinein optimiert)", f"{_glob_ret:+.1f}%")
                 gc3.metric("Überanpassungs-Gap", f"{_gap:+.1f}%", delta_color="inverse")
                 _gp = _wfa_global_benchmark["params"]
-                st.caption(f"Bestes Setup im globalen Benchmark: SL {_gp['sl_pct']}% · Trail {_gp['trail_trig']}%/{_gp['trail_off']}% · "
+                st.caption(f"⚠️ Setup im globalen Benchmark (NICHT die Empfehlung — nur Vergleichswert): "
+                           f"SL {_gp['sl_pct']}% · Trail {_gp['trail_trig']}%/{_gp['trail_off']}% · "
                            f"MA {_gp['ma_type']} {_gp['ma_period']} · Filter: {_gp['filter_mode']} — "
-                           f"auf dem GESAMTEN Zeitraum ohne OOS-Trennung gefunden, deshalb strukturell zu gut.")
+                           f"auf dem GESAMTEN Zeitraum ohne OOS-Trennung gefunden, deshalb strukturell zu gut. "
+                           f"Die tatsächliche Empfehlung steht im grünen Kasten '🏆 Empfohlenes Setup' weiter oben. "
+                           f"Ensemble ist hier nicht mit eingerechnet — das ist eine separate Analyse weiter unten.")
                 if _gap > 15:
                     st.warning(f"⚠️ Große Lücke ({_gap:+.1f}%) — das im Nachhinein beste Setup performt deutlich besser als "
                                f"die ehrliche Walk-Forward-Auswahl. Hinweis auf Überanpassung an diese eine Historie.")
