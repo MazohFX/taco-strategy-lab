@@ -10155,6 +10155,153 @@ def _impact_color(impact: str) -> str:
     return {"High": "background-color: rgba(239,68,68,.25)", "Medium": "background-color: rgba(249,115,22,.20)", "Low": "background-color: rgba(148,163,184,.18)"}.get(impact, "")
 
 
+# ── Multi-Timeframe Waehrungsmatrix ──────────────────────────────────────────
+# Short (15m) / Mid (4h): reines Preis-Momentum auf Intraday-Kursen (yfinance).
+# Long (Struktur): bestehender Momentum+COT-Ansatz (kein News-Anteil, da die
+# DIRECTION_MATRIX nur fuer Gold/DXY/Nasdaq/S&P definiert ist).
+# Vereinfachte redaktionelle Faustregel, kein validiertes Modell.
+
+CURRENCY_MATRIX_ASSETS = ["CAD", "EUR", "GBP", "AUD", "DXY", "NZD", "CHF", "JPY"]
+
+# yfinance-Ticker sind USD-Kreuze; invert=True heisst: der Ticker notiert USD je Einheit
+# Fremdwaehrung (z.B. USDCAD), ein Anstieg bedeutet also eine SCHWAECHERE Fremdwaehrung.
+CURRENCY_SYMBOLS = {
+    "CAD": {"symbol": "CAD=X",     "invert": True},
+    "EUR": {"symbol": "EURUSD=X",  "invert": False},
+    "GBP": {"symbol": "GBPUSD=X",  "invert": False},
+    "AUD": {"symbol": "AUDUSD=X",  "invert": False},
+    "DXY": {"symbol": "DX-Y.NYB",  "invert": False},
+    "NZD": {"symbol": "NZDUSD=X",  "invert": False},
+    "CHF": {"symbol": "CHF=X",     "invert": True},
+    "JPY": {"symbol": "JPY=X",     "invert": True},
+}
+
+# Reuse der bestehenden COT_WATCHLIST-Labels (Zeile ~4088) statt Duplikat.
+CURRENCY_TO_COT_LABEL = {
+    "CAD": "CANADA Futures",
+    "EUR": "EURO Futures",
+    "GBP": "Pfund Futures",
+    "AUD": "AUD Futures",
+    "DXY": "DXY",
+    "NZD": "NZD Futures",
+    "CHF": "CHF Futures",
+    "JPY": "YEN Futures",
+}
+
+
+@st.cache_data(ttl=15 * 60)
+def fetch_intraday_data(symbol: str, interval: str, period: str) -> pd.DataFrame:
+    try:
+        import yfinance as yf
+
+        data = yf.download(symbol, period=period, interval=interval, progress=False, auto_adjust=False)
+        if data.empty:
+            return pd.DataFrame()
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = [c[0] for c in data.columns]
+        data = data.reset_index()
+        data = data.rename(columns={data.columns[0]: "Date"})
+        return data
+    except Exception:
+        return pd.DataFrame()
+
+
+def resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    if df is None or df.empty or "Date" not in df.columns:
+        return pd.DataFrame()
+    try:
+        indexed = df.set_index("Date")
+        out = indexed.resample(rule).agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+        return out.reset_index()
+    except Exception:
+        return pd.DataFrame()
+
+
+def intraday_momentum_score(df: pd.DataFrame, lookback_bars: int, scale_pct: float, invert: bool) -> float | None:
+    if df is None or df.empty or "Close" not in df.columns:
+        return None
+    closes = df["Close"].dropna()
+    if len(closes) <= lookback_bars:
+        return None
+    pct = float((closes.iloc[-1] / closes.iloc[-1 - lookback_bars] - 1) * 100)
+    if invert:
+        pct = -pct
+    return float(np.clip(pct / scale_pct, -1, 1))
+
+
+def matrix_percent_label(score: float) -> tuple[float, str]:
+    percent = float(np.clip((score + 1) / 2 * 100, 0, 100))
+    if percent >= 60:
+        label = "BULLISH"
+    elif percent <= 40:
+        label = "BEARISH"
+    else:
+        label = "NEUTRAL"
+    return percent, label
+
+
+def compute_currency_matrix_row(currency: str, cot_markets: list[str]) -> dict:
+    meta = CURRENCY_SYMBOLS[currency]
+    symbol, invert = meta["symbol"], meta["invert"]
+
+    m15 = fetch_intraday_data(symbol, "15m", "5d")
+    short_score = intraday_momentum_score(m15, lookback_bars=8, scale_pct=0.3, invert=invert)
+
+    h1 = fetch_intraday_data(symbol, "60m", "60d")
+    h4 = resample_ohlc(h1, "4h")
+    mid_score = intraday_momentum_score(h4, lookback_bars=5, scale_pct=1.0, invert=invert)
+
+    daily = fetch_extra_price_data(symbol)
+    week_pct = price_returns(daily)["week_pct"]
+    mom_daily = momentum_score(week_pct, 3.0)
+    if invert:
+        mom_daily = -mom_daily
+
+    cot_market = resolve_cot_market_name(CURRENCY_TO_COT_LABEL.get(currency, ""), cot_markets)
+    cot_stats = cot_bias_score(cot_market)
+    long_score = None if week_pct is None and not cot_stats["available"] else float(np.clip(0.6 * mom_daily + 0.4 * cot_stats["score"], -1, 1))
+
+    return {"Short (15m)": short_score, "Mid (4h)": mid_score, "Long (Struktur)": long_score}
+
+
+def _matrix_cell_color(value: str) -> str:
+    if "BULLISH" in value:
+        return "background-color: rgba(34,197,94,.35); color: white"
+    if "BEARISH" in value:
+        return "background-color: rgba(239,68,68,.35); color: white"
+    if "NEUTRAL" in value:
+        return "background-color: rgba(148,163,184,.20)"
+    return ""
+
+
+def render_currency_matrix_section() -> None:
+    st.subheader("💱 Multi-Timeframe Waehrungsmatrix")
+    st.caption(
+        "Short (15m) und Mid (4h): reines Preis-Momentum auf Intraday-Kursen (yfinance, kann bei "
+        "Feiertagen/Datenluecken 'n/a' zeigen). Long (Struktur): Momentum (60%, wochenbasiert) + "
+        "CFTC-COT-Score (40%). Kein Makro-News-Anteil in dieser Matrix. Vereinfachte Heuristik, "
+        "kein validiertes Modell."
+    )
+    cot_data, _ = load_cot_cme_legacy()
+    cot_markets = cot_data["market"].tolist() if not cot_data.empty else []
+
+    rows = []
+    for currency in CURRENCY_MATRIX_ASSETS:
+        scores = compute_currency_matrix_row(currency, cot_markets)
+        row = {"Asset": currency}
+        for col_label, score in scores.items():
+            if score is None:
+                row[col_label] = "n/a"
+            else:
+                percent, label = matrix_percent_label(score)
+                row[col_label] = f"{percent:.0f}% {label}"
+        rows.append(row)
+
+    matrix_df = pd.DataFrame(rows).set_index("Asset")
+    cols_to_style = list(matrix_df.columns)
+    st.dataframe(matrix_df.style.map(_matrix_cell_color, subset=cols_to_style), use_container_width=True)
+
+
 def render_extra_makro_sentiment() -> None:
     st.markdown("## 🌐 Extra: Makro-Kalender & Sentiment")
     st.warning(EXTRA_DISCLAIMER)
@@ -10248,6 +10395,9 @@ def render_extra_makro_sentiment() -> None:
     st.subheader("📊 CFTC COT Positionierung (Detail)")
     st.caption("Wiederverwendung des bestehenden COT-Panels (Non-Commercials / Commercials / Retail Trader) fuer das oben gewaehlte Asset.")
     render_cot_panel(True, chart_asset, EXTRA_ASSETS[chart_asset])
+
+    # ── Abschnitt 6: Waehrungsmatrix ──────────────────────────────────────────
+    render_currency_matrix_section()
 
     st.warning(EXTRA_DISCLAIMER)
 
