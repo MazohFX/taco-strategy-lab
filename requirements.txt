@@ -7,3 +7,4 @@ scipy
 requests
 numba
 lxml
+google-genai

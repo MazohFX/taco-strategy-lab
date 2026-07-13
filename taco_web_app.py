@@ -1010,11 +1010,15 @@ Schreibe einen kompakten deutschen Fließtext in 6-8 Sätzen mit konkreten Zahle
 
     try:
         from google import genai
+        from google.genai import types
+
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-        )
+        kwargs = {"model": "gemini-2.0-flash", "contents": prompt}
+        try:
+            kwargs["config"] = types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
+        except Exception:
+            pass  # aeltere SDK-Version ohne Grounding-Tool-Support: ohne Live-Suche weitermachen
+        response = client.models.generate_content(**kwargs)
         return response.text.strip()
     except Exception as exc:
         msg = str(exc)
@@ -1024,7 +1028,10 @@ Schreibe einen kompakten deutschen Fließtext in 6-8 Sätzen mit konkreten Zahle
 
 
 def render_ki_analyse(asset_label: str, symbol: str) -> None:
-    api_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
+    try:
+        api_key = st.secrets.get("GEMINI_API_KEY", "")
+    except Exception:
+        api_key = ""
 
     st.markdown(
         """
@@ -9806,8 +9813,6 @@ def render_muster_analyse() -> None:
 # BLS (Release-Kalender), Fed/EZB/BoE (Zinstermine, von Hand gepflegt),
 # Alpha Vantage (Actual-Werte), yfinance (Kurse), CFTC Socrata (COT-Historie).
 
-EXTRA_DISCLAIMER = "⚠️ Kein Finanz- oder Anlagerat — vereinfachte Heuristik, keine validierte Prognose."
-
 EXTRA_ASSETS = {
     "Gold":       "GC=F",
     "DXY":        "DX-Y.NYB",
@@ -10071,11 +10076,40 @@ def cot_bias_score(market_name: str | None) -> dict:
     return {"score": score, "net": net_latest, "trend": trend, "available": True}
 
 
-def resolve_cot_market_name(cot_label: str, markets: list[str]) -> str | None:
+@st.cache_data(ttl=24 * 60 * 60)
+def find_cot_socrata_market(query: str) -> str | None:
+    """Sucht den exakten CFTC-Marktnamen direkt in der Socrata-API (nicht ueber deafut.txt,
+    da diese von manchen Cloud-IPs geblockt wird und dann die gesamte COT-Aufloesung blockiert)."""
+    try:
+        import requests
+
+        params = {
+            "$select": "market_and_exchange_names",
+            "$where": f"upper(market_and_exchange_names) like '%{query.upper()}%'",
+            "$group": "market_and_exchange_names",
+            "$limit": "10",
+        }
+        response = requests.get(COT_SOCRATA_URL, params=params, timeout=12)
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            return None
+        names = [row["market_and_exchange_names"] for row in data]
+        exact = next((n for n in names if n.split(" - ")[0].strip().upper() == query.upper()), None)
+        return exact or names[0]
+    except Exception:
+        return None
+
+
+def resolve_cot_market_name(cot_label: str) -> str | None:
     queries = next((q for label, q in COT_WATCHLIST if label == cot_label), None)
     if not queries:
         return None
-    return find_cot_market(markets, queries)
+    for query in queries:
+        market = find_cot_socrata_market(query)
+        if market:
+            return market
+    return None
 
 
 @st.cache_data(ttl=15 * 60)
@@ -10120,7 +10154,7 @@ def sentiment_label(score: float) -> str:
     return "Bullish"
 
 
-def compute_asset_sentiment(asset: str, symbol: str, api_key: str, timeframe: str, cot_markets: list[str]) -> dict:
+def compute_asset_sentiment(asset: str, symbol: str, api_key: str, timeframe: str) -> dict:
     price_df = fetch_extra_price_data(symbol)
     returns = price_returns(price_df)
     is_today = timeframe == "Heute"
@@ -10130,7 +10164,7 @@ def compute_asset_sentiment(asset: str, symbol: str, api_key: str, timeframe: st
     news_score, news_detail = compute_news_score(asset, api_key)
 
     cot_label = ASSET_TO_COT_LABEL.get(asset, "")
-    cot_market = resolve_cot_market_name(cot_label, cot_markets)
+    cot_market = resolve_cot_market_name(cot_label)
     cot_stats = cot_bias_score(cot_market)
 
     weights = (0.50, 0.35, 0.15) if is_today else (0.35, 0.25, 0.40)
@@ -10240,7 +10274,7 @@ def matrix_percent_label(score: float) -> tuple[float, str]:
     return percent, label
 
 
-def compute_currency_matrix_row(currency: str, cot_markets: list[str]) -> dict:
+def compute_currency_matrix_row(currency: str) -> dict:
     meta = CURRENCY_SYMBOLS[currency]
     symbol, invert = meta["symbol"], meta["invert"]
 
@@ -10257,7 +10291,7 @@ def compute_currency_matrix_row(currency: str, cot_markets: list[str]) -> dict:
     if invert:
         mom_daily = -mom_daily
 
-    cot_market = resolve_cot_market_name(CURRENCY_TO_COT_LABEL.get(currency, ""), cot_markets)
+    cot_market = resolve_cot_market_name(CURRENCY_TO_COT_LABEL.get(currency, ""))
     cot_stats = cot_bias_score(cot_market)
     long_score = None if week_pct is None and not cot_stats["available"] else float(np.clip(0.6 * mom_daily + 0.4 * cot_stats["score"], -1, 1))
 
@@ -10282,12 +10316,9 @@ def render_currency_matrix_section() -> None:
         "CFTC-COT-Score (40%). Kein Makro-News-Anteil in dieser Matrix. Vereinfachte Heuristik, "
         "kein validiertes Modell."
     )
-    cot_data, _ = load_cot_cme_legacy()
-    cot_markets = cot_data["market"].tolist() if not cot_data.empty else []
-
     rows = []
     for currency in CURRENCY_MATRIX_ASSETS:
-        scores = compute_currency_matrix_row(currency, cot_markets)
+        scores = compute_currency_matrix_row(currency)
         row = {"Asset": currency}
         for col_label, score in scores.items():
             if score is None:
@@ -10304,7 +10335,6 @@ def render_currency_matrix_section() -> None:
 
 def render_extra_makro_sentiment() -> None:
     st.markdown("## 🌐 Extra: Makro-Kalender & Sentiment")
-    st.warning(EXTRA_DISCLAIMER)
     st.caption(
         "Quellen: BLS-Kalender (Live), FOMC/EZB/BoE-Termine (fest hinterlegt, jaehrlich von Hand aktualisiert), "
         "Alpha Vantage (nur Actual, kein Forecast/Konsensus — verwendet wird Actual vs. Previous als Naeherung), "
@@ -10341,13 +10371,16 @@ def render_extra_makro_sentiment() -> None:
 
     # ── Abschnitt 2: Sentiment-Kacheln ───────────────────────────────────────
     st.subheader("🧭 Sentiment pro Asset")
-    cot_data, _ = load_cot_cme_legacy()
-    cot_markets = cot_data["market"].tolist() if not cot_data.empty else []
+    st.caption(
+        "Momentum: yfinance-Kurse, alle 15 Min. neu geladen — 'Heute' = Return letzter Handelstag "
+        "vs. Vortag, 'Diese Woche' = Return letzte 5 Handelstage. COT: CFTC-Socrata-API, "
+        "wochenaktuell (Cache 24h). News: Alpha Vantage, Cache 6h (siehe Hinweis oben)."
+    )
 
     results = {}
     cols = st.columns(4)
     for col, (asset, symbol) in zip(cols, EXTRA_ASSETS.items()):
-        result = compute_asset_sentiment(asset, symbol, api_key, timeframe, cot_markets)
+        result = compute_asset_sentiment(asset, symbol, api_key, timeframe)
         results[asset] = result
         with col:
             ret_label = "Tagesreturn" if timeframe == "Heute" else "Wochenreturn"
@@ -10399,7 +10432,8 @@ def render_extra_makro_sentiment() -> None:
     # ── Abschnitt 6: Waehrungsmatrix ──────────────────────────────────────────
     render_currency_matrix_section()
 
-    st.warning(EXTRA_DISCLAIMER)
+    # ── Abschnitt 7: KI Marktanalyse (bestehendes Gemini-Modul) ──────────────
+    render_ki_analyse(chart_asset, EXTRA_ASSETS[chart_asset])
 
 
 test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "Extra: Makro & Sentiment"], horizontal=False, label_visibility="collapsed")
