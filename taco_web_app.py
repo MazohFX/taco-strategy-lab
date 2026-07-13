@@ -5165,6 +5165,20 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     df["adx_ok"] = (df["ADX"] > params["adx_thresh"]) if params["use_adx"] else True
     df["entry_signal"] = df["entry_time"] & df["ma_ok"] & df["adx_ok"] & df["MA"].notna()
 
+    # Volatility Targeting (Moreira/Muir 2017, Harvey et al. 2018): Positionsgröße zusätzlich zur
+    # SL-basierten Risikogröße mit target_vol / realisierte_vol skalieren — kleinere Position bei
+    # zuletzt hoher Vola, größere bei niedriger. EWMA-Vola nutzt nur Renditen VOR dem aktuellen Bar
+    # (shift(1)), damit kein Lookahead entsteht — am Entry-Tag ist die Vola von heute ja noch unbekannt.
+    if params.get("use_vol_target", False):
+        _halflife = max(1, params.get("vol_halflife", 20))
+        _target_vol_ann = params.get("vol_target_pct", 15.0) / 100.0
+        _rets = df["Close"].pct_change()
+        _ewma_var = (_rets ** 2).ewm(halflife=_halflife, min_periods=int(_halflife * 3)).mean()
+        _realized_vol_ann = np.sqrt(_ewma_var * 252)
+        df["vol_scalar"] = (_target_vol_ann / _realized_vol_ann).shift(1).clip(0.2, 3.0).fillna(1.0)
+    else:
+        df["vol_scalar"] = 1.0
+
     capital = 10_000.0
     position, entry_price, sl_price = 0, 0.0, 0.0
     trail_high, qty, trail_active = 0.0, 0.0, False
@@ -5194,6 +5208,7 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     open_arr         = df["Open"].to_numpy(dtype=float)
     exit_time_arr    = df["exit_time"].to_numpy()
     entry_signal_arr = df["entry_signal"].to_numpy()
+    vol_scalar_arr   = df["vol_scalar"].to_numpy(dtype=float)
     idx              = df.index
 
     for i in range(len(df)):
@@ -5205,7 +5220,7 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
             sl_price       = entry_price * (1 - sl_pct / 100)
             risk_per_trade = capital * (params.get("risk_pct", 1.0) / 100)
             risk_per_unit  = entry_price - sl_price
-            qty            = (risk_per_trade / risk_per_unit) if risk_per_unit > 0 else 0
+            qty            = (risk_per_trade / risk_per_unit) * vol_scalar_arr[i] if risk_per_unit > 0 else 0
             trail_high     = o
             trail_active   = False
             position       = 1
@@ -5252,7 +5267,7 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
                 sl_price       = entry_price * (1 - sl_pct / 100)
                 risk_per_trade = capital * (params.get("risk_pct", 1.0) / 100)
                 risk_per_unit  = entry_price - sl_price
-                qty            = (risk_per_trade / risk_per_unit) if risk_per_unit > 0 else 0
+                qty            = (risk_per_trade / risk_per_unit) * vol_scalar_arr[i] if risk_per_unit > 0 else 0
                 trail_high     = c
                 trail_active   = False
                 position       = 1
@@ -7617,6 +7632,21 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         st.markdown("---")
         risk_pct   = st.number_input("Risiko pro Trade %", 0.1, 5.0, 1.0, step=0.1, key="dax_risk",
                                      help="1% = bei 100.000€ Konto riskierst du 1.000€ pro Trade (basierend auf SL-Abstand)")
+        st.markdown("---")
+        use_vol_target = st.checkbox("Volatility Targeting", False, key="dax_voltarget",
+                                     help="Skaliert die Positionsgröße zusätzlich zur SL-basierten Risikogröße nach "
+                                          "Moreira/Muir (2017) und Harvey et al. (2018): kleinere Position, wenn "
+                                          "GER40 zuletzt volatiler war als das Ziel, größere bei ruhigerem Markt. "
+                                          "Für Aktienindizes wie GER40 laut beiden Papern der Fall mit dem robustesten Effekt.")
+        if use_vol_target:
+            vol_target_pct = st.number_input("Ziel-Volatilität (% p.a.)", 5.0, 40.0, 15.0, step=1.0, key="dax_voltgt",
+                                             help="Annualisierte Volatilität, auf die skaliert wird. GER40 lag historisch "
+                                                  "meist zwischen 15–25% p.a. — niedriger Zielwert = defensiver.")
+            vol_halflife = st.number_input("Half-Life (Tage)", 5, 90, 20, step=5, key="dax_volhl",
+                                           help="Wie schnell die Vola-Schätzung auf neue Kursbewegungen reagiert "
+                                                "(20 Tage = Standardwert aus Harvey et al. 2018).")
+        else:
+            vol_target_pct, vol_halflife = 15.0, 20
     with pc4:
         st.markdown("**Handelskosten**")
         spread_pts = st.number_input("Spread (Punkte, Round-Turn)", 0.0, 20.0, 1.5, step=0.1, key="dax_spread",
@@ -7756,6 +7786,9 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         "spread_pts":     float(spread_pts),
         "commission_pct": float(commission_pct),
         "swap_pts_per_night": float(swap_pts_per_night),
+        "use_vol_target": use_vol_target,
+        "vol_target_pct": float(vol_target_pct),
+        "vol_halflife":   int(vol_halflife),
         "fill_mode":      fill_mode,
     }
 
