@@ -9800,7 +9800,459 @@ def render_muster_analyse() -> None:
     st.rerun()
 
 
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie"], horizontal=False, label_visibility="collapsed")
+# ── Extra: Makro-Kalender + Sentiment ────────────────────────────────────────
+# Hinweis: alles hier ist eine vereinfachte redaktionelle Faustregel, kein
+# validiertes Handelsmodell. Ausschliesslich offizielle/kostenlose Quellen:
+# BLS (Release-Kalender), Fed/EZB/BoE (Zinstermine, von Hand gepflegt),
+# Alpha Vantage (Actual-Werte), yfinance (Kurse), CFTC Socrata (COT-Historie).
+
+EXTRA_DISCLAIMER = "⚠️ Kein Finanz- oder Anlagerat — vereinfachte Heuristik, keine validierte Prognose."
+
+EXTRA_ASSETS = {
+    "Gold":       "GC=F",
+    "DXY":        "DX-Y.NYB",
+    "Nasdaq 100": "^NDX",
+    "S&P 500":    "^GSPC",
+}
+
+# Reuse der bestehenden COT-Watchlist (COT_WATCHLIST, Zeile ~4088) statt Duplikat.
+ASSET_TO_COT_LABEL = {
+    "Gold":       "Gold",
+    "DXY":        "DXY",
+    "Nasdaq 100": "NQ Futures",
+    "S&P 500":    "S&P500 Futures",
+}
+
+# Zinstermine von Hand gepflegt, Quelle: federalreserve.gov/monetarypolicy/fomccalendars.htm,
+# ecb.europa.eu/press/calendars/mgcgc, bankofengland.co.uk/monetary-policy/upcoming-mpc-dates
+# Muss jaehrlich manuell aktualisiert werden.
+CENTRAL_BANK_EVENTS = [
+    {"date": date(2026, 1, 27), "time": "—",      "currency": "USD", "event": "FOMC Zinsentscheid (Tag 1)", "impact": "High"},
+    {"date": date(2026, 1, 28), "time": "14:00 ET", "currency": "USD", "event": "FOMC Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 3, 17), "time": "—",      "currency": "USD", "event": "FOMC Zinsentscheid (Tag 1)", "impact": "High"},
+    {"date": date(2026, 3, 18), "time": "14:00 ET", "currency": "USD", "event": "FOMC Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 4, 28), "time": "—",      "currency": "USD", "event": "FOMC Zinsentscheid (Tag 1)", "impact": "High"},
+    {"date": date(2026, 4, 29), "time": "14:00 ET", "currency": "USD", "event": "FOMC Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 6, 16), "time": "—",      "currency": "USD", "event": "FOMC Zinsentscheid (Tag 1)", "impact": "High"},
+    {"date": date(2026, 6, 17), "time": "14:00 ET", "currency": "USD", "event": "FOMC Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 7, 28), "time": "—",      "currency": "USD", "event": "FOMC Zinsentscheid (Tag 1)", "impact": "High"},
+    {"date": date(2026, 7, 29), "time": "14:00 ET", "currency": "USD", "event": "FOMC Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 9, 15), "time": "—",      "currency": "USD", "event": "FOMC Zinsentscheid (Tag 1)", "impact": "High"},
+    {"date": date(2026, 9, 16), "time": "14:00 ET", "currency": "USD", "event": "FOMC Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 10, 27), "time": "—",       "currency": "USD", "event": "FOMC Zinsentscheid (Tag 1)", "impact": "High"},
+    {"date": date(2026, 10, 28), "time": "14:00 ET", "currency": "USD", "event": "FOMC Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 12, 8), "time": "—",       "currency": "USD", "event": "FOMC Zinsentscheid (Tag 1)", "impact": "High"},
+    {"date": date(2026, 12, 9), "time": "14:00 ET", "currency": "USD", "event": "FOMC Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 1, 25), "time": "14:15 CET", "currency": "EUR", "event": "EZB Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 3, 19), "time": "14:15 CET", "currency": "EUR", "event": "EZB Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 4, 30), "time": "14:15 CET", "currency": "EUR", "event": "EZB Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 6, 11), "time": "14:15 CET", "currency": "EUR", "event": "EZB Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 7, 23), "time": "14:15 CET", "currency": "EUR", "event": "EZB Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 9, 10), "time": "14:15 CET", "currency": "EUR", "event": "EZB Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 10, 29), "time": "14:15 CET", "currency": "EUR", "event": "EZB Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 12, 17), "time": "14:15 CET", "currency": "EUR", "event": "EZB Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 2, 5), "time": "12:00 UK", "currency": "GBP", "event": "BoE Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 3, 19), "time": "12:00 UK", "currency": "GBP", "event": "BoE Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 4, 30), "time": "12:00 UK", "currency": "GBP", "event": "BoE Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 6, 18), "time": "12:00 UK", "currency": "GBP", "event": "BoE Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 7, 30), "time": "12:00 UK", "currency": "GBP", "event": "BoE Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 9, 17), "time": "12:00 UK", "currency": "GBP", "event": "BoE Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 11, 5), "time": "12:00 UK", "currency": "GBP", "event": "BoE Zinsentscheid", "impact": "High"},
+    {"date": date(2026, 12, 17), "time": "12:00 UK", "currency": "GBP", "event": "BoE Zinsentscheid", "impact": "High"},
+]
+
+BLS_IMPACT = {
+    "employment situation":                  "High",
+    "consumer price index":                  "High",
+    "producer price index":                  "Medium",
+    "job openings and labor turnover":       "Medium",
+    "employment cost index":                 "Medium",
+    "import/export price":                   "Low",
+    "real earnings":                         "Low",
+    "productivity":                          "Low",
+}
+
+# Actual-vs-Previous Richtungslogik pro Makro-Indikator und Asset.
+# +1 = Ueberraschung nach oben wirkt bullish fuer das Asset, -1 = bearish.
+# Vereinfachte redaktionelle Faustregel, kein validiertes Modell.
+DIRECTION_MATRIX = {
+    "CPI":                {"Gold": +1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1},
+    "NONFARM_PAYROLL":    {"Gold": -1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1},
+    "UNEMPLOYMENT":       {"Gold": +1, "DXY": -1, "Nasdaq 100": +1, "S&P 500": +1},
+    "FEDERAL_FUNDS_RATE": {"Gold": -1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1},
+    "RETAIL_SALES":       {"Gold": -1, "DXY": +1, "Nasdaq 100": +1, "S&P 500": +1},
+    "REAL_GDP":           {"Gold": -1, "DXY": +1, "Nasdaq 100": +1, "S&P 500": +1},
+}
+
+
+def classify_bls_impact(release_name: str) -> str:
+    lowered = release_name.lower()
+    for key, impact in BLS_IMPACT.items():
+        if key in lowered:
+            return impact
+    return "Low"
+
+
+@st.cache_data(ttl=6 * 60 * 60)
+def fetch_bls_calendar(year: int, month: int) -> pd.DataFrame:
+    try:
+        from io import StringIO
+        import requests
+
+        url = f"https://www.bls.gov/schedule/{year}/{month:02d}_sched.htm"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
+        response = requests.get(url, headers=headers, timeout=12)
+        response.raise_for_status()
+        tables = pd.read_html(StringIO(response.text))
+        raw = None
+        for table in tables:
+            cols = [str(c).strip().lower() for c in table.columns]
+            if any("date" in c for c in cols) and any("release" in c for c in cols):
+                raw = table
+                break
+        if raw is None:
+            return pd.DataFrame()
+
+        raw.columns = [str(c).strip() for c in raw.columns]
+        date_col = next((c for c in raw.columns if "date" in c.lower()), None)
+        time_col = next((c for c in raw.columns if "time" in c.lower()), None)
+        release_col = next((c for c in raw.columns if "release" in c.lower()), None)
+        if date_col is None or release_col is None:
+            return pd.DataFrame()
+
+        out = pd.DataFrame({
+            "date": pd.to_datetime(raw[date_col].astype(str), errors="coerce").dt.date,
+            "time": raw[time_col].astype(str) if time_col else "8:30 AM",
+            "event": raw[release_col].astype(str).str.strip(),
+        })
+        out = out.dropna(subset=["date", "event"])
+        out["currency"] = "USD"
+        out["impact"] = out["event"].apply(classify_bls_impact)
+        return out[["date", "time", "currency", "event", "impact"]]
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_economic_calendar(start: date, end: date) -> pd.DataFrame:
+    months = sorted({(start.year, start.month), (end.year, end.month)})
+    bls_frames = [fetch_bls_calendar(y, m) for y, m in months]
+    bls = pd.concat(bls_frames, ignore_index=True) if any(not f.empty for f in bls_frames) else pd.DataFrame()
+
+    cb = pd.DataFrame(CENTRAL_BANK_EVENTS)
+    frames = [f for f in (bls, cb) if not f.empty]
+    if not frames:
+        return pd.DataFrame(columns=["date", "time", "currency", "event", "impact"])
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined[(combined["date"] >= start) & (combined["date"] <= end)]
+    impact_rank = {"High": 0, "Medium": 1, "Low": 2}
+    combined["_rank"] = combined["impact"].map(impact_rank).fillna(3)
+    return combined.sort_values(["_rank", "date"]).drop(columns="_rank").reset_index(drop=True)
+
+
+def get_alpha_vantage_key() -> str:
+    import os
+
+    try:
+        key = st.secrets.get("ALPHA_VANTAGE_API_KEY", "")
+    except Exception:
+        key = ""
+    return key or os.environ.get("ALPHA_VANTAGE_API_KEY", "")
+
+
+ALPHA_VANTAGE_FUNCTIONS = {
+    "CPI": "CPI",
+    "NONFARM_PAYROLL": "NONFARM_PAYROLL",
+    "UNEMPLOYMENT": "UNEMPLOYMENT",
+    "FEDERAL_FUNDS_RATE": "FEDERAL_FUNDS_RATE",
+    "RETAIL_SALES": "RETAIL_SALES",
+    "REAL_GDP": "REAL_GDP",
+}
+
+
+@st.cache_data(ttl=6 * 60 * 60)
+def fetch_alpha_vantage_indicator(function: str, api_key: str) -> pd.DataFrame:
+    if not api_key:
+        return pd.DataFrame()
+    try:
+        import requests
+
+        url = f"https://www.alphavantage.co/query?function={function}&apikey={api_key}"
+        response = requests.get(url, timeout=12)
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data", [])
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        return df.dropna(subset=["date", "value"]).sort_values("date")
+    except Exception:
+        return pd.DataFrame()
+
+
+def macro_surprise_pct(df: pd.DataFrame) -> float | None:
+    """Actual (letzter Wert) vs. Previous (vorletzter Wert) in %. Kein Konsensus/Forecast verfuegbar."""
+    if df is None or len(df) < 2:
+        return None
+    latest = float(df["value"].iloc[-1])
+    previous = float(df["value"].iloc[-2])
+    if previous == 0:
+        return None
+    return (latest - previous) / abs(previous) * 100
+
+
+def compute_news_score(asset: str, api_key: str) -> tuple[float, pd.DataFrame]:
+    rows = []
+    contributions = []
+    for indicator, function in ALPHA_VANTAGE_FUNCTIONS.items():
+        df = fetch_alpha_vantage_indicator(function, api_key)
+        surprise = macro_surprise_pct(df)
+        direction = DIRECTION_MATRIX.get(indicator, {}).get(asset, 0)
+        actual = float(df["value"].iloc[-1]) if surprise is not None else None
+        previous = float(df["value"].iloc[-2]) if surprise is not None else None
+        contribution = None
+        if surprise is not None:
+            contribution = float(np.clip(surprise / 10.0, -1, 1)) * direction
+            contributions.append(contribution)
+        rows.append({
+            "Indikator": indicator,
+            "Actual": actual,
+            "Previous": previous,
+            "Ueberraschung %": round(surprise, 2) if surprise is not None else None,
+            "Richtung": direction,
+            "Beitrag": round(contribution, 3) if contribution is not None else None,
+        })
+    news_score = float(np.clip(np.mean(contributions), -1, 1)) if contributions else 0.0
+    return news_score, pd.DataFrame(rows)
+
+
+COT_SOCRATA_URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"
+
+
+@st.cache_data(ttl=24 * 60 * 60)
+def fetch_cot_history(market_name: str, weeks: int = 5) -> pd.DataFrame:
+    try:
+        import requests
+
+        params = {
+            "$where": f"market_and_exchange_names='{market_name}'",
+            "$order": "report_date_as_yyyy_mm_dd DESC",
+            "$limit": str(weeks),
+        }
+        response = requests.get(COT_SOCRATA_URL, params=params, timeout=12)
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        df["report_date"] = pd.to_datetime(df["report_date_as_yyyy_mm_dd"], errors="coerce")
+        df["long"] = pd.to_numeric(df.get("noncomm_positions_long_all"), errors="coerce")
+        df["short"] = pd.to_numeric(df.get("noncomm_positions_short_all"), errors="coerce")
+        df["net_noncomm"] = df["long"] - df["short"]
+        return df.dropna(subset=["report_date", "net_noncomm"]).sort_values("report_date")
+    except Exception:
+        return pd.DataFrame()
+
+
+def cot_bias_score(market_name: str | None) -> dict:
+    """Score in [-1, 1]: Vorzeichen Netto-Position (60%) + Vorzeichen 4-Wochen-Trend (40%)."""
+    if not market_name:
+        return {"score": 0.0, "net": None, "trend": None, "available": False}
+    hist = fetch_cot_history(market_name, weeks=5)
+    if hist.empty:
+        return {"score": 0.0, "net": None, "trend": None, "available": False}
+    net_latest = float(hist["net_noncomm"].iloc[-1])
+    net_sign = float(np.sign(net_latest))
+    trend = float(hist["net_noncomm"].iloc[-1] - hist["net_noncomm"].iloc[0]) if len(hist) >= 2 else 0.0
+    trend_sign = float(np.sign(trend))
+    score = 0.6 * net_sign + 0.4 * trend_sign
+    return {"score": score, "net": net_latest, "trend": trend, "available": True}
+
+
+def resolve_cot_market_name(cot_label: str, markets: list[str]) -> str | None:
+    queries = next((q for label, q in COT_WATCHLIST if label == cot_label), None)
+    if not queries:
+        return None
+    return find_cot_market(markets, queries)
+
+
+@st.cache_data(ttl=15 * 60)
+def fetch_extra_price_data(symbol: str) -> pd.DataFrame:
+    try:
+        import yfinance as yf
+
+        data = yf.download(symbol, period="3mo", interval="1d", progress=False, auto_adjust=False)
+        if data.empty:
+            return pd.DataFrame()
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = [c[0] for c in data.columns]
+        return data.reset_index()
+    except Exception:
+        return pd.DataFrame()
+
+
+def price_returns(df: pd.DataFrame) -> dict:
+    if df is None or df.empty or "Close" not in df.columns:
+        return {"day_pct": None, "week_pct": None}
+    closes = df["Close"].dropna()
+    day_pct = float((closes.iloc[-1] / closes.iloc[-2] - 1) * 100) if len(closes) >= 2 else None
+    week_pct = float((closes.iloc[-1] / closes.iloc[-6] - 1) * 100) if len(closes) >= 6 else None
+    return {"day_pct": day_pct, "week_pct": week_pct}
+
+
+def momentum_score(pct_return: float | None, scale: float) -> float:
+    if pct_return is None:
+        return 0.0
+    return float(np.clip(pct_return / scale, -1, 1))
+
+
+def sentiment_label(score: float) -> str:
+    if score < -0.5:
+        return "Bearish"
+    if score < -0.15:
+        return "Leicht Bearish"
+    if score < 0.15:
+        return "Neutral"
+    if score < 0.5:
+        return "Leicht Bullish"
+    return "Bullish"
+
+
+def compute_asset_sentiment(asset: str, symbol: str, api_key: str, timeframe: str, cot_markets: list[str]) -> dict:
+    price_df = fetch_extra_price_data(symbol)
+    returns = price_returns(price_df)
+    is_today = timeframe == "Heute"
+    pct = returns["day_pct"] if is_today else returns["week_pct"]
+    mom_score = momentum_score(pct, 1.5 if is_today else 3.0)
+
+    news_score, news_detail = compute_news_score(asset, api_key)
+
+    cot_label = ASSET_TO_COT_LABEL.get(asset, "")
+    cot_market = resolve_cot_market_name(cot_label, cot_markets)
+    cot_stats = cot_bias_score(cot_market)
+
+    weights = (0.50, 0.35, 0.15) if is_today else (0.35, 0.25, 0.40)
+    total = weights[0] * mom_score + weights[1] * news_score + weights[2] * cot_stats["score"]
+    total = float(np.clip(total, -1, 1))
+
+    return {
+        "score": total,
+        "label": sentiment_label(total),
+        "momentum_score": mom_score,
+        "news_score": news_score,
+        "cot_score": cot_stats["score"],
+        "cot_available": cot_stats["available"],
+        "day_pct": returns["day_pct"],
+        "week_pct": returns["week_pct"],
+        "news_detail": news_detail,
+        "price_df": price_df,
+    }
+
+
+def _impact_color(impact: str) -> str:
+    return {"High": "background-color: rgba(239,68,68,.25)", "Medium": "background-color: rgba(249,115,22,.20)", "Low": "background-color: rgba(148,163,184,.18)"}.get(impact, "")
+
+
+def render_extra_makro_sentiment() -> None:
+    st.markdown("## 🌐 Extra: Makro-Kalender & Sentiment")
+    st.warning(EXTRA_DISCLAIMER)
+    st.caption(
+        "Quellen: BLS-Kalender (Live), FOMC/EZB/BoE-Termine (fest hinterlegt, jaehrlich von Hand aktualisiert), "
+        "Alpha Vantage (nur Actual, kein Forecast/Konsensus — verwendet wird Actual vs. Previous als Naeherung), "
+        "yfinance (Kurse), CFTC COT (Netto-Position + 4-Wochen-Trend)."
+    )
+
+    timeframe = st.radio("Zeitraum", ["Heute", "Diese Woche"], horizontal=True)
+    today = date.today()
+    if timeframe == "Heute":
+        start, end = today, today
+    else:
+        start = today - pd.Timedelta(days=today.weekday())
+        start = start if isinstance(start, date) else start.date()
+        end = start + pd.Timedelta(days=6)
+        end = end if isinstance(end, date) else end.date()
+
+    api_key = get_alpha_vantage_key()
+    if not api_key:
+        st.info("Kein ALPHA_VANTAGE_API_KEY in st.secrets/.env gefunden — News-Score wird neutral (0) gesetzt, bis ein Key hinterlegt ist.")
+
+    # ── Abschnitt 1: Wirtschaftskalender ─────────────────────────────────────
+    st.subheader("📅 Wirtschaftskalender")
+    calendar_df = get_economic_calendar(start, end)
+    if calendar_df.empty:
+        st.warning("Keine Kalenderdaten verfuegbar (BLS ggf. gerade nicht erreichbar) oder keine Termine im gewaehlten Zeitraum.")
+    else:
+        display_df = calendar_df.rename(columns={
+            "date": "Datum", "time": "Uhrzeit", "currency": "Waehrung", "event": "Event", "impact": "Impact",
+        })
+        st.dataframe(
+            display_df.style.map(_impact_color, subset=["Impact"]),
+            use_container_width=True, hide_index=True,
+        )
+
+    # ── Abschnitt 2: Sentiment-Kacheln ───────────────────────────────────────
+    st.subheader("🧭 Sentiment pro Asset")
+    cot_data, _ = load_cot_cme_legacy()
+    cot_markets = cot_data["market"].tolist() if not cot_data.empty else []
+
+    results = {}
+    cols = st.columns(4)
+    for col, (asset, symbol) in zip(cols, EXTRA_ASSETS.items()):
+        result = compute_asset_sentiment(asset, symbol, api_key, timeframe, cot_markets)
+        results[asset] = result
+        with col:
+            ret_label = "Tagesreturn" if timeframe == "Heute" else "Wochenreturn"
+            ret_value = result["day_pct"] if timeframe == "Heute" else result["week_pct"]
+            st.metric(
+                asset,
+                result["label"],
+                f"{ret_value:+.2f}% ({ret_label})" if ret_value is not None else "n/a",
+            )
+            st.caption(f"Score: {result['score']:+.2f}")
+
+    # ── Abschnitt 3: Detailaufschluesselung ──────────────────────────────────
+    st.subheader("🔍 Detailaufschluesselung")
+    for asset, result in results.items():
+        with st.expander(f"{asset} — {result['label']} ({result['score']:+.2f})"):
+            sub_cols = st.columns(3)
+            sub_cols[0].metric("Momentum-Score", f"{result['momentum_score']:+.2f}")
+            sub_cols[1].metric("COT-Score", f"{result['cot_score']:+.2f}" if result["cot_available"] else "n/a")
+            sub_cols[2].metric("News-Score", f"{result['news_score']:+.2f}")
+            if not result["cot_available"]:
+                st.caption("COT-Historie fuer dieses Asset gerade nicht verfuegbar.")
+            st.markdown("**Makro-Ueberraschungen (Actual vs. Previous)**")
+            if api_key:
+                st.dataframe(result["news_detail"], use_container_width=True, hide_index=True)
+            else:
+                st.caption("Kein Alpha-Vantage-Key hinterlegt — Makro-Ueberraschungen nicht verfuegbar.")
+            st.caption("Retail-Sentiment: nicht verfuegbar (kein kostenloser, ToS-konformer Anbieter bekannt). Gewicht = 0.")
+
+    # ── Abschnitt 4: Candlestick-Chart ───────────────────────────────────────
+    st.subheader("📈 Kursverlauf (3 Monate)")
+    chart_asset = st.selectbox("Asset", list(EXTRA_ASSETS.keys()), key="extra_chart_asset")
+    chart_df = results[chart_asset]["price_df"]
+    if chart_df.empty:
+        st.warning(f"Keine Kursdaten fuer {chart_asset} verfuegbar.")
+    else:
+        fig = go.Figure(go.Candlestick(
+            x=chart_df["Date"], open=chart_df["Open"], high=chart_df["High"],
+            low=chart_df["Low"], close=chart_df["Close"], name=chart_asset,
+        ))
+        fig.update_layout(title=f"{chart_asset} — 3 Monate", height=420, template="plotly_dark",
+                           xaxis_rangeslider_visible=False, margin=dict(t=40, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Abschnitt 5: CFTC COT Positionierung (bestehendes COT-Modul) ─────────
+    st.subheader("📊 CFTC COT Positionierung (Detail)")
+    st.caption("Wiederverwendung des bestehenden COT-Panels (Non-Commercials / Commercials / Retail Trader) fuer das oben gewaehlte Asset.")
+    render_cot_panel(True, chart_asset, EXTRA_ASSETS[chart_asset])
+
+    st.warning(EXTRA_DISCLAIMER)
+
+
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "Extra: Makro & Sentiment"], horizontal=False, label_visibility="collapsed")
 
 if test_mode == "Seasonality Lab":
     render_seasonality_lab()
@@ -9824,6 +10276,10 @@ if test_mode == "Crypto WeekdayMA WFA":
 
 if test_mode == "DAX EMA Strategie":
     render_dax_ema_wfa()
+    st.stop()
+
+if test_mode == "Extra: Makro & Sentiment":
+    render_extra_makro_sentiment()
     st.stop()
 
 with st.sidebar:
