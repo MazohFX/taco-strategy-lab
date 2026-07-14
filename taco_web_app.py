@@ -1015,13 +1015,24 @@ Schreibe einen kompakten deutschen Fließtext in 6-8 Sätzen mit konkreten Zahle
     from google.genai import types
 
     client = genai.Client(api_key=api_key)
-    kwargs = {"model": "gemini-2.0-flash", "contents": prompt}
+    grounded_kwargs = {"model": "gemini-2.0-flash", "contents": prompt}
     try:
-        kwargs["config"] = types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
+        grounded_kwargs["config"] = types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
     except Exception:
         pass  # aeltere SDK-Version ohne Grounding-Tool-Support: ohne Live-Suche weitermachen
-    response = client.models.generate_content(**kwargs)
-    return response.text.strip()
+
+    try:
+        response = client.models.generate_content(**grounded_kwargs)
+        return response.text.strip()
+    except Exception as exc:
+        msg = str(exc)
+        # Google-Search-Grounding laeuft oft ueber ein eigenes, strengeres Kontingent als
+        # normale Textgenerierung. Bei Quota-Fehlern einmal ohne Grounding erneut versuchen,
+        # bevor komplett aufgegeben wird -- lieber eine Analyse ohne Live-Suche als gar keine.
+        if "config" not in grounded_kwargs or not ("RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower() or "429" in msg):
+            raise
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        return response.text.strip()
 
 
 def render_ki_analyse(asset_label: str, symbol: str) -> None:
