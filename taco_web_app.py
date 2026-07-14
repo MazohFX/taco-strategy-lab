@@ -1112,8 +1112,8 @@ def _scan_patterns_cached(
         sqn    = avg_ret / std_ret * np.sqrt(nt) * 100 if std_ret > 1e-10 else np.nan
 
         wr_5j  = (_stats_for_years(y5,  dir_, min_t=3) or {}).get("wr", np.nan)
-        wr_10j = (_stats_for_years(y10, dir_) or {}).get("wr", np.nan)
-        wr_15j = (_stats_for_years(y15, dir_) or {}).get("wr", np.nan)
+        wr_10j = (_stats_for_years(y10, dir_, min_t=max(3, int(10 * 0.6))) or {}).get("wr", np.nan)
+        wr_15j = (_stats_for_years(y15, dir_, min_t=max(3, int(15 * 0.6))) or {}).get("wr", np.nan)
         # Für 20J: wenn nicht genug Daten, alle verfügbaren Jahre nehmen
         wr_20j_raw = (_stats_for_years(y20, dir_) or {}).get("wr", np.nan)
         if not has_20j or np.isnan(wr_20j_raw):
