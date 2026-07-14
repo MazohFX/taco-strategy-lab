@@ -1165,8 +1165,20 @@ def render_top_seasonal_setups(df: pd.DataFrame, active_years: list[int]) -> Non
                 st.markdown(_chance_box_html(right[0], right[1], right[2]), unsafe_allow_html=True)
 
 
+def wilson_ci(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson-Konfidenzintervall für Winrate. Gibt (low, high) als Dezimalwerte zurück."""
+    if n == 0:
+        return (0.0, 1.0)
+    p = wins / n
+    denom = 1 + z**2 / n
+    centre = (p + z**2 / (2 * n)) / denom
+    spread = z * ((p * (1 - p) / n + z**2 / (4 * n**2)) ** 0.5) / denom
+    return (max(0.0, centre - spread), min(1.0, centre + spread))
+
+
 def _compute_stars(wr: float, avg_ret: float, avg_dd: float, max_dd: float,
-                   sharpe: float, robustheit: str, atr_pct: float) -> int:
+                   sharpe: float, robustheit: str, atr_pct: float,
+                   n_trades: int = 10) -> int:
     """1–5 Sterne — Robustheit setzt harte Obergrenze, Rest sind Qualitätspunkte."""
     # Harte Obergrenzen durch Robustheit
     rob_cap = {"🟢 Stark": 5, "✅ Robust": 4, "⚠️ Sensitiv": 3, "❌ Fragil": 2, "—": 3}
@@ -1191,9 +1203,17 @@ def _compute_stars(wr: float, avg_ret: float, avg_dd: float, max_dd: float,
         score += min(25, max(0, sharpe / 3.0 * 25))
 
     # Harte Strafen für schlechtes Profit/Risiko
-    if avg_ret * 100 < 0.4:          max_stars = min(max_stars, 2)  # Zu kleiner Profit → max 2★
-    elif avg_ret * 100 < 0.8:        max_stars = min(max_stars, 3)  # Kleiner Profit → max 3★
-    elif avg_ret * 100 < 1.2:        max_stars = min(max_stars, 4)  # Mittlerer Profit → max 4★
+    if avg_ret * 100 < 0.4:          max_stars = min(max_stars, 2)
+    elif avg_ret * 100 < 0.8:        max_stars = min(max_stars, 3)
+    elif avg_ret * 100 < 1.2:        max_stars = min(max_stars, 4)
+
+    # Wilson-CI Strafe: breites CI = unsichere WR = Sterne begrenzen
+    wins_est = round(wr * n_trades)
+    ci_low, ci_high = wilson_ci(wins_est, n_trades)
+    ci_width = ci_high - ci_low
+    if ci_width > 0.55:    max_stars = min(max_stars, 2)  # sehr unsicher (n<6)
+    elif ci_width > 0.40:  max_stars = min(max_stars, 3)  # unsicher (n≈8)
+    elif ci_width > 0.28:  max_stars = min(max_stars, 4)  # mäßig sicher (n≈12)
 
     # Sterne aus Score: 0–40=1, 40–55=2, 55–70=3, 70–85=4, 85+=5
     if score >= 85:   raw = 5
@@ -1443,7 +1463,7 @@ def _scan_patterns_cached(
             "SQN": round(sqn, 2) if not np.isnan(sqn) else np.nan,
             "Ø ATR %": round(avg_atr_pct, 3) if not np.isnan(avg_atr_pct) else np.nan,
             "Robustheit": robustheit,
-            "⭐ Rating": _compute_stars(wr, avg_ret, avg_dd, max_dd_val, sharpe, robustheit, avg_atr_pct),
+            "⭐ Rating": _compute_stars(wr, avg_ret, avg_dd, max_dd_val, sharpe, robustheit, avg_atr_pct, n_trades=len(primary_trades)),
             "Bester Späteinstieg": best_late_label or "—",
             "WR Späteinstieg %": round(best_late_wr, 1) if best_late_wr is not None else np.nan,
             "_entry_doy": entry_doy,
@@ -2124,17 +2144,23 @@ def _render_muster_detail() -> None:
         n_total  = len(rets)
         if n_total == 0:
             return ""
+        n_wins    = sum(1 for v in rets if v > 0)
         n_stark   = sum(1 for v in rets if v >= _threshold)
         n_schwach = sum(1 for v in rets if 0 <= v < _threshold)
         n_neg     = sum(1 for v in rets if v < 0)
         avg_p     = sum(rets) / n_total
         ok        = avg_p >= _atr_pct_val * 0.25 if _atr_pct_val > 0 else True
         atr_clr   = "#4ade80" if ok else "#f87171"
+        # Wilson-CI für Winrate
+        ci_lo, ci_hi = wilson_ci(n_wins, n_total)
+        ci_w = ci_hi - ci_lo
+        ci_clr = "#4ade80" if ci_w < 0.28 else ("#fbbf24" if ci_w < 0.42 else "#f87171")
+        ci_label = "eng ✓" if ci_w < 0.28 else ("mittel" if ci_w < 0.42 else "breit ⚠")
         return f"""
         <div style="background:#070f1a;border-radius:6px;padding:8px 10px;margin-bottom:4px;">
           <div style="color:#94a3b8;font-size:.68rem;font-weight:700;text-transform:uppercase;
                letter-spacing:.08em;margin-bottom:6px;">{label}</div>
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;">
             <div style="background:#0d1828;border:1px solid #4ade8033;border-radius:6px;padding:7px 10px;">
               <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Stark ≥0.50%</div>
               <div style="color:#4ade80;font-size:1.1rem;font-weight:800;">{n_stark}<span style="color:#6b7fa3;font-size:.8rem;"> / {n_total}J</span></div>
@@ -2150,6 +2176,11 @@ def _render_muster_detail() -> None:
             <div style="background:#0d1828;border:1px solid {atr_clr}33;border-radius:6px;padding:7px 10px;">
               <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Ø Profit vs ATR</div>
               <div style="color:{atr_clr};font-size:1.1rem;font-weight:800;">{avg_p:+.2f}%<span style="color:#6b7fa3;font-size:.72rem;"> / {_atr_pct_val:.2f}%</span></div>
+            </div>
+            <div style="background:#0d1828;border:1px solid {ci_clr}33;border-radius:6px;padding:7px 10px;">
+              <div style="color:#6b7fa3;font-size:.65rem;text-transform:uppercase;">Wilson-CI 95%</div>
+              <div style="color:{ci_clr};font-size:.95rem;font-weight:800;">{ci_lo*100:.0f}–{ci_hi*100:.0f}%</div>
+              <div style="color:{ci_clr};font-size:.65rem;">{ci_label}</div>
             </div>
           </div>
         </div>"""
@@ -2937,6 +2968,12 @@ primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwer
                 _rob_clr    = {"🟢 Stark": "#4ade80", "✅ Robust": "#a3e635", "⚠️ Sensitiv": "#facc15", "❌ Fragil": "#f87171"}.get(_rob_val, "#6b7fa3")
                 _wfa_val    = str(row.get("WFA Status", "") or "— nicht WFA-getestet")
                 _wfa_clr    = {"✅ OOS-validiert": "#4ade80", "⚠️ Nur IS": "#fbbf24"}.get(_wfa_val, "#475569")
+                # Wilson-CI für Übersichtskarte (10J Fenster)
+                _n_10 = round(float(wr_10_val) / 100 * 10) if pd.notna(wr_10_val) else 0
+                _ci_lo_10, _ci_hi_10 = wilson_ci(_n_10, 10) if pd.notna(wr_10_val) else (0.0, 1.0)
+                _ci_w_10 = _ci_hi_10 - _ci_lo_10
+                _ci_clr_10 = "#4ade80" if _ci_w_10 < 0.28 else ("#fbbf24" if _ci_w_10 < 0.42 else "#f87171")
+                _ci_str_10 = f"{_ci_lo_10*100:.0f}–{_ci_hi_10*100:.0f}%" if pd.notna(wr_10_val) else "—"
 
                 # Notiz für dieses Muster laden
                 _nkey = _notes_key(symbol_str, str(row.get("Entry", "")), str(row.get("Exit", "")), richtung)
@@ -2974,6 +3011,7 @@ primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwer
                             <span style="font-size:.95rem;letter-spacing:.02em;">{_star_str}</span>
                             <span style="color:{_rob_clr};font-size:.8rem;font-weight:600;">{_rob_val}</span>
                             <span style="color:{_wfa_clr};font-size:.8rem;font-weight:700;">{_wfa_val}</span>
+                            <span style="color:{_ci_clr_10};font-size:.78rem;font-weight:600;border:1px solid {_ci_clr_10}44;border-radius:3px;padding:1px 6px;">CI {_ci_str_10}</span>
                           </div>
                         </div>""",
                         unsafe_allow_html=True,
