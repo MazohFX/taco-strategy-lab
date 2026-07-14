@@ -1108,17 +1108,26 @@ def render_ki_analyse(asset_label: str, symbol: str) -> None:
     else:
         bias, bias_color = "NEUTRAL", "#94a3b8"
 
+    # Reihenfolge wichtig: erst Zahlen hervorheben, danach **bold** in <strong> umwandeln --
+    # sonst faengt die Zahlen-Regex Ziffern aus dem gerade eingefuegten style="...1.1em"-CSS.
+    highlighted = re.sub(
+        r"(?<![\w.,])(\d{1,3}(?:\.\d{3})*(?:,\d+)?\s?%?)(?!\w)",
+        r'<span style="color:#facc15;font-weight:700;">\1</span>',
+        result,
+    )
+    highlighted = re.sub(r"\*\*(.+?)\*\*", r'<strong style="color:#ffffff;font-size:1.1em;">\1</strong>', highlighted)
+
     st.markdown(
         f"""
         <div style="background:#0d1520;border:1px solid rgba(148,163,184,.10);border-radius:8px;
                     padding:20px 22px 16px 22px;margin:4px 0 16px 0;position:relative;">
-            <span style="position:absolute;top:16px;right:16px;font-size:.70rem;font-weight:700;
+            <span style="position:absolute;top:16px;right:16px;font-size:1.05rem;font-weight:800;
                          color:{bias_color};background:rgba(0,0,0,.4);
-                         border:1px solid {bias_color}55;border-radius:4px;padding:3px 10px;">
+                         border:1px solid {bias_color}55;border-radius:6px;padding:6px 16px;">
                 {bias}
             </span>
-            <div style="font-size:1.15rem;color:#cbd5e1;line-height:1.85;padding-right:80px;">
-                {result}
+            <div style="font-size:1.15rem;color:#cbd5e1;line-height:1.85;padding-right:120px;">
+                {highlighted}
             </div>
             <div style="display:flex;gap:16px;margin-top:14px;padding-top:12px;
                         border-top:1px solid rgba(148,163,184,.07);">
@@ -10133,24 +10142,28 @@ ALPHA_VANTAGE_FUNCTIONS = {
 
 @st.cache_data(ttl=6 * 60 * 60)
 def fetch_alpha_vantage_indicator(function: str, api_key: str) -> pd.DataFrame:
+    # Kein try/except um den Request: Alpha Vantage antwortet bei Rate-Limit/Fehlern mit
+    # HTTP 200 und einem "Note"/"Information"/"Error Message"-Feld statt "data" -- das wuerde
+    # sonst als "keine Daten" fuer die vollen 6h TTL eingefroren (gleiche Falle wie zuvor bei
+    # Gemini). Stattdessen hier explizit erkennen und raisen, damit st.cache_data den
+    # Fehlerzustand NICHT cacht und der naechste Aufruf es erneut versucht.
     if not api_key:
         return pd.DataFrame()
-    try:
-        import requests
+    import requests
 
-        url = f"https://www.alphavantage.co/query?function={function}&apikey={api_key}"
-        response = requests.get(url, timeout=12)
-        response.raise_for_status()
-        payload = response.json()
-        data = payload.get("data", [])
-        if not data:
-            return pd.DataFrame()
-        df = pd.DataFrame(data)
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        df["value"] = pd.to_numeric(df["value"], errors="coerce")
-        return df.dropna(subset=["date", "value"]).sort_values("date")
-    except Exception:
+    url = f"https://www.alphavantage.co/query?function={function}&apikey={api_key}"
+    response = requests.get(url, timeout=12)
+    response.raise_for_status()
+    payload = response.json()
+    if "Note" in payload or "Information" in payload or "Error Message" in payload:
+        raise RuntimeError(payload.get("Note") or payload.get("Information") or payload.get("Error Message"))
+    data = payload.get("data", [])
+    if not data:
         return pd.DataFrame()
+    df = pd.DataFrame(data)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    return df.dropna(subset=["date", "value"]).sort_values("date")
 
 
 def macro_surprise_pct(df: pd.DataFrame) -> float | None:
@@ -10168,7 +10181,10 @@ def compute_news_score(asset: str, api_key: str) -> tuple[float, pd.DataFrame]:
     rows = []
     contributions = []
     for indicator, function in ALPHA_VANTAGE_FUNCTIONS.items():
-        df = fetch_alpha_vantage_indicator(function, api_key)
+        try:
+            df = fetch_alpha_vantage_indicator(function, api_key)
+        except Exception:
+            df = pd.DataFrame()
         surprise = macro_surprise_pct(df)
         direction = DIRECTION_MATRIX.get(indicator, {}).get(asset, 0)
         actual = float(df["value"].iloc[-1]) if surprise is not None else None
@@ -10346,6 +10362,21 @@ def compute_asset_sentiment(asset: str, symbol: str, api_key: str, timeframe: st
         "news_detail": news_detail,
         "price_df": price_df,
     }
+
+
+def _news_detail_row_style(row: pd.Series) -> list[str]:
+    styles = [""] * len(row)
+    actual = row.get("Actual")
+    previous = row.get("Previous")
+    if pd.notna(actual):
+        styles[row.index.get_loc("Actual")] = "color: #f8fafc; font-weight: 700;"
+    if pd.notna(actual) and pd.notna(previous):
+        idx_prev = row.index.get_loc("Previous")
+        if previous < actual:
+            styles[idx_prev] = "color: #f87171; font-weight: 600;"
+        elif previous > actual:
+            styles[idx_prev] = "color: #4ade80; font-weight: 600;"
+    return styles
 
 
 def _impact_color(impact: str) -> str:
@@ -10577,8 +10608,12 @@ def render_extra_makro_sentiment() -> None:
             if not result["cot_available"]:
                 st.caption("COT-Historie fuer dieses Asset gerade nicht verfuegbar.")
             st.markdown("**Makro-Ueberraschungen (Actual vs. Previous)**")
+            st.caption("Actual = weiss. Previous rot = frueherer Wert niedriger als Actual, gruen = frueherer Wert hoeher als Actual.")
             if api_key:
-                st.dataframe(result["news_detail"], use_container_width=True, hide_index=True)
+                st.dataframe(
+                    result["news_detail"].style.apply(_news_detail_row_style, axis=1),
+                    use_container_width=True, hide_index=True,
+                )
             else:
                 st.caption("Kein Alpha-Vantage-Key hinterlegt — Makro-Ueberraschungen nicht verfuegbar.")
             st.caption("Retail-Sentiment: nicht verfuegbar (kein kostenloser, ToS-konformer Anbieter bekannt). Gewicht = 0.")
