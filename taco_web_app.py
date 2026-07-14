@@ -1117,7 +1117,7 @@ def render_ki_analyse(asset_label: str, symbol: str) -> None:
                          border:1px solid {bias_color}55;border-radius:4px;padding:3px 10px;">
                 {bias}
             </span>
-            <div style="font-size:.84rem;color:#cbd5e1;line-height:1.8;padding-right:80px;">
+            <div style="font-size:1.15rem;color:#cbd5e1;line-height:1.85;padding-right:80px;">
                 {result}
             </div>
             <div style="display:flex;gap:16px;margin-top:14px;padding-top:12px;
@@ -9900,7 +9900,18 @@ EXTRA_ASSETS = {
     "DXY":        "DX-Y.NYB",
     "Nasdaq 100": "^NDX",
     "S&P 500":    "^GSPC",
+    "EUR":        "EURUSD=X",
+    "GBP":        "GBPUSD=X",
+    "AUD":        "AUDUSD=X",
+    "NZD":        "NZDUSD=X",
+    "CAD":        "CAD=X",
+    "JPY":        "JPY=X",
 }
+
+# USD-quotierte Ticker (USDCAD/USDJPY): ein Kursanstieg bedeutet eine SCHWAECHERE
+# Fremdwaehrung, daher Momentum/Return fuer diese Assets invertieren (wie in der
+# Waehrungsmatrix, CURRENCY_SYMBOLS weiter unten).
+INVERT_MOMENTUM_ASSETS = {"CAD", "JPY"}
 
 # Reuse der bestehenden COT-Watchlist (COT_WATCHLIST, Zeile ~4088) statt Duplikat.
 ASSET_TO_COT_LABEL = {
@@ -9908,6 +9919,12 @@ ASSET_TO_COT_LABEL = {
     "DXY":        "DXY",
     "Nasdaq 100": "NQ Futures",
     "S&P 500":    "S&P500 Futures",
+    "EUR":        "EURO Futures",
+    "GBP":        "Pfund Futures",
+    "AUD":        "AUD Futures",
+    "NZD":        "NZD Futures",
+    "CAD":        "CANADA Futures",
+    "JPY":        "YEN Futures",
 }
 
 # Zinstermine von Hand gepflegt, Quelle: federalreserve.gov/monetarypolicy/fomccalendars.htm,
@@ -9963,13 +9980,15 @@ BLS_IMPACT = {
 # +1 = Ueberraschung nach oben wirkt bullish fuer das Asset, -1 = bearish.
 # Vereinfachte redaktionelle Faustregel, kein validiertes Modell.
 DIRECTION_MATRIX = {
-    "CPI":                {"Gold": +1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1},
-    "NONFARM_PAYROLL":    {"Gold": -1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1},
-    "UNEMPLOYMENT":       {"Gold": +1, "DXY": -1, "Nasdaq 100": +1, "S&P 500": +1},
-    "FEDERAL_FUNDS_RATE": {"Gold": -1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1},
-    "RETAIL_SALES":       {"Gold": -1, "DXY": +1, "Nasdaq 100": +1, "S&P 500": +1},
-    "REAL_GDP":           {"Gold": -1, "DXY": +1, "Nasdaq 100": +1, "S&P 500": +1},
+    "CPI":                {"Gold": +1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "JPY": -1},
+    "NONFARM_PAYROLL":    {"Gold": -1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "JPY": -1},
+    "UNEMPLOYMENT":       {"Gold": +1, "DXY": -1, "Nasdaq 100": +1, "S&P 500": +1, "EUR": +1, "GBP": +1, "AUD": +1, "NZD": +1, "CAD": +1, "JPY": +1},
+    "FEDERAL_FUNDS_RATE": {"Gold": -1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "JPY": -1},
+    "RETAIL_SALES":       {"Gold": -1, "DXY": +1, "Nasdaq 100": +1, "S&P 500": +1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "JPY": -1},
+    "REAL_GDP":           {"Gold": -1, "DXY": +1, "Nasdaq 100": +1, "S&P 500": +1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "JPY": -1},
 }
+# Fremdwaehrungs-Richtung = -DXY-Richtung (vereinfachte Annahme: Dollarstaerke wirkt
+# symmetrisch gegenlaeufig auf USD-Kreuze). Redaktionelle Faustregel, kein Modell.
 
 
 def classify_bls_impact(release_name: str) -> str:
@@ -10294,8 +10313,15 @@ def sentiment_label(score: float) -> str:
 def compute_asset_sentiment(asset: str, symbol: str, api_key: str, timeframe: str) -> dict:
     price_df = fetch_extra_price_data(symbol)
     returns = price_returns(price_df)
+    invert = asset in INVERT_MOMENTUM_ASSETS
+    day_pct = returns["day_pct"]
+    week_pct = returns["week_pct"]
+    if invert:
+        day_pct = -day_pct if day_pct is not None else None
+        week_pct = -week_pct if week_pct is not None else None
+
     is_today = timeframe == "Heute"
-    pct = returns["day_pct"] if is_today else returns["week_pct"]
+    pct = day_pct if is_today else week_pct
     mom_score = momentum_score(pct, 1.5 if is_today else 3.0)
 
     news_score, news_detail = compute_news_score(asset, api_key)
@@ -10315,8 +10341,8 @@ def compute_asset_sentiment(asset: str, symbol: str, api_key: str, timeframe: st
         "news_score": news_score,
         "cot_score": cot_stats["score"],
         "cot_available": cot_stats["available"],
-        "day_pct": returns["day_pct"],
-        "week_pct": returns["week_pct"],
+        "day_pct": day_pct,
+        "week_pct": week_pct,
         "news_detail": news_detail,
         "price_df": price_df,
     }
@@ -10523,19 +10549,22 @@ def render_extra_makro_sentiment() -> None:
     )
 
     results = {}
-    cols = st.columns(4)
-    for col, (asset, symbol) in zip(cols, EXTRA_ASSETS.items()):
-        result = compute_asset_sentiment(asset, symbol, api_key, timeframe)
-        results[asset] = result
-        with col:
-            ret_label = "Tagesreturn" if timeframe == "Heute" else "Wochenreturn"
-            ret_value = result["day_pct"] if timeframe == "Heute" else result["week_pct"]
-            st.metric(
-                asset,
-                result["label"],
-                f"{ret_value:+.2f}% ({ret_label})" if ret_value is not None else "n/a",
-            )
-            st.caption(f"Score: {result['score']:+.2f}")
+    assets_list = list(EXTRA_ASSETS.items())
+    for row_start in range(0, len(assets_list), 5):
+        row_assets = assets_list[row_start:row_start + 5]
+        cols = st.columns(len(row_assets))
+        for col, (asset, symbol) in zip(cols, row_assets):
+            result = compute_asset_sentiment(asset, symbol, api_key, timeframe)
+            results[asset] = result
+            with col:
+                ret_label = "Tagesreturn" if timeframe == "Heute" else "Wochenreturn"
+                ret_value = result["day_pct"] if timeframe == "Heute" else result["week_pct"]
+                st.metric(
+                    asset,
+                    result["label"],
+                    f"{ret_value:+.2f}% ({ret_label})" if ret_value is not None else "n/a",
+                )
+                st.caption(f"Score: {result['score']:+.2f}")
 
     # ── Abschnitt 3: Detailaufschluesselung ──────────────────────────────────
     st.subheader("🔍 Detailaufschluesselung")
