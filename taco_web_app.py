@@ -2985,7 +2985,22 @@ primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwer
                 _star_str   = "⭐" * _stars_int + "☆" * (5 - _stars_int)
                 _rob_val    = str(row.get("Robustheit", "—"))
                 _rob_clr    = {"🟢 Stark": "#4ade80", "✅ Robust": "#a3e635", "⚠️ Sensitiv": "#facc15", "❌ Fragil": "#f87171"}.get(_rob_val, "#6b7fa3")
-                _wfa_val    = str(row.get("WFA Status", "") or "— nicht WFA-getestet")
+                # WFA-Badge live aus session_state holen
+                _wfa_res_top = st.session_state.get("muster_wfa_result")
+                if _wfa_res_top is not None:
+                    try:
+                        from seasonality_wfa import wfa_badge_for_row
+                        _wfa_val = wfa_badge_for_row(
+                            _wfa_res_top,
+                            symbol=symbol_str,
+                            entry_doy=int(row.get("_entry_doy", 0)),
+                            exit_doy=int(row.get("_exit_doy", 0)),
+                            direction="long" if richtung == "Long" else "short",
+                        ) or "⚠️ Nur IS"
+                    except Exception:
+                        _wfa_val = "— nicht WFA-getestet"
+                else:
+                    _wfa_val = "— nicht WFA-getestet"
                 _wfa_clr    = {"✅ OOS-validiert": "#4ade80", "⚠️ Nur IS": "#fbbf24"}.get(_wfa_val, "#475569")
                 # Wilson-CI für Übersichtskarte (10J Fenster)
                 _n_10 = round(float(wr_10_val) / 100 * 10) if pd.notna(wr_10_val) else 0
