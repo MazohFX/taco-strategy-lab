@@ -10425,11 +10425,11 @@ def render_extra_makro_sentiment() -> None:
 
     # ── Abschnitt 5: CFTC COT Positionierung (bestehendes COT-Modul) ─────────
     st.subheader("📊 CFTC COT Positionierung (Detail)")
-    auto_match_extra_cot = st.checkbox("Auto-match an oben gewaehltes Asset", value=True, key="extra_auto_match_cot")
+    auto_match_extra_cot = st.checkbox("Auto-match an oben gewaehltes Asset", value=False, key="extra_auto_match_cot")
     st.caption(
-        "Wiederverwendung des bestehenden COT-Panels (Non-Commercials / Commercials / Retail Trader). "
-        "Haekchen entfernen, um einen beliebigen COT-Markt manuell auszuwaehlen (z.B. NQ, EURO, CANADA, "
-        "YEN, CHF, Pfund, AUD, NZD Futures, Silver, Copper, Platinum)."
+        "Standardmaessig frei waehlbar (Dropdown direkt unten: NQ, EURO, CANADA, YEN, CHF, Pfund, "
+        "AUD, NZD Futures, Silver, Copper, Platinum, ...). Haekchen aktivieren, um den COT-Markt "
+        "stattdessen automatisch an das oben gewaehlte Chart-Asset zu koppeln."
     )
     render_cot_panel(auto_match_extra_cot, chart_asset, EXTRA_ASSETS[chart_asset])
 
