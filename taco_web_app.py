@@ -10005,18 +10005,73 @@ def fetch_bls_calendar(year: int, month: int) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# BLS blockt automatisierte Requests von vielen Cloud-/Rechenzentrums-IPs (auch Streamlit
+# Cloud) fast immer -- fetch_bls_calendar() liefert dort praktisch nie Daten. FRED (St. Louis
+# Fed) stellt dieselben offiziellen BLS-Release-Termine ueber eine echte, fuer Bots gedachte
+# API bereit und wird nicht geblockt. Braucht einen kostenlosen FRED_API_KEY.
+FRED_RELEASE_IDS = {
+    10: ("Consumer Price Index (CPI)", "High"),
+    50: ("Employment Situation (NFP)", "High"),
+}
+
+
+def get_fred_api_key() -> str:
+    import os
+
+    try:
+        key = st.secrets.get("FRED_API_KEY", "")
+    except Exception:
+        key = ""
+    return key or os.environ.get("FRED_API_KEY", "")
+
+
+@st.cache_data(ttl=12 * 60 * 60)
+def fetch_fred_release_dates(release_id: int, event_name: str, impact: str, api_key: str, start: date, end: date) -> pd.DataFrame:
+    if not api_key:
+        return pd.DataFrame()
+    try:
+        import requests
+
+        params = {
+            "release_id": release_id,
+            "api_key": api_key,
+            "file_type": "json",
+            "realtime_start": start.isoformat(),
+            "realtime_end": end.isoformat(),
+            "include_release_dates_with_no_data": "true",
+        }
+        response = requests.get("https://api.stlouisfed.org/fred/release/dates", params=params, timeout=12)
+        response.raise_for_status()
+        data = response.json()
+        rows = [
+            {"date": pd.to_datetime(d["date"]).date(), "time": "8:30 AM ET", "currency": "USD", "event": event_name, "impact": impact}
+            for d in data.get("release_dates", [])
+        ]
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
 def get_economic_calendar(start: date, end: date) -> pd.DataFrame:
     months = sorted({(start.year, start.month), (end.year, end.month)})
     bls_frames = [fetch_bls_calendar(y, m) for y, m in months]
     bls = pd.concat(bls_frames, ignore_index=True) if any(not f.empty for f in bls_frames) else pd.DataFrame()
 
+    fred_key = get_fred_api_key()
+    fred_frames = [
+        fetch_fred_release_dates(rid, name, impact, fred_key, start, end)
+        for rid, (name, impact) in FRED_RELEASE_IDS.items()
+    ]
+    fred = pd.concat(fred_frames, ignore_index=True) if any(not f.empty for f in fred_frames) else pd.DataFrame()
+
     cb = pd.DataFrame(CENTRAL_BANK_EVENTS)
-    frames = [f for f in (bls, cb) if not f.empty]
+    frames = [f for f in (bls, fred, cb) if not f.empty]
     if not frames:
         return pd.DataFrame(columns=["date", "time", "currency", "event", "impact"])
 
     combined = pd.concat(frames, ignore_index=True)
     combined = combined[(combined["date"] >= start) & (combined["date"] <= end)]
+    combined = combined.drop_duplicates(subset=["date", "event"])
     impact_rank = {"High": 0, "Medium": 1, "Low": 2}
     combined["_rank"] = combined["impact"].map(impact_rank).fillna(3)
     return combined.sort_values(["_rank", "date"]).drop(columns="_rank").reset_index(drop=True)
@@ -10403,9 +10458,11 @@ def render_currency_matrix_section() -> None:
 def render_extra_makro_sentiment() -> None:
     st.markdown("## 🌐 Extra: Makro-Kalender & Sentiment")
     st.caption(
-        "Quellen: BLS-Kalender (Live), FOMC/EZB/BoE-Termine (fest hinterlegt, jaehrlich von Hand aktualisiert), "
-        "Alpha Vantage (nur Actual, kein Forecast/Konsensus — verwendet wird Actual vs. Previous als Naeherung), "
-        "yfinance (Kurse), CFTC COT (Netto-Position + 4-Wochen-Trend)."
+        "Quellen: CPI-/NFP-Termine ueber FRED-API (zuverlaessig, braucht FRED_API_KEY) mit "
+        "BLS-Live-Kalender als Zusatzversuch (wird von Cloud-IPs oft geblockt), FOMC/EZB/BoE-Termine "
+        "(fest hinterlegt, jaehrlich von Hand aktualisiert), Alpha Vantage (nur Actual, kein "
+        "Forecast/Konsensus — verwendet wird Actual vs. Previous als Naeherung), yfinance (Kurse), "
+        "CFTC COT (Netto-Position + 4-Wochen-Trend)."
     )
 
     timeframe = st.radio("Zeitraum", ["Heute", "Diese Woche"], horizontal=True)
@@ -10424,6 +10481,12 @@ def render_extra_makro_sentiment() -> None:
 
     # ── Abschnitt 1: Wirtschaftskalender ─────────────────────────────────────
     st.subheader("📅 Wirtschaftskalender")
+    if not get_fred_api_key():
+        st.info(
+            "Kein FRED_API_KEY hinterlegt — CPI-/NFP-Termine kommen dann nur ueber den "
+            "BLS-Live-Kalender, der von Cloud-IPs (auch Streamlit Cloud) meist geblockt wird. "
+            "Kostenloser Key: fred.stlouisfed.org/docs/api/api_key.html"
+        )
     calendar_df = get_economic_calendar(start, end)
     if calendar_df.empty:
         st.warning("Keine Kalenderdaten verfuegbar (BLS ggf. gerade nicht erreichbar) oder keine Termine im gewaehlten Zeitraum.")
