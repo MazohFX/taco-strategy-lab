@@ -1015,24 +1015,37 @@ Schreibe einen kompakten deutschen Fließtext in 6-8 Sätzen mit konkreten Zahle
     from google.genai import types
 
     client = genai.Client(api_key=api_key)
-    grounded_kwargs = {"model": "gemini-3.5-flash", "contents": prompt}
-    try:
-        grounded_kwargs["config"] = types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
-    except Exception:
-        pass  # aeltere SDK-Version ohne Grounding-Tool-Support: ohne Live-Suche weitermachen
 
-    try:
-        response = client.models.generate_content(**grounded_kwargs)
-        return response.text.strip()
-    except Exception as exc:
-        msg = str(exc)
-        # Google-Search-Grounding laeuft oft ueber ein eigenes, strengeres Kontingent als
-        # normale Textgenerierung. Bei Quota-Fehlern einmal ohne Grounding erneut versuchen,
-        # bevor komplett aufgegeben wird -- lieber eine Analyse ohne Live-Suche als gar keine.
-        if "config" not in grounded_kwargs or not ("RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower() or "429" in msg):
-            raise
-        response = client.models.generate_content(model="gemini-3.5-flash", contents=prompt)
-        return response.text.strip()
+    def _grounding_tool_config():
+        try:
+            return types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
+        except Exception:
+            return None  # aeltere SDK-Version ohne Grounding-Tool-Support
+
+    # Reihenfolge: 1) primaeres Modell mit Live-Suche, 2) dasselbe Modell ohne Grounding
+    # (Grounding laeuft oft ueber ein eigenes, strengeres Kontingent als normale
+    # Textgenerierung -- hilft bei Quota-Fehlern), 3) anderes Modell ganz ohne Grounding
+    # (hilft, wenn genau das primaere Modell gerade ueberlastet ist -- "503 UNAVAILABLE /
+    # high demand" ist ein Kapazitaetsproblem bei Google, kein Konto-/Quota-Problem und
+    # betrifft typischerweise nur ein einzelnes Modell zu einem bestimmten Zeitpunkt).
+    attempts = [
+        {"model": "gemini-3.5-flash", "config": _grounding_tool_config()},
+        {"model": "gemini-3.5-flash", "config": None},
+        {"model": "gemini-2.5-flash", "config": None},
+    ]
+    last_exc: Exception | None = None
+    for i, attempt in enumerate(attempts):
+        kwargs = {"model": attempt["model"], "contents": prompt}
+        if attempt["config"] is not None:
+            kwargs["config"] = attempt["config"]
+        try:
+            response = client.models.generate_content(**kwargs)
+            return response.text.strip()
+        except Exception as exc:
+            last_exc = exc
+            if i == len(attempts) - 1:
+                raise
+    raise last_exc
 
 
 def render_ki_analyse(asset_label: str, symbol: str) -> None:
