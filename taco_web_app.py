@@ -1008,23 +1008,20 @@ Analysiere folgende Bereiche mit aktuellen Zahlen und Fakten:
 
 Schreibe einen kompakten deutschen Fließtext in 6-8 Sätzen mit konkreten Zahlen. Keine Aufzählungen. Beende mit einer klaren Einschätzung: bullish, neutral oder bearish."""
 
-    try:
-        from google import genai
-        from google.genai import types
+    # Kein try/except um den eigentlichen API-Call: st.cache_data cacht nur den
+    # Rueckgabewert, keine Exceptions. Wuerde hier ein Fehler-String zurueckgegeben,
+    # waere der (z.B. eine Quota-Meldung) fuer die vollen 7 Tage eingefroren.
+    from google import genai
+    from google.genai import types
 
-        client = genai.Client(api_key=api_key)
-        kwargs = {"model": "gemini-2.0-flash", "contents": prompt}
-        try:
-            kwargs["config"] = types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
-        except Exception:
-            pass  # aeltere SDK-Version ohne Grounding-Tool-Support: ohne Live-Suche weitermachen
-        response = client.models.generate_content(**kwargs)
-        return response.text.strip()
-    except Exception as exc:
-        msg = str(exc)
-        if "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
-            return "__quota__"
-        return f"__error__{msg}"
+    client = genai.Client(api_key=api_key)
+    kwargs = {"model": "gemini-2.0-flash", "contents": prompt}
+    try:
+        kwargs["config"] = types.GenerateContentConfig(tools=[types.Tool(google_search=types.GoogleSearch())])
+    except Exception:
+        pass  # aeltere SDK-Version ohne Grounding-Tool-Support: ohne Live-Suche weitermachen
+    response = client.models.generate_content(**kwargs)
+    return response.text.strip()
 
 
 def render_ki_analyse(asset_label: str, symbol: str) -> None:
@@ -1080,14 +1077,15 @@ def render_ki_analyse(asset_label: str, symbol: str) -> None:
         _fetch_ki_analyse.clear()
         st.session_state.pop(cache_key, None)
 
-    with st.spinner(f"Claude durchsucht das Web nach aktuellen Daten zu {asset_name}..."):
-        result = _fetch_ki_analyse(symbol, asset_name, api_key)
-
-    if result == "__quota__":
-        st.warning("⏳ Gemini Free-Tier Limit erreicht — bitte 1 Minute warten und dann erneut auf '🔄 Jetzt aktualisieren' klicken.")
-        return
-    if str(result).startswith("__error__"):
-        st.error(f"API-Fehler: {result.replace('__error__', '')}")
+    try:
+        with st.spinner(f"Claude durchsucht das Web nach aktuellen Daten zu {asset_name}..."):
+            result = _fetch_ki_analyse(symbol, asset_name, api_key)
+    except Exception as exc:
+        msg = str(exc)
+        if "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower() or "rate limit" in msg.lower():
+            st.warning(f"⏳ Gemini Rate-Limit/Quota erreicht — bitte kurz warten und erneut versuchen. Rohfehler: {msg[:300]}")
+        else:
+            st.error(f"API-Fehler: {msg[:500]}")
         return
 
     result_lower = result.lower()
@@ -4328,6 +4326,7 @@ def render_cot_panel(auto_match: bool, asset_label: str | None, asset_symbol: st
         index=list(options.keys()).index(default_selection) if default_selection in options else 0,
         disabled=auto_match,
         help="COT-Daten sind Wochen-Daten. Die Auswahl betrifft nur das Positionierungs-Panel, nicht TACO.",
+        key="cot_market_select",
     )
     selected_market = options[selected_label]
     if auto_match:
