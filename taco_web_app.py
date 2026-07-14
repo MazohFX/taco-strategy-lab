@@ -1576,6 +1576,18 @@ def _render_muster_detail() -> None:
             f'</div>'
         )
 
+    # Wilson-CI für Header (beste verfügbare WR: 20J > 10J > 5J)
+    _hdr_wr = wr_20 if pd.notna(wr_20) else (wr_10 if pd.notna(wr_10) else (wr_5 if pd.notna(wr_5) else None))
+    _hdr_n  = 20 if pd.notna(wr_20) else (10 if pd.notna(wr_10) else 5)
+    if _hdr_wr is not None:
+        _ci_hdr_lo, _ci_hdr_hi = wilson_ci(round(_hdr_wr / 100 * _hdr_n), _hdr_n)
+        _ci_hdr_lo *= 100; _ci_hdr_hi *= 100
+        _ci_hdr_w = _ci_hdr_hi - _ci_hdr_lo
+        _ci_hdr_clr   = "#4ade80" if _ci_hdr_w < 28 else ("#fbbf24" if _ci_hdr_w < 42 else "#f87171")
+        _ci_hdr_label = "eng ✓" if _ci_hdr_w < 28 else ("mittel" if _ci_hdr_w < 42 else "breit ⚠")
+    else:
+        _ci_hdr_lo, _ci_hdr_hi, _ci_hdr_clr, _ci_hdr_label = 0, 100, "#6b7fa3", "—"
+
     st.markdown(
         f"""<div style="background:#0d1520;border:1px solid rgba(148,163,184,.15);
         border-radius:10px;padding:20px 24px;margin-bottom:20px;">
@@ -1584,9 +1596,16 @@ def _render_muster_detail() -> None:
           <span style="background:{farbe}22;border:1px solid {farbe}55;border-radius:5px;
             padding:4px 12px;color:{farbe};font-weight:800;font-size:1rem;">{pfeil} {richtung}</span>
           <span style="color:#6b7fa3;font-size:1rem;">📅 {row['Entry']} → {row['Exit']} &nbsp;·&nbsp; ⏱ {row['Haltedauer (TD)']} Handelstage</span>
-          <span style="margin-left:auto;background:{star_clr}18;border:1px solid {star_clr}44;
-            border-radius:8px;padding:5px 14px;font-size:1.15rem;letter-spacing:2px;"
-            title="{stars}/5 Sterne">{star_str}</span>
+          <div style="margin-left:auto;display:flex;flex-direction:column;align-items:center;gap:4px;">
+            <span style="background:{star_clr}18;border:1px solid {star_clr}44;
+              border-radius:8px;padding:5px 14px;font-size:1.15rem;letter-spacing:2px;"
+              title="{stars}/5 Sterne">{star_str}</span>
+            <span style="color:{_ci_hdr_clr};font-size:.72rem;font-weight:700;
+              background:{_ci_hdr_clr}15;border:1px solid {_ci_hdr_clr}44;
+              border-radius:5px;padding:2px 8px;white-space:nowrap;">
+              CI {_ci_hdr_lo:.0f}–{_ci_hdr_hi:.0f}% · {_ci_hdr_label}
+            </span>
+          </div>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
           {_badge("WR 5J", f"{wr_5:.1f}%" if pd.notna(wr_5) else "—", "#f0c040", True)}
