@@ -10663,7 +10663,274 @@ def render_extra_makro_sentiment() -> None:
     render_ki_analyse(chart_asset, EXTRA_ASSETS[chart_asset])
 
 
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "Extra: Makro & Sentiment"], horizontal=False, label_visibility="collapsed")
+# ── Extra: COT Commercials vs. Non-Commercials Edge-Analyse ──────────────────
+# Prueft je FX-Future-Paar, ob die Positionierung der Commercials (Hedger) oder
+# der Non-Commercials (grosse Spekulanten) historisch die hoehere Aussagekraft
+# fuer die nachfolgende Kursbewegung hatte. Nutzt die komplette Legacy-COT-
+# Historie (nicht nur die letzten 5 Wochen wie fetch_cot_history oben), daher
+# eigene Fetch-Funktionen statt Wiederverwendung von fetch_cot_history/
+# cot_bias_score -- COT_SOCRATA_URL (Konstante oben) wird geteilt.
+
+COT_EDGE_CONTRACTS = {
+    "EUR/USD (Euro FX)": {"cftc_name": "EURO FX - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6E=F"},
+    "GBP/USD (British Pound)": {"cftc_name": "BRITISH POUND STERLING - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6B=F"},
+    "USD/JPY (Japanese Yen)": {"cftc_name": "JAPANESE YEN - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6J=F"},
+    "USD/CHF (Swiss Franc)": {"cftc_name": "SWISS FRANC - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6S=F"},
+    "USD/CAD (Canadian Dollar)": {"cftc_name": "CANADIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6C=F"},
+    "AUD/USD (Australian Dollar)": {"cftc_name": "AUSTRALIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6A=F"},
+    "NZD/USD (New Zealand Dollar)": {"cftc_name": "NZ DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6N=F"},
+    "USD/MXN (Mexican Peso)": {"cftc_name": "MEXICAN PESO - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6M=F"},
+    "USD Index (DXY)": {"cftc_name": "USD INDEX - ICE FUTURES U.S.", "yahoo_ticker": "DX=F"},
+}
+
+
+@st.cache_data(ttl=24 * 60 * 60)
+def _fetch_cot_edge_history(cftc_name: str, start_year: int) -> pd.DataFrame:
+    """Laedt die komplette Legacy-COT-Historie (Comm + Non-Comm, normiert auf % Open Interest)."""
+    try:
+        import requests
+
+        params = {
+            "$where": f"market_and_exchange_names = '{cftc_name}' "
+                      f"AND report_date_as_yyyy_mm_dd >= '{start_year}-01-01T00:00:00.000'",
+            "$select": "report_date_as_yyyy_mm_dd,comm_positions_long_all,"
+                       "comm_positions_short_all,noncomm_positions_long_all,"
+                       "noncomm_positions_short_all,open_interest_all",
+            "$order": "report_date_as_yyyy_mm_dd ASC",
+            "$limit": 5000,
+        }
+        response = requests.get(COT_SOCRATA_URL, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data)
+        df["report_date"] = pd.to_datetime(df["report_date_as_yyyy_mm_dd"]).dt.tz_localize(None)
+        numeric_cols = [
+            "comm_positions_long_all", "comm_positions_short_all",
+            "noncomm_positions_long_all", "noncomm_positions_short_all",
+            "open_interest_all",
+        ]
+        for c in numeric_cols:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        df["net_comm"] = df["comm_positions_long_all"] - df["comm_positions_short_all"]
+        df["net_noncomm"] = df["noncomm_positions_long_all"] - df["noncomm_positions_short_all"]
+        df["net_comm_pct"] = df["net_comm"] / df["open_interest_all"]
+        df["net_noncomm_pct"] = df["net_noncomm"] / df["open_interest_all"]
+
+        return df[["report_date", "net_comm_pct", "net_noncomm_pct", "open_interest_all"]].sort_values("report_date")
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=24 * 60 * 60)
+def _fetch_cot_edge_price(yahoo_ticker: str, start_year: int) -> pd.DataFrame:
+    try:
+        import yfinance as yf
+
+        px = yf.download(yahoo_ticker, start=f"{start_year}-01-01", auto_adjust=True, progress=False)
+        if px.empty:
+            return pd.DataFrame()
+        if isinstance(px.columns, pd.MultiIndex):
+            px.columns = px.columns.get_level_values(0)
+        px = px[["Close"]].reset_index().rename(columns={"Date": "date", "Close": "close"})
+        px["date"] = pd.to_datetime(px["date"]).dt.tz_localize(None)
+        return px
+    except Exception:
+        return pd.DataFrame()
+
+
+@dataclass
+class CotEdgeResult:
+    pair: str
+    n_obs: int
+    corr_comm: float
+    corr_noncomm: float
+    hitrate_comm_level: float
+    hitrate_noncomm_level: float
+    hitrate_comm_momentum: float
+    hitrate_noncomm_momentum: float
+    winner_level: str
+    winner_momentum: str
+    n_extreme: int
+    hitrate_comm_extreme: float
+    hitrate_noncomm_extreme: float
+    winner_extreme: str
+
+
+def _analyze_cot_edge_pair(cot_df: pd.DataFrame, price_df: pd.DataFrame, pair_name: str,
+                            horizon_weeks: int, zscore_window: int = 52,
+                            extreme_zscore: float = 1.0):
+    """
+    Fuer jeden COT-Report-Termin:
+      - Signal-Kurs = naechster Handelstag ab report_date + 3 Kalendertage (~Freitag Report-Tag)
+      - Forward Return = Kurs `horizon_weeks` COT-Termine spaeter / Signal-Kurs - 1
+      - Level-Signal = Vorzeichen des rollierenden z-Score der Netto-Position (% OI)
+      - Momentum-Signal = Vorzeichen der Wochenveraenderung der Netto-Position
+      - Trefferquote = Anteil der Faelle, in denen Signal-Vorzeichen == Vorzeichen des Forward Return
+      - Divergenz-Test: Trefferquote nur fuer Wochen mit |z-Score| >= extreme_zscore
+    """
+    if cot_df.empty or price_df.empty:
+        return None
+
+    df = cot_df.copy().sort_values("report_date").reset_index(drop=True)
+    price_df = price_df.sort_values("date").reset_index(drop=True)
+    df["signal_date"] = df["report_date"] + pd.Timedelta(days=3)
+    df = pd.merge_asof(
+        df.sort_values("signal_date"), price_df.rename(columns={"date": "signal_date"}),
+        on="signal_date", direction="forward",
+    ).rename(columns={"close": "signal_price"})
+    df = df.sort_values("report_date").reset_index(drop=True)
+
+    df["future_price"] = df["signal_price"].shift(-horizon_weeks)
+    df["fwd_return"] = df["future_price"] / df["signal_price"] - 1
+
+    for col in ["net_comm_pct", "net_noncomm_pct"]:
+        roll_mean = df[col].rolling(zscore_window, min_periods=13).mean()
+        roll_std = df[col].rolling(zscore_window, min_periods=13).std()
+        df[f"{col}_z"] = (df[col] - roll_mean) / roll_std
+
+    df["net_comm_pct_chg"] = df["net_comm_pct"].diff()
+    df["net_noncomm_pct_chg"] = df["net_noncomm_pct"].diff()
+
+    df = df.dropna(subset=["fwd_return", "net_comm_pct_z", "net_noncomm_pct_z",
+                            "net_comm_pct_chg", "net_noncomm_pct_chg"])
+    if len(df) < 30:
+        return None
+
+    ret_sign = np.sign(df["fwd_return"])
+
+    def hit_rate(signal: pd.Series) -> float:
+        sig_sign = np.sign(signal)
+        valid = sig_sign != 0
+        return float((sig_sign[valid] == ret_sign[valid]).mean() * 100)
+
+    hitrate_comm_level = hit_rate(df["net_comm_pct_z"])
+    hitrate_noncomm_level = hit_rate(df["net_noncomm_pct_z"])
+    hitrate_comm_mom = hit_rate(df["net_comm_pct_chg"])
+    hitrate_noncomm_mom = hit_rate(df["net_noncomm_pct_chg"])
+
+    corr_comm = float(df["net_comm_pct_z"].corr(df["fwd_return"]))
+    corr_noncomm = float(df["net_noncomm_pct_z"].corr(df["fwd_return"]))
+
+    extreme_comm = df[df["net_comm_pct_z"].abs() >= extreme_zscore]
+    extreme_noncomm = df[df["net_noncomm_pct_z"].abs() >= extreme_zscore]
+
+    def hit_rate_subset(sub: pd.DataFrame, col: str) -> float:
+        if len(sub) < 10:
+            return float("nan")
+        sig_sign = np.sign(sub[col])
+        sub_ret_sign = np.sign(sub["fwd_return"])
+        valid = sig_sign != 0
+        return float((sig_sign[valid] == sub_ret_sign[valid]).mean() * 100)
+
+    hitrate_comm_extreme = hit_rate_subset(extreme_comm, "net_comm_pct_z")
+    hitrate_noncomm_extreme = hit_rate_subset(extreme_noncomm, "net_noncomm_pct_z")
+    n_extreme = min(len(extreme_comm), len(extreme_noncomm))
+
+    if np.isnan(hitrate_comm_extreme) and np.isnan(hitrate_noncomm_extreme):
+        winner_extreme = "zu wenig Extremwerte"
+    elif np.isnan(hitrate_comm_extreme):
+        winner_extreme = "Non-Commercials"
+    elif np.isnan(hitrate_noncomm_extreme):
+        winner_extreme = "Commercials"
+    else:
+        winner_extreme = "Commercials" if hitrate_comm_extreme >= hitrate_noncomm_extreme else "Non-Commercials"
+
+    return CotEdgeResult(
+        pair=pair_name,
+        n_obs=len(df),
+        corr_comm=corr_comm,
+        corr_noncomm=corr_noncomm,
+        hitrate_comm_level=hitrate_comm_level,
+        hitrate_noncomm_level=hitrate_noncomm_level,
+        hitrate_comm_momentum=hitrate_comm_mom,
+        hitrate_noncomm_momentum=hitrate_noncomm_mom,
+        winner_level="Commercials" if hitrate_comm_level >= hitrate_noncomm_level else "Non-Commercials",
+        winner_momentum="Commercials" if hitrate_comm_mom >= hitrate_noncomm_mom else "Non-Commercials",
+        n_extreme=n_extreme,
+        hitrate_comm_extreme=hitrate_comm_extreme,
+        hitrate_noncomm_extreme=hitrate_noncomm_extreme,
+        winner_extreme=winner_extreme,
+    )
+
+
+def render_extra_cot_edge_analysis() -> None:
+    st.markdown("## 🔬 Extra: COT Commercials vs. Non-Commercials")
+    st.caption(
+        "Statistisches Werkzeug, keine Anlageberatung. Prueft je FX-Future-Paar, ob die "
+        "Positionierung der Commercials (Hedger) oder der Non-Commercials (grosse Spekulanten) "
+        "im CFTC-COT-Report historisch die hoehere Trefferquote fuer die nachfolgende "
+        "Kursbewegung hatte. Ergebnisse haengen stark von Zeitraum/Horizont ab und sind nicht "
+        "garantiert stabil in der Zukunft. Quellen: CFTC Socrata-API (Legacy Futures Only) + yfinance."
+    )
+
+    col1, col2, col3 = st.columns(3)
+    start_year = col1.number_input("Startjahr", min_value=1986, max_value=date.today().year, value=2006, step=1, key="cot_edge_start_year")
+    horizon_weeks = col2.number_input("Horizont (COT-Wochen)", min_value=1, max_value=12, value=1, step=1, key="cot_edge_horizon")
+    extreme_zscore = col3.number_input("Extrem-Schwelle (z-Score)", min_value=0.5, max_value=3.0, value=1.0, step=0.1, key="cot_edge_extreme_z")
+
+    pair_names = list(COT_EDGE_CONTRACTS.keys())
+    selected_pairs = st.multiselect("Paare", pair_names, default=pair_names, key="cot_edge_pairs")
+
+    if st.button("Analyse starten", key="cot_edge_run") and selected_pairs:
+        results: list[CotEdgeResult] = []
+        progress = st.progress(0.0)
+        status = st.empty()
+        for i, pair_name in enumerate(selected_pairs):
+            meta = COT_EDGE_CONTRACTS[pair_name]
+            status.text(f"Lade Daten fuer {pair_name} ...")
+            cot_df = _fetch_cot_edge_history(meta["cftc_name"], int(start_year))
+            price_df = _fetch_cot_edge_price(meta["yahoo_ticker"], int(start_year))
+            res = _analyze_cot_edge_pair(cot_df, price_df, pair_name, int(horizon_weeks),
+                                          extreme_zscore=float(extreme_zscore))
+            if res is not None:
+                results.append(res)
+            progress.progress((i + 1) / len(selected_pairs))
+        status.empty()
+        progress.empty()
+        st.session_state["cot_edge_results"] = results
+        if not results:
+            st.warning("Keine Ergebnisse — zu wenig Daten fuer die gewaehlten Paare/Zeitraum.")
+
+    results = st.session_state.get("cot_edge_results", [])
+    if not results:
+        st.info("Noch keine Analyse gelaufen — Paare waehlen und 'Analyse starten' klicken.")
+        return
+
+    out = pd.DataFrame([{
+        "Paar": r.pair,
+        "N": r.n_obs,
+        "Trefferquote Comm. (Level) %": round(r.hitrate_comm_level, 1),
+        "Trefferquote Non-Comm. (Level) %": round(r.hitrate_noncomm_level, 1),
+        "Sieger (Level)": r.winner_level,
+        "Trefferquote Comm. (Momentum) %": round(r.hitrate_comm_momentum, 1),
+        "Trefferquote Non-Comm. (Momentum) %": round(r.hitrate_noncomm_momentum, 1),
+        "Sieger (Momentum)": r.winner_momentum,
+        "N (extreme Wochen)": r.n_extreme,
+        "Trefferquote Comm. (Extrem) %": "n/a" if np.isnan(r.hitrate_comm_extreme) else round(r.hitrate_comm_extreme, 1),
+        "Trefferquote Non-Comm. (Extrem) %": "n/a" if np.isnan(r.hitrate_noncomm_extreme) else round(r.hitrate_noncomm_extreme, 1),
+        "Sieger (Extrem)": r.winner_extreme,
+        "Korr. Comm.": round(r.corr_comm, 3),
+        "Korr. Non-Comm.": round(r.corr_noncomm, 3),
+    } for r in results])
+
+    st.subheader("📊 Ergebnis je Paar")
+    st.dataframe(out, use_container_width=True, hide_index=True)
+
+    csv_bytes = out.to_csv(index=False).encode("utf-8")
+    st.download_button("CSV herunterladen", data=csv_bytes, file_name="cot_edge_analysis.csv", mime="text/csv")
+
+    st.subheader("🏆 Zusammenfassung")
+    for label, col_name in [("Level-Signal", "Sieger (Level)"), ("Momentum-Signal", "Sieger (Momentum)"), ("Extrem-Divergenz", "Sieger (Extrem)")]:
+        counts = out[col_name].value_counts()
+        summary = ", ".join(f"{k}: {v}" for k, v in counts.items())
+        st.caption(f"**{label}** — {summary}")
+
+
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "Extra: Makro & Sentiment", "Extra: COT Commercials vs. Spekulanten"], horizontal=False, label_visibility="collapsed")
 
 if test_mode == "Seasonality Lab":
     render_seasonality_lab()
@@ -10691,6 +10958,10 @@ if test_mode == "DAX EMA Strategie":
 
 if test_mode == "Extra: Makro & Sentiment":
     render_extra_makro_sentiment()
+    st.stop()
+
+if test_mode == "Extra: COT Commercials vs. Spekulanten":
+    render_extra_cot_edge_analysis()
     st.stop()
 
 with st.sidebar:
