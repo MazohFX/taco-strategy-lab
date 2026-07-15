@@ -10923,17 +10923,104 @@ def render_extra_cot_edge_analysis() -> None:
         "Korr. Non-Comm.": round(r.corr_noncomm, 3),
     } for r in results])
 
+    COT_EDGE_COMM_COLOR = "#e8a23d"
+    COT_EDGE_NONCOMM_COLOR = "#62c8e8"
+
+    # ── Grafik: Trefferquote je Paar (Level-Signal) ──────────────────────────
+    st.subheader("📈 Trefferquote je Paar — Level-Signal")
+    chart_pairs = [r.pair for r in results]
+    comm_vals = [round(r.hitrate_comm_level, 1) for r in results]
+    noncomm_vals = [round(r.hitrate_noncomm_level, 1) for r in results]
+    axis_max = max([65.0, *comm_vals, *noncomm_vals]) + 8
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        y=chart_pairs, x=comm_vals, name="Commercials", orientation="h",
+        marker_color=COT_EDGE_COMM_COLOR, text=[f"{v:.1f}%" for v in comm_vals], textposition="outside",
+    ))
+    fig.add_trace(go.Bar(
+        y=chart_pairs, x=noncomm_vals, name="Non-Commercials", orientation="h",
+        marker_color=COT_EDGE_NONCOMM_COLOR, text=[f"{v:.1f}%" for v in noncomm_vals], textposition="outside",
+    ))
+    fig.add_vline(x=50, line_dash="dash", line_color="#475569")
+    fig.add_annotation(x=50, y=1.0, yref="paper", yanchor="bottom", showarrow=False,
+                        text="50% = Zufall", font={"color": "#94a3b8", "size": 10})
+    fig.update_layout(
+        barmode="group", template="plotly_dark",
+        paper_bgcolor="#111923", plot_bgcolor="#111923",
+        font={"color": "#cbd5e1", "size": 12},
+        height=max(340, 95 * len(chart_pairs)),
+        margin=dict(l=10, r=10, t=40, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis=dict(title="Trefferquote %", range=[0, axis_max], gridcolor="rgba(148,163,184,.12)",
+                    tickfont={"color": "#94a3b8", "size": 11}),
+        yaxis=dict(tickfont={"color": "#e2e8f0", "size": 12}, automargin=True),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Tabellen: kompakt je Signal-Typ, kein horizontales Scrollen noetig ──
     st.subheader("📊 Ergebnis je Paar")
-    st.dataframe(out, use_container_width=True, hide_index=True)
+
+    pct_cols = ["Commercials %", "Non-Commercials %"]
+
+    def _highlight_winner(df: pd.DataFrame, col: str):
+        def _color(v):
+            if v == "Commercials":
+                return f"color:{COT_EDGE_COMM_COLOR};font-weight:700"
+            if v == "Non-Commercials":
+                return f"color:{COT_EDGE_NONCOMM_COLOR};font-weight:700"
+            return ""
+        styler = df.style.map(_color, subset=[col])
+        # explizite Formatierung noetig, da die Extrem-Tabelle "n/a"-Strings mit floats mischt
+        # (object-dtype) -- ohne .format() zeigt Styler sonst 6 statt 1 Nachkommastelle.
+        fmt = {c: (lambda v: v if isinstance(v, str) else f"{v:.1f}") for c in pct_cols if c in df.columns}
+        return styler.format(fmt)
+
+    tab_level, tab_momentum, tab_extreme, tab_raw = st.tabs(
+        ["Level-Signal", "Momentum-Signal", "Extrem-Divergenz", "Alle Rohdaten"]
+    )
+
+    with tab_level:
+        level_df = pd.DataFrame([{
+            "Paar": r.pair, "N": r.n_obs,
+            "Commercials %": round(r.hitrate_comm_level, 1),
+            "Non-Commercials %": round(r.hitrate_noncomm_level, 1),
+            "Sieger": r.winner_level,
+        } for r in results])
+        st.dataframe(_highlight_winner(level_df, "Sieger"), use_container_width=True, hide_index=True)
+
+    with tab_momentum:
+        momentum_df = pd.DataFrame([{
+            "Paar": r.pair, "N": r.n_obs,
+            "Commercials %": round(r.hitrate_comm_momentum, 1),
+            "Non-Commercials %": round(r.hitrate_noncomm_momentum, 1),
+            "Sieger": r.winner_momentum,
+        } for r in results])
+        st.dataframe(_highlight_winner(momentum_df, "Sieger"), use_container_width=True, hide_index=True)
+
+    with tab_extreme:
+        extreme_df = pd.DataFrame([{
+            "Paar": r.pair, "N (extrem)": r.n_extreme,
+            "Commercials %": "n/a" if np.isnan(r.hitrate_comm_extreme) else round(r.hitrate_comm_extreme, 1),
+            "Non-Commercials %": "n/a" if np.isnan(r.hitrate_noncomm_extreme) else round(r.hitrate_noncomm_extreme, 1),
+            "Sieger": r.winner_extreme,
+        } for r in results])
+        st.dataframe(_highlight_winner(extreme_df, "Sieger"), use_container_width=True, hide_index=True)
+
+    with tab_raw:
+        st.dataframe(out, use_container_width=True, hide_index=True)
 
     csv_bytes = out.to_csv(index=False).encode("utf-8")
     st.download_button("CSV herunterladen", data=csv_bytes, file_name="cot_edge_analysis.csv", mime="text/csv")
 
     st.subheader("🏆 Zusammenfassung")
-    for label, col_name in [("Level-Signal", "Sieger (Level)"), ("Momentum-Signal", "Sieger (Momentum)"), ("Extrem-Divergenz", "Sieger (Extrem)")]:
+    summary_cols = st.columns(3)
+    for col, (label, col_name) in zip(summary_cols, [
+        ("Level-Signal", "Sieger (Level)"), ("Momentum-Signal", "Sieger (Momentum)"), ("Extrem-Divergenz", "Sieger (Extrem)"),
+    ]):
         counts = out[col_name].value_counts()
-        summary = ", ".join(f"{k}: {v}" for k, v in counts.items())
-        st.caption(f"**{label}** — {summary}")
+        winner = counts.idxmax()
+        col.metric(label, winner, f"{counts.max()} von {len(out)} Paaren")
 
 
 test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "Extra: Makro & Sentiment", "Extra: COT Commercials vs. Spekulanten"], horizontal=False, label_visibility="collapsed")
