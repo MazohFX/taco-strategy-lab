@@ -1341,6 +1341,22 @@ def _render_muster_detail() -> None:
     )
     st.markdown(_rob_legend, unsafe_allow_html=True)
 
+    st.markdown("""
+<div style='background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:18px 22px;margin-bottom:22px;'>
+  <div style='color:#94a3b8;font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px;'>Was macht der CI-Test?</div>
+  <div style='color:#6b7fa3;font-size:.85rem;line-height:1.65;'>
+    Der <strong style='color:#cbd5e1;'>Konfidenzintervall-Test (CI)</strong> beantwortet eine einfache Frage:
+    <em style='color:#94a3b8;'>„Ist die gemessene Winrate wirklich ein echtes Muster — oder könnte sie auch zufällig entstanden sein?"</em>
+    <br><br>
+    Stell dir vor, du wirfst eine Münze 10 Mal und bekommst 7× Kopf. Das sieht nach 70% Winrate aus — aber mit nur 10 Würfen könnte das purer Zufall sein.
+    Genau das prüft der CI-Test: Er berechnet einen <strong style='color:#cbd5e1;'>Bereich</strong> (z.B. 35–93%), in dem die echte Wahrscheinlichkeit mit 95% Sicherheit liegt.
+    Enthält dieser Bereich die 50%-Marke, ist das Muster statistisch <strong style='color:#f87171;'>nicht von Zufall unterscheidbar</strong>.
+    <br><br>
+    Je mehr Trades (Jahre) ein Muster hat und je höher die Winrate, desto <strong style='color:#4ade80;'>enger und positiver</strong> wird das Intervall —
+    und desto sicherer kannst du sein, dass das Muster real ist und kein Datenzufall.
+  </div>
+</div>""", unsafe_allow_html=True)
+
     _ci_legend = (
         "<div style='background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:18px 22px;margin-bottom:22px;'>"
         "<div style='color:#94a3b8;font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px;'>Konfidenzintervall (CI) · Legende</div>"
