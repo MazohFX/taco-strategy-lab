@@ -10706,7 +10706,7 @@ def _fetch_cot_edge_history(cftc_name: str, start_year: int) -> pd.DataFrame:
             return pd.DataFrame()
 
         df = pd.DataFrame(data)
-        df["report_date"] = pd.to_datetime(df["report_date_as_yyyy_mm_dd"]).dt.tz_localize(None)
+        df["report_date"] = pd.to_datetime(df["report_date_as_yyyy_mm_dd"]).dt.tz_localize(None).astype("datetime64[ns]")
         numeric_cols = [
             "comm_positions_long_all", "comm_positions_short_all",
             "noncomm_positions_long_all", "noncomm_positions_short_all",
@@ -10736,7 +10736,7 @@ def _fetch_cot_edge_price(yahoo_ticker: str, start_year: int) -> pd.DataFrame:
         if isinstance(px.columns, pd.MultiIndex):
             px.columns = px.columns.get_level_values(0)
         px = px[["Close"]].reset_index().rename(columns={"Date": "date", "Close": "close"})
-        px["date"] = pd.to_datetime(px["date"]).dt.tz_localize(None)
+        px["date"] = pd.to_datetime(px["date"]).dt.tz_localize(None).astype("datetime64[ns]")
         return px
     except Exception:
         return pd.DataFrame()
@@ -10778,6 +10778,9 @@ def _analyze_cot_edge_pair(cot_df: pd.DataFrame, price_df: pd.DataFrame, pair_na
     df = cot_df.copy().sort_values("report_date").reset_index(drop=True)
     price_df = price_df.sort_values("date").reset_index(drop=True)
     df["signal_date"] = df["report_date"] + pd.Timedelta(days=3)
+    # signal_date muss exakt datetime64[ns] sein (siehe astype in den fetch-Funktionen oben) --
+    # pandas 3.x lehnt merge_asof zwischen z.B. datetime64[us] und datetime64[s] als
+    # "incompatible merge keys" ab, obwohl beide Seiten sortierte, NaT-freie Datumsspalten sind.
     df = pd.merge_asof(
         df.sort_values("signal_date"), price_df.rename(columns={"date": "signal_date"}),
         on="signal_date", direction="forward",
