@@ -10672,15 +10672,15 @@ def render_extra_makro_sentiment() -> None:
 # cot_bias_score -- COT_SOCRATA_URL (Konstante oben) wird geteilt.
 
 COT_EDGE_CONTRACTS = {
-    "EUR/USD (Euro FX)": {"cftc_name": "EURO FX - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6E=F"},
-    "GBP/USD (British Pound)": {"cftc_name": "BRITISH POUND STERLING - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6B=F"},
-    "USD/JPY (Japanese Yen)": {"cftc_name": "JAPANESE YEN - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6J=F"},
-    "USD/CHF (Swiss Franc)": {"cftc_name": "SWISS FRANC - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6S=F"},
-    "USD/CAD (Canadian Dollar)": {"cftc_name": "CANADIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6C=F"},
-    "AUD/USD (Australian Dollar)": {"cftc_name": "AUSTRALIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6A=F"},
-    "NZD/USD (New Zealand Dollar)": {"cftc_name": "NZ DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6N=F"},
-    "USD/MXN (Mexican Peso)": {"cftc_name": "MEXICAN PESO - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6M=F"},
-    "USD Index (DXY)": {"cftc_name": "USD INDEX - ICE FUTURES U.S.", "yahoo_ticker": "DX=F"},
+    "EUR/USD (CME Euro-FX-Future, Proxy)": {"cftc_name": "EURO FX - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6E=F"},
+    "GBP/USD (CME British-Pound-Future, Proxy)": {"cftc_name": "BRITISH POUND STERLING - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6B=F"},
+    "USD/JPY (CME Yen-Future, Proxy)": {"cftc_name": "JAPANESE YEN - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6J=F"},
+    "USD/CHF (CME Franken-Future, Proxy)": {"cftc_name": "SWISS FRANC - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6S=F"},
+    "USD/CAD (CME Kanada-Dollar-Future, Proxy)": {"cftc_name": "CANADIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6C=F"},
+    "AUD/USD (CME Australien-Dollar-Future, Proxy)": {"cftc_name": "AUSTRALIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6A=F"},
+    "NZD/USD (CME Neuseeland-Dollar-Future, Proxy)": {"cftc_name": "NZ DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6N=F"},
+    "USD/MXN (CME Peso-Future, Proxy)": {"cftc_name": "MEXICAN PESO - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6M=F"},
+    "USD Index (ICE DXY-Future, Proxy)": {"cftc_name": "USD INDEX - ICE FUTURES U.S.", "yahoo_ticker": "DX=F"},
 }
 
 
@@ -10860,11 +10860,14 @@ def _analyze_cot_edge_pair(cot_df: pd.DataFrame, price_df: pd.DataFrame, pair_na
 def render_extra_cot_edge_analysis() -> None:
     st.markdown("## 🔬 Extra: COT Commercials vs. Non-Commercials")
     st.caption(
-        "Statistisches Werkzeug, keine Anlageberatung. Prueft je FX-Future-Paar, ob die "
+        "Statistisches Werkzeug, keine Anlageberatung. Prueft je Waehrungspaar, ob die "
         "Positionierung der Commercials (Hedger) oder der Non-Commercials (grosse Spekulanten) "
         "im CFTC-COT-Report historisch die hoehere Trefferquote fuer die nachfolgende "
-        "Kursbewegung hatte. Ergebnisse haengen stark von Zeitraum/Horizont ab und sind nicht "
-        "garantiert stabil in der Zukunft. Quellen: CFTC Socrata-API (Legacy Futures Only) + yfinance."
+        "Kursbewegung hatte. COT-Daten gibt es nur fuer Futures (CFTC reguliert keine "
+        "Spot-Maerkte) — sowohl Positionierung als auch Kursreturns kommen deshalb konsequent "
+        "vom selben CME/ICE-Waehrungsfuture, nicht vom Spot-Kurs. Ergebnisse haengen stark von "
+        "Zeitraum/Horizont ab und sind nicht garantiert stabil in der Zukunft. Quellen: CFTC "
+        "Socrata-API (Legacy Futures Only) + yfinance."
     )
 
     col1, col2, col3 = st.columns(3)
