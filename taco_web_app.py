@@ -10680,7 +10680,7 @@ COT_EDGE_CONTRACTS = {
     "AUD/USD (CME Australien-Dollar-Future, Proxy)": {"cftc_name": "AUSTRALIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6A=F"},
     "NZD/USD (CME Neuseeland-Dollar-Future, Proxy)": {"cftc_name": "NZ DOLLAR - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6N=F"},
     "USD/MXN (CME Peso-Future, Proxy)": {"cftc_name": "MEXICAN PESO - CHICAGO MERCANTILE EXCHANGE", "yahoo_ticker": "6M=F"},
-    "USD Index (ICE DXY-Future, Proxy)": {"cftc_name": "USD INDEX - ICE FUTURES U.S.", "yahoo_ticker": "DX=F"},
+    "USD Index (ICE US Dollar Index, Proxy)": {"cftc_name": "USD INDEX - ICE FUTURES U.S.", "yahoo_ticker": "DX-Y.NYB"},
 }
 
 
