@@ -1681,6 +1681,55 @@ def _render_muster_detail() -> None:
     )
     st.markdown(_rob_legend, unsafe_allow_html=True)
 
+    st.markdown("""
+<div style='background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:18px 22px;margin-bottom:22px;'>
+  <div style='color:#94a3b8;font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px;'>Was macht der CI-Test?</div>
+  <div style='color:#6b7fa3;font-size:.85rem;line-height:1.65;'>
+    Der <strong style='color:#cbd5e1;'>Konfidenzintervall-Test (CI)</strong> beantwortet eine einfache Frage:
+    <em style='color:#94a3b8;'>„Ist die gemessene Winrate wirklich ein echtes Muster — oder könnte sie auch zufällig entstanden sein?"</em>
+    <br><br>
+    Stell dir vor, du wirfst eine Münze 10 Mal und bekommst 7× Kopf. Das sieht nach 70% Winrate aus — aber mit nur 10 Würfen könnte das purer Zufall sein.
+    Genau das prüft der CI-Test: Er berechnet einen <strong style='color:#cbd5e1;'>Bereich</strong> (z.B. 35–93%), in dem die echte Wahrscheinlichkeit mit 95% Sicherheit liegt.
+    Enthält dieser Bereich die 50%-Marke, ist das Muster statistisch <strong style='color:#f87171;'>nicht von Zufall unterscheidbar</strong>.
+    <br><br>
+    Je mehr Trades (Jahre) ein Muster hat und je höher die Winrate, desto <strong style='color:#4ade80;'>enger und positiver</strong> wird das Intervall —
+    und desto sicherer kannst du sein, dass das Muster real ist und kein Datenzufall.
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    _ci_legend = (
+        "<div style='background:#0a1220;border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:18px 22px;margin-bottom:22px;'>"
+        "<div style='color:#94a3b8;font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px;'>Konfidenzintervall (CI) · Legende</div>"
+        "<table style='width:100%;border-collapse:collapse;'>"
+        "<thead><tr>"
+        "<th style='color:#475569;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:0 12px 8px 0;text-align:left;'>Stufe</th>"
+        "<th style='color:#475569;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:0 12px 8px 0;text-align:left;'>Bereich</th>"
+        "<th style='color:#475569;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:0 0 8px 0;text-align:left;'>Bedeutung</th>"
+        "</tr></thead>"
+        "<tbody>"
+        "<tr style='border-top:1px solid rgba(148,163,184,.07);'>"
+        "<td style='padding:9px 12px 9px 0;'><span style='color:#4ade80;font-weight:700;font-size:.9rem;'>🟢 Eng & positiv</span></td>"
+        "<td style='padding:9px 12px 9px 0;'><span style='background:#4ade8015;border:1px solid #4ade8030;border-radius:4px;padding:2px 10px;color:#4ade80;font-size:.8rem;font-family:monospace;white-space:nowrap;'>z.B. 72–85%</span></td>"
+        "<td style='padding:9px 0;color:#6b7fa3;font-size:.84rem;'>Winrate statistisch klar positiv — das Muster ist robust und kein Zufall</td>"
+        "</tr>"
+        "<tr style='border-top:1px solid rgba(148,163,184,.07);'>"
+        "<td style='padding:9px 12px 9px 0;'><span style='color:#fbbf24;font-weight:700;font-size:.9rem;'>🟡 Breit oder nah an 50%</span></td>"
+        "<td style='padding:9px 12px 9px 0;'><span style='background:#fbbf2415;border:1px solid #fbbf2430;border-radius:4px;padding:2px 10px;color:#fbbf24;font-size:.8rem;font-family:monospace;white-space:nowrap;'>z.B. 52–81%</span></td>"
+        "<td style='padding:9px 0;color:#6b7fa3;font-size:.84rem;'>Tendenz vorhanden, aber Stichprobe zu klein — Ergebnis könnte zufällig sein</td>"
+        "</tr>"
+        "<tr style='border-top:1px solid rgba(148,163,184,.07);'>"
+        "<td style='padding:9px 12px 9px 0;'><span style='color:#f87171;font-weight:700;font-size:.9rem;'>🔴 Enthält 50%</span></td>"
+        "<td style='padding:9px 12px 9px 0;'><span style='background:#f8717115;border:1px solid #f8717130;border-radius:4px;padding:2px 10px;color:#f87171;font-size:.8rem;font-family:monospace;white-space:nowrap;'>z.B. 44–78%</span></td>"
+        "<td style='padding:9px 0;color:#6b7fa3;font-size:.84rem;'>Kein statistischer Nachweis — Winrate nicht besser als Münzwurf</td>"
+        "</tr>"
+        "</tbody></table>"
+        "<div style='margin-top:10px;padding-top:10px;border-top:1px solid rgba(148,163,184,.07);color:#374151;font-size:.74rem;'>"
+        "Das CI zeigt den Bereich, in dem die echte Winrate mit 95% Wahrscheinlichkeit liegt (Wilson-Intervall). "
+        "Je enger und weiter von 50% entfernt, desto glaubwürdiger das Muster. Wenige Trades → breites CI → mehr Vorsicht."
+        "</div></div>"
+    )
+    st.markdown(_ci_legend, unsafe_allow_html=True)
+
     # ── Gegenmuster-Check ─────────────────────────────────────────────────────
     _cur_entry_doy = int(row.get("_entry_doy", 0))
     _cur_exit_doy  = int(row.get("_exit_doy",  0))
