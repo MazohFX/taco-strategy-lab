@@ -35,10 +35,14 @@ def _save_notes(notes: dict) -> None:
     _NOTES_FILE.write_text(json.dumps(notes, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+_SOURCE_DIRS = {"mt5": "mt5", "dukascopy": "dukascopy"}
+
+
 @st.cache_data(ttl=6 * 60 * 60)
 def load_ohlc_data(symbol: str, source: str = "mt5", fallback_to_yahoo: bool = False):
     from pathlib import Path as _Path
-    _mt5_dir = _Path(__file__).parent / "data" / "mt5"
+    _dir_name = _SOURCE_DIRS.get(source, "mt5")
+    _mt5_dir = _Path(__file__).parent / "data" / _dir_name
     _path = _mt5_dir / f"{symbol.upper()}.csv"
     if not _path.exists():
         _path = _mt5_dir / f"{symbol.lower()}.csv"
@@ -64,6 +68,35 @@ def load_ohlc_data(symbol: str, source: str = "mt5", fallback_to_yahoo: bool = F
         return _df[["Date","Open","High","Low","Close"]]
     except Exception:
         return None
+
+
+MT5_ALL_SYMBOLS = [
+    "AUDCAD","AUDCHF","AUDJPY","AUDNZD","AUDUSD","AUS200","CADJPY","CHFJPY",
+    "EURAUD","EURCAD","EURGBP","EURJPY","EURNZD","EURUSD","GBPAUD","GBPCAD",
+    "GBPJPY","GBPNZD","GBPUSD","GER40","JPN225","NZDCAD","NZDCHF","NZDJPY",
+    "NZDUSD","UK100","US30","US500","USDCAD","USDCHF","USDJPY","XAGUSD","XAUUSD",
+]
+
+_SOURCE_LABEL_TO_KEY = {"Pepperstone": "mt5", "Dukascopy": "dukascopy"}
+
+
+def load_price_data(symbol: str, source_label: str, fallback_to_pepperstone: bool = True):
+    """Laedt Daily OHLC fuer `symbol` aus der gewaehlten Quelle (Pepperstone/Dukascopy).
+
+    Gibt (df, used_source_label, fell_back) zurueck. `df` ist im load_ohlc_data-Format
+    (Spalten Date/Open/High/Low/Close, kein Index) oder None wenn nirgends verfuegbar.
+    Faellt bei fehlender Dukascopy-Datei automatisch auf Pepperstone zurueck (fell_back=True),
+    damit kein Modul crasht nur weil fuer ein Symbol noch keine Dukascopy-CSV vorliegt.
+    """
+    source_key = _SOURCE_LABEL_TO_KEY.get(source_label, "mt5")
+    df = load_ohlc_data(symbol, source=source_key)
+    if df is not None:
+        return df, source_label, False
+    if source_key == "dukascopy" and fallback_to_pepperstone:
+        df = load_ohlc_data(symbol, source="mt5")
+        if df is not None:
+            return df, "Pepperstone", True
+    return None, source_label, False
 
 
 APP_NAME = "Quant Taco Swing Strategie"
@@ -2460,13 +2493,9 @@ def render_seasonality_muster() -> None:
     from pathlib import Path as _Path
     import requests as _requests
     _MT5_DIR = _Path(__file__).parent / "data" / "mt5"
+    _DUKAS_DIR = _Path(__file__).parent / "data" / "dukascopy"
     _GITHUB_RAW = "https://raw.githubusercontent.com/MazohFX/taco-strategy-lab/data"
-    _ALL_SYMBOLS = [
-        "AUDCAD","AUDCHF","AUDJPY","AUDNZD","AUDUSD","AUS200","CADJPY","CHFJPY",
-        "EURAUD","EURCAD","EURGBP","EURJPY","EURNZD","EURUSD","GBPAUD","GBPCAD",
-        "GBPJPY","GBPNZD","GBPUSD","GER40","JPN225","NZDCAD","NZDCHF","NZDJPY",
-        "NZDUSD","UK100","US30","US500","USDCAD","USDCHF","USDJPY","XAGUSD","XAUUSD",
-    ]
+    _ALL_SYMBOLS = MT5_ALL_SYMBOLS
     if not _MT5_DIR.exists() or len(list(_MT5_DIR.glob("*.csv"))) < len(_ALL_SYMBOLS):
         _MT5_DIR.mkdir(parents=True, exist_ok=True)
         _dl_bar = st.progress(0, text="Lade CSV-Daten vom Server…")
@@ -2482,6 +2511,8 @@ def render_seasonality_muster() -> None:
             _dl_bar.progress((_i + 1) / len(_ALL_SYMBOLS), text=f"Lade {_sym}…")
         _dl_bar.empty()
     _available_symbols = sorted([f.stem.upper() for f in _MT5_DIR.glob("*.csv")]) if _MT5_DIR.exists() else []
+    _price_source = st.session_state.get("global_price_source", "Pepperstone")
+    _dukas_available = {f.stem.upper() for f in _DUKAS_DIR.glob("*.csv")} if _DUKAS_DIR.exists() else set()
 
     with col_ctrl:
         st.markdown("<div style='color:#94a3b8;font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px;'>Einstellungen</div>", unsafe_allow_html=True)
@@ -2494,6 +2525,13 @@ def render_seasonality_muster() -> None:
                     "Symbole auswählen", _available_symbols, default=_available_symbols,
                     help="Alle Daten sind permanent im Repo gespeichert"
                 )
+                if _price_source == "Dukascopy":
+                    _missing_dukas = [s for s in selected_symbols if s not in _dukas_available]
+                    if _missing_dukas:
+                        st.caption(
+                            f"⚠️ Keine Dukascopy-CSV für: {', '.join(_missing_dukas)} — "
+                            "diese Symbole laufen mit Pepperstone."
+                        )
             else:
                 st.warning("Keine CSVs im data/mt5/ Ordner gefunden.")
                 selected_symbols = []
@@ -2632,7 +2670,7 @@ primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwer
             file_entries: list[tuple[str, object]] = []
             if daten_modus == "Repo (permanent)":
                 for sym in selected_symbols:
-                    fpath = _MT5_DIR / f"{sym}.csv"
+                    fpath = _DUKAS_DIR / f"{sym}.csv" if (_price_source == "Dukascopy" and sym in _dukas_available) else _MT5_DIR / f"{sym}.csv"
                     if fpath.exists():
                         file_entries.append((sym, fpath))
             else:
@@ -3336,6 +3374,7 @@ def render_seasonality_lab() -> None:
         if data_source_label == "Pepperstone MT5 CSV":
             symbol = mt5_base_symbol
             st.text_input("MT5 CSV Symbol", value=mt5_base_symbol, disabled=True)
+            st.caption(f"Broker-Quelle: {st.session_state.get('global_price_source', 'Pepperstone')} (siehe Sidebar)")
         else:
             symbol = st.text_input("Yahoo Symbol", value=default_symbol if _force_yahoo else "", key="seasonality_symbol")
 
@@ -3344,8 +3383,11 @@ def render_seasonality_lab() -> None:
         return
 
     if data_source_label == "Pepperstone MT5 CSV":
-        with st.spinner(f"Lade Pepperstone-MT5-CSV fuer {symbol}..."):
-            loaded_df = load_ohlc_data(symbol.strip(), source="mt5")
+        _price_source = st.session_state.get("global_price_source", "Pepperstone")
+        with st.spinner(f"Lade {_price_source}-MT5-CSV fuer {symbol}..."):
+            loaded_df, _used_source, _fell_back = load_price_data(symbol.strip(), _price_source)
+        if _fell_back:
+            st.warning(f"Keine Dukascopy-Daten für {symbol} gefunden — auf Pepperstone zurückgefallen.")
         df = normalize_loader_ohlc(loaded_df) if loaded_df is not None else None
     else:
         with st.spinner(f"Lade maximale Yahoo-Historie fuer {symbol}..."):
@@ -7898,13 +7940,16 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         st.session_state["dax_ens_running"] = True
 
     # ════════════════════════════════════════════════════════════════════════
-    # DATEN LADEN — Pepperstone MT5 CSV (echte GER40-Broker-Daten, dieselbe Quelle
-    # wie im TradingView-Test) · läuft immer, liefert Trades für Monte Carlo
+    # DATEN LADEN — Pepperstone/Dukascopy MT5 CSV (echte GER40-Broker-Daten, dieselbe
+    # Quelle wie im TradingView-Test) · läuft immer, liefert Trades für Monte Carlo
     # ════════════════════════════════════════════════════════════════════════
-    cache_key = f"dax_df_{_dax_ticker}_{dax_start}_{dax_end}"
+    _dax_source = st.session_state.get("global_price_source", "Pepperstone")
+    cache_key = f"dax_df_{_dax_ticker}_{dax_start}_{dax_end}_{_dax_source}"
     if cache_key not in st.session_state or run_btn:
-        with st.spinner("GER40 Pepperstone-MT5 Daily-Daten laden …"):
-            _loaded = load_ohlc_data("GER40", source="mt5")
+        with st.spinner(f"GER40 {_dax_source}-Daily-Daten laden …"):
+            _loaded, _used_source, _fell_back = load_price_data("GER40", _dax_source)
+            if _fell_back:
+                st.warning(f"Keine Dukascopy-Daten für GER40 gefunden — auf Pepperstone zurückgefallen.")
             if _loaded is None or _loaded.empty:
                 st.session_state[cache_key] = pd.DataFrame()
             else:
@@ -9778,10 +9823,9 @@ def render_pdh_pdl_strategie() -> None:
 
 def render_muster_analyse() -> None:
     import datetime as _dt2
-    from pathlib import Path as _Path
 
-    _MT5_DIR2 = _Path(__file__).parent / "data" / "mt5"
-    _syms2 = sorted([f.stem.upper() for f in _MT5_DIR2.glob("*.csv")]) if _MT5_DIR2.exists() else []
+    _price_source = st.session_state.get("global_price_source", "Pepperstone")
+    _syms2 = MT5_ALL_SYMBOLS
 
     # Wenn Analyse bereits berechnet → Detailansicht zeigen
     if "muster_analyse_detail" in st.session_state:
@@ -9808,11 +9852,13 @@ def render_muster_analyse() -> None:
         st.info("Symbol und Datum eingeben, dann 'Analysieren' klicken.")
         return
 
-    csv_path = _MT5_DIR2 / f"{symbol.upper()}.csv"
-    if not csv_path.exists():
+    _loaded, _used_source, _fell_back = load_price_data(symbol, _price_source)
+    if _fell_back:
+        st.toast(f"Keine Dukascopy-Daten für {symbol} — auf Pepperstone zurückgefallen.", icon="⚠️")
+    if _loaded is None or _loaded.empty:
         st.error(f"Keine Daten für {symbol}."); return
 
-    df_m = normalize_ohlc(pd.read_csv(csv_path))
+    df_m = normalize_loader_ohlc(_loaded)
     if df_m.empty:
         st.error("Keine gültigen OHLC-Daten."); return
 
@@ -11074,6 +11120,15 @@ def render_extra_cot_edge_analysis() -> None:
 
 test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "Extra: Makro & Sentiment", "Extra: COT Commercials vs. Spekulanten"], horizontal=False, label_visibility="collapsed")
 
+with st.sidebar:
+    st.markdown("---")
+    global_price_source = st.radio(
+        "Broker-Datenquelle (MT5 Repo)", ["Pepperstone", "Dukascopy"],
+        horizontal=True, key="global_price_source",
+        help="Gilt fuer alle Module, die auf data/mt5 bzw. data/dukascopy zugreifen. "
+             "Fehlt fuer ein Symbol eine Dukascopy-CSV, wird automatisch auf Pepperstone zurueckgefallen.",
+    )
+
 if test_mode == "Seasonality Lab":
     render_seasonality_lab()
     st.stop()
@@ -11110,7 +11165,7 @@ with st.sidebar:
     auto_match_cot = st.checkbox("Auto-match COT market to selected asset", True)
 
     st.header("Daten")
-    data_mode = st.radio("Datenquelle", ["Demo", "CSV Upload", "Yahoo Symbol"], horizontal=True)
+    data_mode = st.radio("Datenquelle", ["Demo", "CSV Upload", "Yahoo Symbol", "MT5 Repo"], horizontal=True)
     asset_df = comp_df = None
     if data_mode == "CSV Upload":
         asset_file = st.file_uploader("Chart Asset CSV", type=["csv"])
@@ -11129,6 +11184,24 @@ with st.sidebar:
             comp_df = load_yahoo(comp_symbol)
             if asset_df is None or comp_df is None:
                 st.warning("Yahoo-Daten konnten nicht geladen werden. Nutze CSV oder Demo.")
+    elif data_mode == "MT5 Repo":
+        _mt5_price_source = st.session_state.get("global_price_source", "Pepperstone")
+        st.caption(f"Broker-Quelle: {_mt5_price_source} (siehe Sidebar oben)")
+        asset_symbol = st.selectbox("Chart Asset Symbol", MT5_ALL_SYMBOLS, key="mt5repo_asset_symbol")
+        comp_symbol = st.selectbox("Comparison Asset Symbol", MT5_ALL_SYMBOLS, key="mt5repo_comp_symbol",
+                                    index=min(1, len(MT5_ALL_SYMBOLS) - 1))
+        asset_preset = asset_symbol
+        if st.button("Daten laden", key="mt5repo_load_btn"):
+            _a_loaded, _a_src, _a_fell = load_price_data(asset_symbol, _mt5_price_source)
+            _c_loaded, _c_src, _c_fell = load_price_data(comp_symbol, _mt5_price_source)
+            if _a_fell:
+                st.warning(f"Keine Dukascopy-Daten für {asset_symbol} — auf Pepperstone zurückgefallen.")
+            if _c_fell:
+                st.warning(f"Keine Dukascopy-Daten für {comp_symbol} — auf Pepperstone zurückgefallen.")
+            asset_df = normalize_loader_ohlc(_a_loaded) if _a_loaded is not None else None
+            comp_df = normalize_loader_ohlc(_c_loaded) if _c_loaded is not None else None
+            if asset_df is None or comp_df is None:
+                st.warning("MT5-Daten konnten nicht geladen werden. Nutze CSV, Yahoo oder Demo.")
     else:
         asset_preset = "Demo"
         asset_symbol = "Demo"
