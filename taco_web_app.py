@@ -1292,8 +1292,8 @@ def _scan_patterns_cached(
     y15 = end_year - 15 + 1
     y20 = end_year - 20 + 1
     year_start_primary = end_year - lookback_years + 1
-    all_years_start = end_year - 20 + 1
     data_start_year = int(sorted_years.min())
+    all_years_start = min(end_year - 20 + 1, data_start_year)
     has_5j  = data_start_year <= y5
     has_10j = data_start_year <= y10
     has_15j = data_start_year <= y15
