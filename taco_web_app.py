@@ -2957,7 +2957,7 @@ primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwer
         _top_raw["_sharpe"]  = pd.to_numeric(_top_raw.get("Sharpe", 0),    errors="coerce").fillna(0)
 
         # Nur 5 Sterne
-        _top_raw = _top_raw[_top_raw["_stars"] >= 3]
+        _top_raw = _top_raw[_top_raw["_stars"] >= 4]
 
         # Pro Symbol: Cluster-Dedup — Entries innerhalb von 3 Tagen = gleiche Opportunity
         # Sortiere nach Symbol + Entry-Tag, dann beste Sterne/Sharpe nach vorne
