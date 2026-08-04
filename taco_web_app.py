@@ -1495,6 +1495,7 @@ def _scan_patterns_cached(
     return rows
 
 
+@st.cache_data(show_spinner=False)
 def scan_seasonality_patterns(
     df: pd.DataFrame,
     lookback_years: int,
@@ -1804,7 +1805,7 @@ def _render_muster_detail() -> None:
         if _alt_key not in st.session_state:
             with st.spinner("Suche bessere Zeitfenster im Jahresverlauf …"):
                 st.session_state[_alt_key] = scan_seasonality_patterns(
-                    df_sym, lookback_years=lookback, min_winrate=0.0,
+                    df_sym, lookback_years=lookback, min_winrate=0.6,
                     holding_periods=[_alt_cal_hold], directions=[_alt_dir_str],
                 )
         _alt_scan = st.session_state[_alt_key]
