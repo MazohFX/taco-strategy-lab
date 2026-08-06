@@ -4585,42 +4585,51 @@ def backtest(df: pd.DataFrame, settings: Settings) -> tuple[pd.DataFrame, pd.Dat
     equity_rows = []
 
     years = (df.index.year >= settings.start_year) & (df.index.year <= settings.end_year)
-    data = df.loc[years].copy()
+    data = df.loc[years]
+
+    # Rohe numpy-Arrays statt data.iloc[i] — iloc baut pro Zeile ein komplettes Series-Objekt
+    # (teuer). backtest() wird pro Grid-Search-Kombination (Cycle Scanner, SL Scanner, Walk
+    # Forward, TACO Radar) und bei jedem Slider-Wechsel im Manual Backtest neu aufgerufen —
+    # gleiches Muster wie der iterrows()-Fix in _momi_backtest_engine (Commit c9e181e).
+    high_arr  = data["high"].to_numpy(dtype=float)
+    low_arr   = data["low"].to_numpy(dtype=float)
+    close_arr = data["close"].to_numpy(dtype=float)
+    osc_arr   = data["osc"].to_numpy(dtype=float)
+    dates     = data.index
 
     for i in range(1, len(data)):
-        row = data.iloc[i]
-        prev = data.iloc[i - 1]
-        date = data.index[i]
+        h, l, c, osc, prev_osc = high_arr[i], low_arr[i], close_arr[i], osc_arr[i], osc_arr[i - 1]
+        date = dates[i]
 
         if position:
-            position["high"] = max(position["high"], row["high"])
-            position["low"] = min(position["low"], row["low"])
+            position["high"] = max(position["high"], h)
+            position["low"] = min(position["low"], l)
 
             side = position["side"]
             exit_price = None
             exit_reason = None
 
             if side == "Long":
-                hit_stop = row["low"] <= position["stop"]
-                hit_tp = not math.isnan(position["tp"]) and row["high"] >= position["tp"]
+                hit_stop = l <= position["stop"]
+                hit_tp = not math.isnan(position["tp"]) and h >= position["tp"]
                 if hit_stop:
                     exit_price, exit_reason = position["stop"], "Stop Loss"
                 elif hit_tp:
                     exit_price, exit_reason = position["tp"], "Take Profit"
-                elif settings.exit_on_zero and prev["osc"] < 0 <= row["osc"]:
-                    exit_price, exit_reason = row["close"], "Zero Exit"
+                elif settings.exit_on_zero and prev_osc < 0 <= osc:
+                    exit_price, exit_reason = c, "Zero Exit"
             else:
-                hit_stop = row["high"] >= position["stop"]
-                hit_tp = not math.isnan(position["tp"]) and row["low"] <= position["tp"]
+                hit_stop = h >= position["stop"]
+                hit_tp = not math.isnan(position["tp"]) and l <= position["tp"]
                 if hit_stop:
                     exit_price, exit_reason = position["stop"], "Stop Loss"
                 elif hit_tp:
                     exit_price, exit_reason = position["tp"], "Take Profit"
-                elif settings.exit_on_zero and prev["osc"] > 0 >= row["osc"]:
-                    exit_price, exit_reason = row["close"], "Zero Exit"
+                elif settings.exit_on_zero and prev_osc > 0 >= osc:
+                    exit_price, exit_reason = c, "Zero Exit"
 
             if settings.time_exit and i - position["bar"] >= settings.exit_after_bars and exit_price is None:
-                exit_price, exit_reason = row["close"], "Time Exit"
+                exit_price, exit_reason = c, "Time Exit"
 
             if exit_price is not None:
                 if side == "Long":
@@ -4662,27 +4671,27 @@ def backtest(df: pd.DataFrame, settings: Settings) -> tuple[pd.DataFrame, pd.Dat
                 position = None
 
         if position is None:
-            long_signal = row["osc"] < settings.lower and row["osc"] > prev["osc"] or prev["osc"] < settings.lower <= row["osc"]
-            short_signal = row["osc"] > settings.upper and row["osc"] < prev["osc"] or prev["osc"] > settings.upper >= row["osc"]
+            long_signal = osc < settings.lower and osc > prev_osc or prev_osc < settings.lower <= osc
+            short_signal = osc > settings.upper and osc < prev_osc or prev_osc > settings.upper >= osc
             allow_long = settings.trade_direction in ["Long & Short", "Long Only"]
             allow_short = settings.trade_direction in ["Long & Short", "Short Only"]
 
             if long_signal and allow_long:
-                entry = row["close"] * (1 + settings.slippage_pct / 100)
+                entry = c * (1 + settings.slippage_pct / 100)
                 stop = entry * (1 - settings.stop_pct / 100)
                 risk_cash = equity * settings.risk_pct / 100
                 qty = risk_cash / max(entry - stop, 1e-9)
                 risk_points = entry - stop
                 tp = entry + risk_points * settings.rr if settings.tp_mode == "Risk Reward" else entry * (1 + settings.fixed_tp_pct / 100) if settings.tp_mode == "Fixed %" else math.nan
-                position = {"side": "Long", "entry": entry, "stop": stop, "tp": tp, "qty": qty, "date": date, "bar": i, "high": row["high"], "low": row["low"]}
+                position = {"side": "Long", "entry": entry, "stop": stop, "tp": tp, "qty": qty, "date": date, "bar": i, "high": h, "low": l}
             elif short_signal and allow_short:
-                entry = row["close"] * (1 - settings.slippage_pct / 100)
+                entry = c * (1 - settings.slippage_pct / 100)
                 stop = entry * (1 + settings.stop_pct / 100)
                 risk_cash = equity * settings.risk_pct / 100
                 qty = risk_cash / max(stop - entry, 1e-9)
                 risk_points = stop - entry
                 tp = entry - risk_points * settings.rr if settings.tp_mode == "Risk Reward" else entry * (1 - settings.fixed_tp_pct / 100) if settings.tp_mode == "Fixed %" else math.nan
-                position = {"side": "Short", "entry": entry, "stop": stop, "tp": tp, "qty": qty, "date": date, "bar": i, "high": row["high"], "low": row["low"]}
+                position = {"side": "Short", "entry": entry, "stop": stop, "tp": tp, "qty": qty, "date": date, "bar": i, "high": h, "low": l}
 
         equity_rows.append({"date": date, "equity": equity})
 

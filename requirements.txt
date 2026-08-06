@@ -5,6 +5,5 @@ plotly
 yfinance
 scipy
 requests
-numba
 lxml
 google-genai
