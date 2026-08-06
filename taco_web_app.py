@@ -1325,8 +1325,8 @@ def _scan_patterns_cached(
     y15 = end_year - 15 + 1
     y20 = end_year - 20 + 1
     year_start_primary = end_year - lookback_years + 1
-    all_years_start = end_year - 20 + 1
     data_start_year = int(sorted_years.min())
+    all_years_start = min(end_year - 20 + 1, data_start_year)
     has_5j  = data_start_year <= y5
     has_10j = data_start_year <= y10
     has_15j = data_start_year <= y15
@@ -1528,6 +1528,7 @@ def _scan_patterns_cached(
     return rows
 
 
+@st.cache_data(show_spinner=False)
 def scan_seasonality_patterns(
     df: pd.DataFrame,
     lookback_years: int,
@@ -1837,7 +1838,7 @@ def _render_muster_detail() -> None:
         if _alt_key not in st.session_state:
             with st.spinner("Suche bessere Zeitfenster im Jahresverlauf …"):
                 st.session_state[_alt_key] = scan_seasonality_patterns(
-                    df_sym, lookback_years=lookback, min_winrate=0.0,
+                    df_sym, lookback_years=lookback, min_winrate=0.6,
                     holding_periods=[_alt_cal_hold], directions=[_alt_dir_str],
                 )
         _alt_scan = st.session_state[_alt_key]
@@ -2994,8 +2995,8 @@ primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwer
         _top_raw["_stars"]   = pd.to_numeric(_top_raw.get("⭐ Rating", 3), errors="coerce").fillna(3)
         _top_raw["_sharpe"]  = pd.to_numeric(_top_raw.get("Sharpe", 0),    errors="coerce").fillna(0)
 
-        # Nur 5 Sterne
-        _top_raw = _top_raw[_top_raw["_stars"] >= 5]
+        # ≥3 Sterne (WR-Qualität wird bereits durch min_wr Slider sichergestellt)
+        _top_raw = _top_raw[_top_raw["_stars"] >= 3]
 
         # Pro Symbol: Cluster-Dedup — Entries innerhalb von 3 Tagen = gleiche Opportunity
         # Sortiere nach Symbol + Entry-Tag, dann beste Sterne/Sharpe nach vorne
