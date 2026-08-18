@@ -2,6 +2,7 @@ import json
 import math
 import calendar
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -4204,7 +4205,12 @@ def load_fear_greed() -> dict | None:
         }
         payload = None
         for url in urls:
-            response = requests.get(url, headers=headers, timeout=8)
+            try:
+                response = requests.get(url, headers=headers, timeout=5)
+            except requests.exceptions.RequestException:
+                # gleicher Host blockiert/haengt vermutlich fuer beide URLs identisch —
+                # zweiter Versuch mit erneutem Timeout bringt nichts, nur Ladezeit kosten
+                break
             if response.ok:
                 payload = response.json()
                 break
@@ -4353,7 +4359,7 @@ def load_cot_cme_legacy() -> tuple[pd.DataFrame, str | None]:
         import requests
 
         url = "https://www.cftc.gov/dea/newcot/deafut.txt"
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
         response.raise_for_status()
         raw = pd.read_csv(StringIO(response.text))
         rows = pd.DataFrame({
@@ -4383,7 +4389,7 @@ def load_cot_cme_legacy() -> tuple[pd.DataFrame, str | None]:
         import requests
 
         url = "https://www.cftc.gov/dea/futures/deacmesf.htm"
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
         response.raise_for_status()
         text = html.unescape(response.text)
         pre_match = re.search(r"<pre>(.*?)</pre>", text, flags=re.I | re.S)
@@ -11699,6 +11705,16 @@ elif test_mode == "SL Scanner":
         commission_pct=_sl_commission,
         slippage_pct=_sl_slippage,
     )
+
+
+# Fear&Greed + COT sind separate Marktstimmungs-Panels (beeinflussen den TACO-Backtest nicht),
+# ihre externen Requests liefen bisher sequentiell (bis zu ~40s worst-case bei Cache-Miss,
+# z.B. direkt nach Aufwachen der Streamlit-Cloud-App), bevor ueberhaupt die eigentlichen
+# Backtest-Ergebnisse gerendert wurden. Cache-Funktionen parallel vorwaermen statt sequentiell
+# blockieren — die render_*-Funktionen darunter lesen dann aus dem bereits warmen Cache.
+with ThreadPoolExecutor(max_workers=2) as _sentiment_prefetch_pool:
+    _sentiment_prefetch_pool.submit(load_fear_greed)
+    _sentiment_prefetch_pool.submit(load_cot_cme_legacy)
 
 render_fear_greed_panel()
 
