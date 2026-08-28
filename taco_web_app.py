@@ -4303,7 +4303,7 @@ COT_WATCHLIST = [
     ("CHF Futures", ["SWISS FRANC"]),
     ("Pfund Futures", ["BRITISH POUND"]),
     ("AUD Futures", ["AUSTRALIAN DOLLAR"]),
-    ("NZD Futures", ["NEW ZEALAND DOLLAR"]),
+    ("NZD Futures", ["NEW ZEALAND DOLLAR", "NZ DOLLAR"]),
     ("DXY", ["U.S. DOLLAR INDEX", "US DOLLAR INDEX", "DOLLAR INDEX"]),
     ("Gold", ["GOLD"]),
     ("Silver", ["SILVER"]),
@@ -4327,7 +4327,7 @@ def infer_cot_query_from_asset(asset_label: str | None, asset_symbol: str | None
     if "AUDUSD" in text or "AUSTRALIAN" in text or "6A" in text:
         return "AUSTRALIAN DOLLAR", "AUDUSD proxy"
     if "NZD" in text or "NEW ZEALAND" in text:
-        return "NEW ZEALAND DOLLAR", "NZD proxy"
+        return "NZ DOLLAR", "NZD proxy"
     if "USDCAD" in text or "CAD=X" in text or "CANADIAN" in text or "6C" in text:
         return "CANADIAN DOLLAR", "USDCAD proxy"
     if "USDCHF" in text or "CHF=X" in text or "SWISS" in text or "6S" in text:
@@ -4359,7 +4359,7 @@ def load_cot_cme_legacy() -> tuple[pd.DataFrame, str | None]:
         import requests
 
         url = "https://www.cftc.gov/dea/newcot/deafut.txt"
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=4)
         response.raise_for_status()
         raw = pd.read_csv(StringIO(response.text))
         rows = pd.DataFrame({
@@ -4389,7 +4389,7 @@ def load_cot_cme_legacy() -> tuple[pd.DataFrame, str | None]:
         import requests
 
         url = "https://www.cftc.gov/dea/futures/deacmesf.htm"
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=4)
         response.raise_for_status()
         text = html.unescape(response.text)
         pre_match = re.search(r"<pre>(.*?)</pre>", text, flags=re.I | re.S)
@@ -11136,6 +11136,16 @@ def render_extra_cot_edge_analysis() -> None:
 
 test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "Extra: Makro & Sentiment", "Extra: COT Commercials vs. Spekulanten"], horizontal=False, label_visibility="collapsed")
 
+# Fear&Greed + COT sind separate Marktstimmungs-Panels weiter unten. Ihre externen Requests
+# hier schon anstossen (fire-and-forget, kein wait), damit sie waehrend der restlichen
+# Seasonality/Backtest-Berechnung im Hintergrund laufen statt erst spaeter blockierend zu starten.
+# shutdown(wait=False) kehrt sofort zurueck; die Tasks laufen weiter und fuellen den
+# st.cache_data-Cache, den render_fear_greed_panel()/render_cot_panel() danach lesen.
+_sentiment_prefetch_pool = ThreadPoolExecutor(max_workers=2)
+_sentiment_prefetch_pool.submit(load_fear_greed)
+_sentiment_prefetch_pool.submit(load_cot_cme_legacy)
+_sentiment_prefetch_pool.shutdown(wait=False)
+
 with st.sidebar:
     st.markdown("---")
     global_price_source = st.radio(
@@ -11707,15 +11717,9 @@ elif test_mode == "SL Scanner":
     )
 
 
-# Fear&Greed + COT sind separate Marktstimmungs-Panels (beeinflussen den TACO-Backtest nicht),
-# ihre externen Requests liefen bisher sequentiell (bis zu ~40s worst-case bei Cache-Miss,
-# z.B. direkt nach Aufwachen der Streamlit-Cloud-App), bevor ueberhaupt die eigentlichen
-# Backtest-Ergebnisse gerendert wurden. Cache-Funktionen parallel vorwaermen statt sequentiell
-# blockieren — die render_*-Funktionen darunter lesen dann aus dem bereits warmen Cache.
-with ThreadPoolExecutor(max_workers=2) as _sentiment_prefetch_pool:
-    _sentiment_prefetch_pool.submit(load_fear_greed)
-    _sentiment_prefetch_pool.submit(load_cot_cme_legacy)
-
+# Fear&Greed + COT sind separate Marktstimmungs-Panels (beeinflussen den TACO-Backtest nicht).
+# Der Prefetch dafuer laeuft bereits seit der test_mode-Auswahl im Hintergrund (siehe oben),
+# parallel zur Backtest-Berechnung — hier wird i.d.R. nur noch der bereits warme Cache gelesen.
 render_fear_greed_panel()
 
 cot_asset_label = sl_asset_preset if test_mode == "SL Scanner" else asset_preset if data_mode == "Yahoo Symbol" else "Demo"
