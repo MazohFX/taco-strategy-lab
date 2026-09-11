@@ -4154,6 +4154,7 @@ ASSET_PRESETS = {
     "GBPJPY (GBPJPY=X)": "GBPJPY=X",
     "CHFJPY (CHFJPY=X)": "CHFJPY=X",
     "EURJPY (EURJPY=X)": "EURJPY=X",
+    "CADJPY (CADJPY=X)": "CADJPY=X",
     "DXY proxy: US Dollar Index (DX-Y.NYB)": "DX-Y.NYB",
     "Gold futures (GC=F)": "GC=F",
     "Silver futures (SI=F)": "SI=F",
