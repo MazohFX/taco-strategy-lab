@@ -72,7 +72,7 @@ def load_ohlc_data(symbol: str, source: str = "mt5", fallback_to_yahoo: bool = F
 
 
 MT5_ALL_SYMBOLS = [
-    "AUDCAD","AUDCHF","AUDJPY","AUDNZD","AUDUSD","AUS200","CADJPY","CHFJPY",
+    "AUDCAD","AUDCHF","AUDJPY","AUDNZD","AUDUSD","AUS200","CADCHF","CADJPY","CHFJPY",
     "EURAUD","EURCAD","EURCHF","EURGBP","EURJPY","EURNZD","EURUSD","GBPAUD","GBPCAD",
     "GBPJPY","GBPNZD","GBPUSD","GER40","JPN225","NZDCAD","NZDCHF","NZDJPY",
     "NZDUSD","UK100","US30","US500","USDCAD","USDCHF","USDJPY","XAGUSD","XAUUSD",
@@ -4155,6 +4155,7 @@ ASSET_PRESETS = {
     "CHFJPY (CHFJPY=X)": "CHFJPY=X",
     "EURJPY (EURJPY=X)": "EURJPY=X",
     "CADJPY (CADJPY=X)": "CADJPY=X",
+    "CADCHF (CADCHF=X)": "CADCHF=X",
     "DXY proxy: US Dollar Index (DX-Y.NYB)": "DX-Y.NYB",
     "Gold futures (GC=F)": "GC=F",
     "Silver futures (SI=F)": "SI=F",
