@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from edge_validation import evaluate_edge, kelly_position_size
+from fib618_bos_backtest import Fib618Config, run_fib618_backtest
 
 
 # ── Muster-Notizen (JSON-Persistenz) ─────────────────────────────────────────
@@ -11137,7 +11138,141 @@ def render_extra_cot_edge_analysis() -> None:
         col.metric(label, winner, f"{counts.max()} von {len(out)} Paaren")
 
 
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "Extra: Makro & Sentiment", "Extra: COT Commercials vs. Spekulanten"], horizontal=False, label_visibility="collapsed")
+def _parse_h1_csv(uploaded_file) -> pd.DataFrame | None:
+    """Liest eine H1-OHLC-CSV (Pepperstone/MT5-Export oder aehnlich) ein.
+
+    Erkennt sowohl eine einzelne datetime-Spalte als auch getrennte
+    date+time-Spalten (Standard-MT5-Export-Format), im Gegensatz zu
+    normalize_ohlc() (das nur eine einzelne Datumsspalte erwartet und bei
+    Intraday-Daten mit getrennten date/time-Spalten Zeilen verlieren wuerde).
+    """
+    try:
+        raw = pd.read_csv(uploaded_file)
+    except Exception:
+        return None
+    raw.columns = [str(c).strip().lower() for c in raw.columns]
+    if "date" in raw.columns and "time" in raw.columns:
+        dt = pd.to_datetime(raw["date"].astype(str) + " " + raw["time"].astype(str), errors="coerce")
+    elif "datetime" in raw.columns:
+        dt = pd.to_datetime(raw["datetime"], errors="coerce")
+    elif "date" in raw.columns:
+        dt = pd.to_datetime(raw["date"], errors="coerce")
+    else:
+        return None
+    raw["_dt"] = dt
+
+    aliases = {"open": ["open", "o"], "high": ["high", "h"], "low": ["low", "l"], "close": ["close", "c"]}
+    col_map = {}
+    for target, names in aliases.items():
+        for name in names:
+            if name in raw.columns:
+                col_map[target] = name
+                break
+    if len(col_map) < 4:
+        return None
+
+    out = raw[["_dt"] + list(col_map.values())].copy()
+    out.columns = ["datetime"] + list(col_map.keys())
+    for col in ["open", "high", "low", "close"]:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+    out = out.dropna().sort_values("datetime").drop_duplicates("datetime").set_index("datetime")
+    return out if len(out) > 0 else None
+
+
+def render_extra_fib618_bos() -> None:
+    st.markdown("## 🌀 Extra: Fib 0.618 + BOS Backtest")
+    st.caption(
+        "Python-Kern-Portierung der Pine-Strategie 'Fib 0.618 + Opens + Monthly POC' — "
+        "reduziert auf den validierbaren Grund-Edge: Boden/Kompression vor einem impulsiven "
+        "Break of Structure, Entry am 0.618-Retracement, fester SL/TP. Bewusst OHNE "
+        "Opens-/POC-Confluence und ohne Setup-Grading (A+/A/B) — das kommt erst dazu, wenn "
+        "der Kern hier einen nachweisbaren Edge zeigt. Alle Kennzahlen in R-Multiples "
+        "(keine Kontowaehrungs-Umrechnung noetig)."
+    )
+
+    uploaded = st.file_uploader(
+        "Pepperstone H1 CSV (date/time, open, high, low, close)", type=["csv"],
+        help="MT5-Export mit getrennten date+time-Spalten wird automatisch erkannt.",
+        key="fib618_csv",
+    )
+    if uploaded is None:
+        st.info("Bitte eine H1-CSV hochladen (z. B. aus data/mt5_intraday/ exportiert oder direkt aus MT5).")
+        return
+
+    df = _parse_h1_csv(uploaded)
+    if df is None or len(df) < 200:
+        st.warning("CSV konnte nicht gelesen werden oder hat zu wenig Bars (min. 200 noetig). Erwartete Spalten: date[/time]/open/high/low/close.")
+        return
+    st.caption(f"{len(df)} Bars geladen — {df.index.min()} bis {df.index.max()}")
+
+    with st.expander("⚙️ Parameter", expanded=True):
+        c1, c2, c3, c4 = st.columns(4)
+        direction = c1.selectbox("Richtung", ["Beide", "Nur Long", "Nur Short"], key="fib618_dir")
+        pip_preset = c2.selectbox("Pip-Groesse", ["0.0001 (5-stellig)", "0.01 (JPY)", "0.001 (3-stellig)", "Custom"], key="fib618_pip_preset")
+        pip_size = {"0.0001 (5-stellig)": 0.0001, "0.01 (JPY)": 0.01, "0.001 (3-stellig)": 0.001}.get(pip_preset)
+        if pip_size is None:
+            pip_size = c2.number_input("Custom Pip-Groesse", value=0.0001, format="%.5f", key="fib618_pip_custom")
+        tp_level = c3.selectbox("TP-Level", [-0.27, -0.62, -1.0], index=1, key="fib618_tp")
+        risk_pct = c4.number_input("Risiko % pro Trade", value=0.5, min_value=0.01, step=0.05, key="fib618_risk")
+
+        c5, c6, c7, c8 = st.columns(4)
+        left_bars = c5.number_input("Pivot Links-Bars", value=5, min_value=1, key="fib618_left")
+        right_bars = c6.number_input("Pivot Rechts-Bars", value=5, min_value=1, key="fib618_right")
+        sl_buffer_pips = c7.number_input("SL-Puffer (Pips)", value=2.0, min_value=0.0, step=0.5, key="fib618_slbuf")
+        spread_pips = c8.number_input("Spread (Pips)", value=1.0, min_value=0.0, step=0.1, key="fib618_spread")
+
+        c9, c10, c11 = st.columns(3)
+        use_base_filter = c9.checkbox("Boden/Kompression vor BOS erforderlich", value=True, key="fib618_basefilter")
+        cancel_at_ext27 = c10.checkbox("Order canceln bei -0.27 vor Fill", value=True, key="fib618_cancelext")
+        compounding = c11.checkbox("Equity-Kurve compoundend", value=True, key="fib618_compound")
+
+    run = st.button("🔍 Backtest starten", type="primary", key="fib618_run")
+    if run:
+        cfg = Fib618Config(
+            direction=direction, left_bars=int(left_bars), right_bars=int(right_bars),
+            use_base_filter=use_base_filter, pip_size=float(pip_size),
+            sl_buffer_pips=float(sl_buffer_pips), tp_level=float(tp_level),
+            cancel_at_ext27=cancel_at_ext27, spread_pips=float(spread_pips),
+            risk_pct=float(risk_pct), compounding=compounding,
+        )
+        with st.spinner("Backtest laeuft..."):
+            result = run_fib618_backtest(df, cfg)
+        st.session_state["fib618_result"] = result
+
+    result = st.session_state.get("fib618_result")
+    if result is None:
+        st.info("Parameter waehlen und 'Backtest starten' klicken.")
+        return
+    if "error" in result.stats:
+        st.warning(result.stats["error"])
+        return
+    if result.stats.get("trades", 0) == 0:
+        st.warning("Keine Trades mit diesen Parametern — Filter lockern (z. B. Boden-Filter deaktivieren oder Impuls-ATR senken).")
+        return
+
+    s = result.stats
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Trades", s["trades"])
+    m2.metric("Winrate", f"{s['winrate_pct']:.1f}%")
+    m3.metric("Profit Factor", f"{s['profit_factor']:.2f}")
+    m4.metric("Ø R-Multiple", f"{s['avg_r']:.2f}")
+    m5.metric("Max DD", f"{s['max_dd_pct']:.1f}%")
+    st.caption(f"TP-Hits: {s['tp_hits']} · SL-Hits: {s['sl_hits']} · Long: {s['long_trades']} · Short: {s['short_trades']}")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=result.equity_curve["exit_time"], y=result.equity_curve["equity"], mode="lines", name="Equity", line={"color": "#22d3ee"}))
+    fig.update_layout(**_seasonality_base_layout("Equity-Kurve (Start = 100)", 360))
+    st.plotly_chart(fig, width="stretch")
+
+    st.subheader("Trades")
+    st.dataframe(result.trades, width="stretch")
+    st.download_button(
+        "📥 Trades als CSV", result.trades.to_csv(index=False).encode("utf-8"),
+        file_name="fib618_bos_trades.csv", mime="text/csv", key="fib618_download",
+    )
+
+
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "Extra: Makro & Sentiment", "Extra: COT Commercials vs. Spekulanten", "Extra: Fib 0.618 + BOS Backtest"], horizontal=False, label_visibility="collapsed")
 
 # Fear&Greed + COT sind separate Marktstimmungs-Panels weiter unten. Ihre externen Requests
 # hier schon anstossen (fire-and-forget, kein wait), damit sie waehrend der restlichen
@@ -11188,6 +11323,10 @@ if test_mode == "Extra: Makro & Sentiment":
 
 if test_mode == "Extra: COT Commercials vs. Spekulanten":
     render_extra_cot_edge_analysis()
+    st.stop()
+
+if test_mode == "Extra: Fib 0.618 + BOS Backtest":
+    render_extra_fib618_bos()
     st.stop()
 
 with st.sidebar:
