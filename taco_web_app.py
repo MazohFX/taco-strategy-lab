@@ -10620,6 +10620,127 @@ def compute_currency_matrix_row(currency: str) -> dict:
     return {"Short (15m)": short_score, "Mid (4h)": mid_score, "Long (Struktur)": long_score}
 
 
+# ── Wochenview: Makro-Fundamentaldaten pro Waehrung (FRED) ───────────────────
+# Leitzins/Inflation/Arbeitslosenquote/10J-Rendite je Land, aufgeloest per
+# FRED-Volltextsuche (wie resolve_cot_market_name/find_cot_socrata_market bei
+# COT) statt fest hinterlegter Serien-IDs, da FRED pro Land mehrere Varianten
+# (SA/NSA, national vs. harmonisiert) fuehrt und eine falsch geratene ID
+# stillschweigend falsche Werte liefern wuerde. DXY = USD-Werte (kein eigenes
+# Land). Heuristik: steigender Leitzins/Inflation/Rendite = tendenziell
+# bullish fuer die Waehrung (hawkishe Notenbank zieht Kapital an), fallende
+# Arbeitslosenquote = bullish. Vereinfachte Faustregel, kein validiertes Modell.
+
+# Laender-Namen wie sie in FRED-Serientiteln vorkommen (fuer die Volltextsuche).
+# "3-Month Interbank Rate {Land}" statt der exakten Central-Bank-Rate-Serie, weil
+# FRED fuer AUD/NZD/CHF keine per Volltextsuche auffindbare Leitzins-Serie fuehrt --
+# der 3M-Interbankensatz ist ein etablierter, fuer alle 8 Waehrungen konsistent
+# auffindbarer Proxy (bewegt sich eng mit dem Leitzinszyklus).
+_MACRO_COUNTRY_NAMES = {
+    "USD": "United States", "EUR": "Euro Area", "GBP": "United Kingdom",
+    "AUD": "Australia", "NZD": "New Zealand", "CAD": "Canada",
+    "CHF": "Switzerland", "JPY": "Japan",
+}
+
+CURRENCY_MACRO_QUERIES = {
+    cur: {
+        "Leitzins": f"3-Month Interbank Rate {name}",
+        "Inflation (CPI YoY)": f"Consumer Price Index Total All Items {name} growth rate same period previous year",
+        "Arbeitslosenquote": f"Harmonized Unemployment Rate: Total: All Persons for {'the ' if name in ('United Kingdom', 'United States', 'Euro Area') else ''}{name}",
+        "10J-Anleiherendite": f"Long-Term Government Bond Yields: 10-year: Main for {name}",
+    }
+    for cur, name in _MACRO_COUNTRY_NAMES.items()
+}
+CURRENCY_MACRO_QUERIES["DXY"] = CURRENCY_MACRO_QUERIES["USD"]
+
+MACRO_INVERT_INDICATORS = {"Arbeitslosenquote"}
+
+# Bevorzugte Datenfrequenz bei mehreren Treffern: Monatsdaten vor Quartal/Jahr vor
+# Wochen/Tag (zu granular fuer eine stabile Wochen-Trend-Betrachtung).
+_FRED_FREQ_PRIORITY = {"M": 0, "Q": 1, "A": 2, "SA": 3, "W": 4, "D": 5}
+
+
+@st.cache_data(ttl=24 * 60 * 60)
+def find_fred_series_id(query: str, api_key: str) -> str | None:
+    if not api_key:
+        return None
+    try:
+        import requests
+
+        params = {
+            "search_text": query,
+            "api_key": api_key,
+            "file_type": "json",
+            "limit": 5,
+        }
+        response = requests.get("https://api.stlouisfed.org/fred/series/search", params=params, timeout=12)
+        response.raise_for_status()
+        series = response.json().get("seriess", [])
+        if not series:
+            return None
+        candidates = [s for s in series if "DISCONTINUED" not in s.get("title", "").upper()] or series
+        candidates.sort(key=lambda s: _FRED_FREQ_PRIORITY.get(s.get("frequency_short", ""), 9))
+        return candidates[0]["id"]
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=24 * 60 * 60)
+def fetch_fred_series_values(series_id: str, api_key: str, limit: int = 6) -> pd.DataFrame:
+    if not series_id or not api_key:
+        return pd.DataFrame()
+    try:
+        import requests
+
+        params = {
+            "series_id": series_id,
+            "api_key": api_key,
+            "file_type": "json",
+            "sort_order": "desc",
+            "limit": limit,
+        }
+        response = requests.get("https://api.stlouisfed.org/fred/series/observations", params=params, timeout=12)
+        response.raise_for_status()
+        data = response.json()
+        obs = data.get("observations", [])
+        if not obs:
+            return pd.DataFrame()
+        df = pd.DataFrame(obs)
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        return df.dropna(subset=["date", "value"]).sort_values("date").reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+def fred_trend_score(df: pd.DataFrame, invert: bool) -> float | None:
+    if df is None or len(df) < 2:
+        return None
+    diff = float(df["value"].iloc[-1] - df["value"].iloc[0])
+    sign = float(np.sign(diff))
+    return -sign if invert else sign
+
+
+def compute_macro_score_row(currency: str, api_key: str) -> dict:
+    queries = CURRENCY_MACRO_QUERIES.get(currency, {})
+    rows = []
+    contributions = []
+    for indicator, query in queries.items():
+        series_id = find_fred_series_id(query, api_key) if api_key else None
+        values = fetch_fred_series_values(series_id, api_key) if series_id else pd.DataFrame()
+        trend = fred_trend_score(values, invert=indicator in MACRO_INVERT_INDICATORS)
+        if trend is not None:
+            contributions.append(trend)
+        rows.append({
+            "Indikator": indicator,
+            "Serie": series_id or "n/a",
+            "Letzter Wert": round(float(values["value"].iloc[-1]), 2) if not values.empty else None,
+            "Wert vor Fenster": round(float(values["value"].iloc[0]), 2) if not values.empty else None,
+            "Trend": "n/a" if trend is None else ("BULLISH" if trend > 0 else "BEARISH" if trend < 0 else "NEUTRAL"),
+        })
+    macro_score = float(np.clip(np.mean(contributions), -1, 1)) if contributions else None
+    return {"score": macro_score, "detail": pd.DataFrame(rows)}
+
+
 def _matrix_cell_color(value: str) -> str:
     if "BULLISH" in value:
         return "background-color: rgba(34,197,94,.35); color: white"
@@ -10635,12 +10756,25 @@ def render_currency_matrix_section() -> None:
     st.caption(
         "Short (15m) und Mid (4h): reines Preis-Momentum auf Intraday-Kursen (yfinance, kann bei "
         "Feiertagen/Datenluecken 'n/a' zeigen). Long (Struktur): Momentum (60%, wochenbasiert) + "
-        "CFTC-COT-Score (40%). Kein Makro-News-Anteil in dieser Matrix. Vereinfachte Heuristik, "
-        "kein validiertes Modell."
+        "CFTC-COT-Score (40%). Makro (Wochen): Trend (letzte verfuegbare Werte, meist Monatsdaten) "
+        "bei Leitzins, Inflation, Arbeitslosenquote und 10J-Anleiherendite je Land (FRED, "
+        "gleichgewichtet). Steigender Leitzins/Inflation/Rendite = angenommen bullish (hawkishe "
+        "Notenbank), fallende Arbeitslosenquote = bullish. Vereinfachte Heuristik, kein validiertes "
+        "Modell, kein Bezug zu Short/Mid/Long."
     )
+    fred_key = get_fred_api_key()
+    if not fred_key:
+        st.info(
+            "Kein FRED_API_KEY hinterlegt — Spalte 'Makro (Wochen)' bleibt 'n/a'. "
+            "Kostenloser Key: fred.stlouisfed.org/docs/api/api_key.html"
+        )
+
     rows = []
+    macro_details = {}
     for currency in CURRENCY_MATRIX_ASSETS:
         scores = compute_currency_matrix_row(currency)
+        macro = compute_macro_score_row(currency, fred_key)
+        macro_details[currency] = macro["detail"]
         row = {"Asset": currency}
         for col_label, score in scores.items():
             if score is None:
@@ -10648,11 +10782,25 @@ def render_currency_matrix_section() -> None:
             else:
                 percent, label = matrix_percent_label(score)
                 row[col_label] = f"{percent:.0f}% {label}"
+        if macro["score"] is None:
+            row["Makro (Wochen)"] = "n/a"
+        else:
+            percent, label = matrix_percent_label(macro["score"])
+            row["Makro (Wochen)"] = f"{percent:.0f}% {label}"
         rows.append(row)
 
     matrix_df = pd.DataFrame(rows).set_index("Asset")
     cols_to_style = list(matrix_df.columns)
     st.dataframe(matrix_df.style.map(_matrix_cell_color, subset=cols_to_style), use_container_width=True)
+
+    with st.expander("🌍 Wochenview Makro-Fundamentaldaten (Detail je Waehrung)"):
+        for currency in CURRENCY_MATRIX_ASSETS:
+            detail = macro_details[currency]
+            st.markdown(f"**{currency}**")
+            if not fred_key:
+                st.caption("Kein FRED_API_KEY — keine Detaildaten.")
+            else:
+                st.dataframe(detail, use_container_width=True, hide_index=True)
 
 
 def render_extra_makro_sentiment() -> None:
