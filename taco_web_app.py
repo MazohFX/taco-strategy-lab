@@ -10800,7 +10800,10 @@ def render_currency_matrix_section() -> None:
             if not fred_key:
                 st.caption("Kein FRED_API_KEY — keine Detaildaten.")
             else:
-                st.dataframe(detail, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    detail.style.map(_matrix_cell_color, subset=["Trend"]),
+                    use_container_width=True, hide_index=True,
+                )
 
 
 def render_extra_makro_sentiment() -> None:
