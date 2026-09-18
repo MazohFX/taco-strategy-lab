@@ -10042,13 +10042,14 @@ EXTRA_ASSETS = {
     "AUD":        "AUDUSD=X",
     "NZD":        "NZDUSD=X",
     "CAD":        "CAD=X",
+    "CHF":        "CHF=X",
     "JPY":        "JPY=X",
 }
 
-# USD-quotierte Ticker (USDCAD/USDJPY): ein Kursanstieg bedeutet eine SCHWAECHERE
-# Fremdwaehrung, daher Momentum/Return fuer diese Assets invertieren (wie in der
-# Waehrungsmatrix, CURRENCY_SYMBOLS weiter unten).
-INVERT_MOMENTUM_ASSETS = {"CAD", "JPY"}
+# USD-quotierte Ticker (USDCAD/USDCHF/USDJPY): ein Kursanstieg bedeutet eine
+# SCHWAECHERE Fremdwaehrung, daher Momentum/Return fuer diese Assets invertieren
+# (wie in der Waehrungsmatrix, CURRENCY_SYMBOLS weiter unten).
+INVERT_MOMENTUM_ASSETS = {"CAD", "CHF", "JPY"}
 
 # Reuse der bestehenden COT-Watchlist (COT_WATCHLIST, Zeile ~4088) statt Duplikat.
 ASSET_TO_COT_LABEL = {
@@ -10061,6 +10062,7 @@ ASSET_TO_COT_LABEL = {
     "AUD":        "AUD Futures",
     "NZD":        "NZD Futures",
     "CAD":        "CANADA Futures",
+    "CHF":        "CHF Futures",
     "JPY":        "YEN Futures",
 }
 
@@ -10117,12 +10119,12 @@ BLS_IMPACT = {
 # +1 = Ueberraschung nach oben wirkt bullish fuer das Asset, -1 = bearish.
 # Vereinfachte redaktionelle Faustregel, kein validiertes Modell.
 DIRECTION_MATRIX = {
-    "CPI":                {"Gold": +1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "JPY": -1},
-    "NONFARM_PAYROLL":    {"Gold": -1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "JPY": -1},
-    "UNEMPLOYMENT":       {"Gold": +1, "DXY": -1, "Nasdaq 100": +1, "S&P 500": +1, "EUR": +1, "GBP": +1, "AUD": +1, "NZD": +1, "CAD": +1, "JPY": +1},
-    "FEDERAL_FUNDS_RATE": {"Gold": -1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "JPY": -1},
-    "RETAIL_SALES":       {"Gold": -1, "DXY": +1, "Nasdaq 100": +1, "S&P 500": +1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "JPY": -1},
-    "REAL_GDP":           {"Gold": -1, "DXY": +1, "Nasdaq 100": +1, "S&P 500": +1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "JPY": -1},
+    "CPI":                {"Gold": +1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "CHF": -1, "JPY": -1},
+    "NONFARM_PAYROLL":    {"Gold": -1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "CHF": -1, "JPY": -1},
+    "UNEMPLOYMENT":       {"Gold": +1, "DXY": -1, "Nasdaq 100": +1, "S&P 500": +1, "EUR": +1, "GBP": +1, "AUD": +1, "NZD": +1, "CAD": +1, "CHF": +1, "JPY": +1},
+    "FEDERAL_FUNDS_RATE": {"Gold": -1, "DXY": +1, "Nasdaq 100": -1, "S&P 500": -1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "CHF": -1, "JPY": -1},
+    "RETAIL_SALES":       {"Gold": -1, "DXY": +1, "Nasdaq 100": +1, "S&P 500": +1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "CHF": -1, "JPY": -1},
+    "REAL_GDP":           {"Gold": -1, "DXY": +1, "Nasdaq 100": +1, "S&P 500": +1, "EUR": -1, "GBP": -1, "AUD": -1, "NZD": -1, "CAD": -1, "CHF": -1, "JPY": -1},
 }
 # Fremdwaehrungs-Richtung = -DXY-Richtung (vereinfachte Annahme: Dollarstaerke wirkt
 # symmetrisch gegenlaeufig auf USD-Kreuze). Redaktionelle Faustregel, kein Modell.
