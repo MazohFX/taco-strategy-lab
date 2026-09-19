@@ -10643,16 +10643,33 @@ _MACRO_COUNTRY_NAMES = {
     "CHF": "Switzerland", "JPY": "Japan",
 }
 
+# "Offene Stellen" (Jobangebote/Vakanzen, das "Openings"-Gegenstueck zu JOLTS):
+# fuer CAD gibt es keine per FRED-Volltextsuche auffindbare Serie -> Sonderfall
+# ueber die Statistics-Canada-WDS-API (STATCAN_CAD-Sentinel). Fuer NZD gibt es
+# offiziell nur MBIE "Jobs Online", dessen CSV-Download hinter einem
+# Bot-Schutz (Incapsula) liegt und sich nicht zuverlaessig automatisiert
+# abrufen laesst -> bewusst None (n/a), kein Ersatz gefunden. Eine "Kuendigungen"-
+# Kennzahl (Quits Rate wie im US-JOLTS) existiert international so gut wie
+# nirgends offiziell -> nicht abbildbar, daher nur die Angebotsseite (Vakanzen).
+STATCAN_CAD_SENTINEL = "__STATCAN_CAD_JOB_VACANCY_RATE__"
+
 CURRENCY_MACRO_QUERIES = {
     cur: {
         "Leitzins": f"3-Month Interbank Rate {name}",
         "Inflation (CPI YoY)": f"Consumer Price Index Total All Items {name} growth rate same period previous year",
         "Arbeitslosenquote": f"Harmonized Unemployment Rate: Total: All Persons for {'the ' if name in ('United Kingdom', 'United States', 'Euro Area') else ''}{name}",
         "10J-Anleiherendite": f"Long-Term Government Bond Yields: 10-year: Main for {name}",
+        "Offene Stellen": (
+            "JOLTS Job Openings Rate Total Nonfarm" if cur == "USD"
+            else "Unfilled Vacancies Germany" if cur == "EUR"
+            else f"Unfilled Vacancies {name}"
+        ),
     }
     for cur, name in _MACRO_COUNTRY_NAMES.items()
 }
 CURRENCY_MACRO_QUERIES["DXY"] = CURRENCY_MACRO_QUERIES["USD"]
+CURRENCY_MACRO_QUERIES["CAD"]["Offene Stellen"] = STATCAN_CAD_SENTINEL
+CURRENCY_MACRO_QUERIES["NZD"]["Offene Stellen"] = None
 
 MACRO_INVERT_INDICATORS = {"Arbeitslosenquote"}
 
@@ -10722,19 +10739,55 @@ def fred_trend_score(df: pd.DataFrame, invert: bool) -> float | None:
     return -sign if invert else sign
 
 
+# Statistics Canada Web Data Service (WDS) API: kostenlos, kein API-Key.
+# Tabelle 14-10-0371-01 "Job vacancies, payroll employees, and job vacancy
+# rate by provinces and territories, monthly" -- Koordinate 1.4.* = Kanada
+# gesamt / Statistik "Job vacancy rate".
+@st.cache_data(ttl=24 * 60 * 60)
+def fetch_statcan_job_vacancy_rate(limit: int = 6) -> pd.DataFrame:
+    try:
+        import requests
+
+        payload = [{"productId": 14100371, "coordinate": "1.4.0.0.0.0.0.0.0.0", "latestN": limit}]
+        response = requests.post(
+            "https://www150.statcan.gc.ca/t1/wds/rest/getDataFromCubePidCoordAndLatestNPeriods",
+            json=payload, timeout=12,
+        )
+        response.raise_for_status()
+        data = response.json()
+        points = data[0]["object"]["vectorDataPoint"]
+        df = pd.DataFrame([{"date": p["refPer"], "value": p["value"]} for p in points])
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        return df.dropna(subset=["date", "value"]).sort_values("date").reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
 def compute_macro_score_row(currency: str, api_key: str) -> dict:
     queries = CURRENCY_MACRO_QUERIES.get(currency, {})
     rows = []
     contributions = []
     for indicator, query in queries.items():
-        series_id = find_fred_series_id(query, api_key) if api_key else None
-        values = fetch_fred_series_values(series_id, api_key) if series_id else pd.DataFrame()
+        if query is None:
+            rows.append({
+                "Indikator": indicator, "Serie": "nicht verfuegbar (keine automatisierbare Quelle gefunden)",
+                "Letzter Wert": None, "Wert vor Fenster": None, "Trend": "n/a",
+            })
+            continue
+        if query == STATCAN_CAD_SENTINEL:
+            series_label = "StatCan 14-10-0371-01"
+            values = fetch_statcan_job_vacancy_rate()
+        else:
+            series_id = find_fred_series_id(query, api_key) if api_key else None
+            series_label = series_id or "n/a"
+            values = fetch_fred_series_values(series_id, api_key) if series_id else pd.DataFrame()
         trend = fred_trend_score(values, invert=indicator in MACRO_INVERT_INDICATORS)
         if trend is not None:
             contributions.append(trend)
         rows.append({
             "Indikator": indicator,
-            "Serie": series_id or "n/a",
+            "Serie": series_label,
             "Letzter Wert": round(float(values["value"].iloc[-1]), 2) if not values.empty else None,
             "Wert vor Fenster": round(float(values["value"].iloc[0]), 2) if not values.empty else None,
             "Trend": "n/a" if trend is None else ("BULLISH" if trend > 0 else "BEARISH" if trend < 0 else "NEUTRAL"),
@@ -10759,10 +10812,14 @@ def render_currency_matrix_section() -> None:
         "Short (15m) und Mid (4h): reines Preis-Momentum auf Intraday-Kursen (yfinance, kann bei "
         "Feiertagen/Datenluecken 'n/a' zeigen). Long (Struktur): Momentum (60%, wochenbasiert) + "
         "CFTC-COT-Score (40%). Makro (Wochen): Trend (letzte verfuegbare Werte, meist Monatsdaten) "
-        "bei Leitzins, Inflation, Arbeitslosenquote und 10J-Anleiherendite je Land (FRED, "
-        "gleichgewichtet). Steigender Leitzins/Inflation/Rendite = angenommen bullish (hawkishe "
-        "Notenbank), fallende Arbeitslosenquote = bullish. Vereinfachte Heuristik, kein validiertes "
-        "Modell, kein Bezug zu Short/Mid/Long."
+        "bei Leitzins, Inflation, Arbeitslosenquote, 10J-Anleiherendite und offenen Stellen je Land "
+        "(FRED, fuer CAD Statistics Canada, gleichgewichtet). Steigender Leitzins/Inflation/Rendite/"
+        "offene Stellen = angenommen bullish (hawkishe Notenbank bzw. enger Arbeitsmarkt), fallende "
+        "Arbeitslosenquote = bullish. Fuer NZD gibt es keine automatisierbare Vakanzen-Quelle "
+        "(einziger offizieller Datensatz MBIE 'Jobs Online' liegt hinter Bot-Schutz) — dort bleibt "
+        "'Offene Stellen' 'n/a'. Eine 'Kuendigungen'-Kennzahl wie beim US-JOLTS gibt es international "
+        "sonst nirgends offiziell vergleichbar. Vereinfachte Heuristik, kein validiertes Modell, kein "
+        "Bezug zu Short/Mid/Long."
     )
     fred_key = get_fred_api_key()
     if not fred_key:
