@@ -10601,6 +10601,7 @@ def matrix_percent_label(score: float) -> tuple[float, str]:
 # Swing-Gewichtung (Richtung fuer die naechsten Tage): Struktur/Positionierung und
 # Fundamentaldaten tragen, 4h-Momentum ergaenzt, 15m ist zu verrauscht (Gewicht 0).
 SWING_WEIGHTS = {"Long (Struktur)": 0.40, "Makro (Wochen)": 0.35, "Mid (4h)": 0.25}
+_SWING_SHORT_NAMES = {"Long (Struktur)": "Struktur", "Makro (Wochen)": "Makro", "Mid (4h)": "4h"}
 
 
 def swing_ampel_row(asset: str, scores: dict) -> dict:
@@ -10610,14 +10611,15 @@ def swing_ampel_row(asset: str, scores: dict) -> dict:
     total_weight = sum(SWING_WEIGHTS[k] for k in available)
     total = sum(SWING_WEIGHTS[k] * v for k, v in available.items()) / total_weight
     percent, signal = sentiment_signal_label(float(np.clip(total, -1, 1)))
-    labels = [matrix_percent_label(v)[1] for v in available.values()]
-    n_long, n_short = labels.count("BULLISH"), labels.count("BEARISH")
-    agree = {"LONG": n_long, "SHORT": n_short}.get(signal, labels.count("NEUTRAL"))
-    return {
-        "Asset": asset,
-        "Gesamt": f"{percent:.0f}% {signal}",
-        "Uebereinstimmung": f"{agree} von {len(available)} Signalen",
-    }
+    wanted = {"LONG": "BULLISH", "SHORT": "BEARISH"}.get(signal, "NEUTRAL")
+    supporters = [_SWING_SHORT_NAMES[k] for k, v in available.items() if matrix_percent_label(v)[1] == wanted]
+    # Klares LONG/SHORT nur, wenn mind. 2 Signalgruppen dieselbe Richtung tragen.
+    if signal in ("LONG", "SHORT") and len(supporters) < 2:
+        signal = "GEMISCHT"
+    detail = f"{len(supporters)} von {len(available)} Gruppen"
+    if supporters:
+        detail += f" ({', '.join(supporters)})"
+    return {"Asset": asset, "Gesamt": f"{percent:.0f}% {signal}", "Uebereinstimmung": detail}
 
 
 def sentiment_signal_label(score: float) -> tuple[float, str]:
@@ -10836,6 +10838,8 @@ def _matrix_cell_color(value: str) -> str:
 
 
 def _signal_cell_color(value: str) -> str:
+    if "GEMISCHT" in value:
+        return "background-color: rgba(234,179,8,.35); color: white; font-weight: 600"
     if "LONG" in value:
         return "background-color: rgba(34,197,94,.35); color: white; font-weight: 600"
     if "SHORT" in value:
@@ -10891,11 +10895,12 @@ def render_currency_matrix_section() -> None:
 
     st.markdown("#### 🚦 Gesamt-Ampel (Swing, Richtung naechste Tage)")
     st.caption(
-        "Faellt zusammen aus: Long (Struktur) 40% + Makro (Wochen) 35% + Mid (4h) 25%. "
-        "Short (15m) zaehlt bewusst nicht mit (fuer Swing zu viel Rauschen). Fehlt ein Signal, werden "
-        "die uebrigen Gewichte hochgerechnet. 'Uebereinstimmung' zeigt, wie viele der Signale in dieselbe "
-        "Richtung zeigen — je weniger, desto unsicherer die Ampel. Vereinfachte Heuristik, kein "
-        "validiertes Modell, kein Finanzrat."
+        "Faellt zusammen aus drei Gruppen: Long (Struktur) 40% + Makro (Wochen) 35% + Mid (4h) 25% "
+        "(Makro = alle Wirtschaftsindikatoren eines Landes zusammen als EINE Gruppe). Short (15m) zaehlt "
+        "bewusst nicht mit (fuer Swing zu viel Rauschen). Fehlt eine Gruppe, werden die uebrigen "
+        "Gewichte hochgerechnet. LONG/SHORT erscheint nur, wenn mindestens 2 Gruppen dieselbe Richtung "
+        "tragen — sonst GEMISCHT (gelb) = Gruppen widersprechen sich, kein klares Signal. Vereinfachte "
+        "Heuristik, kein validiertes Modell, kein Finanzrat."
     )
     ampel_df = pd.DataFrame(ampel_rows).set_index("Asset")
     st.dataframe(ampel_df.style.map(_signal_cell_color, subset=["Gesamt"]), use_container_width=True)
