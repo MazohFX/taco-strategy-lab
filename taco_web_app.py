@@ -10598,6 +10598,13 @@ def matrix_percent_label(score: float) -> tuple[float, str]:
     return percent, label
 
 
+def sentiment_signal_label(score: float) -> tuple[float, str]:
+    """Wie matrix_percent_label, aber LONG/SHORT statt BULLISH/BEARISH fuer die
+    Sentiment-Uebersicht (Trader-Sprache statt Marktkommentator-Sprache)."""
+    percent, label = matrix_percent_label(score)
+    return percent, {"BULLISH": "LONG", "BEARISH": "SHORT", "NEUTRAL": "NEUTRAL"}[label]
+
+
 def compute_currency_matrix_row(currency: str) -> dict:
     meta = CURRENCY_SYMBOLS[currency]
     symbol, invert = meta["symbol"], meta["invert"]
@@ -10806,6 +10813,16 @@ def _matrix_cell_color(value: str) -> str:
     return ""
 
 
+def _signal_cell_color(value: str) -> str:
+    if "LONG" in value:
+        return "background-color: rgba(34,197,94,.35); color: white; font-weight: 600"
+    if "SHORT" in value:
+        return "background-color: rgba(239,68,68,.35); color: white; font-weight: 600"
+    if "NEUTRAL" in value:
+        return "background-color: rgba(148,163,184,.20)"
+    return ""
+
+
 def render_currency_matrix_section() -> None:
     st.subheader("💱 Multi-Timeframe Waehrungsmatrix")
     st.caption(
@@ -10909,31 +10926,31 @@ def render_extra_makro_sentiment() -> None:
             use_container_width=True, hide_index=True,
         )
 
-    # ── Abschnitt 2: Sentiment-Kacheln ───────────────────────────────────────
+    # ── Abschnitt 2: Sentiment-Uebersicht ─────────────────────────────────────
     st.subheader("🧭 Sentiment pro Asset")
     st.caption(
         "Momentum: yfinance-Kurse, alle 15 Min. neu geladen — 'Heute' = Return letzter Handelstag "
         "vs. Vortag, 'Diese Woche' = Return letzte 5 Handelstage. COT: CFTC-Socrata-API, "
-        "wochenaktuell (Cache 24h). News: Alpha Vantage, Cache 6h (siehe Hinweis oben)."
+        "wochenaktuell (Cache 24h). News: Alpha Vantage, Cache 6h (siehe Hinweis oben). "
+        "LONG/SHORT = Score auf 0-100% skaliert, gleiche Ampel-Logik wie die Waehrungsmatrix."
     )
 
     results = {}
-    assets_list = list(EXTRA_ASSETS.items())
-    for row_start in range(0, len(assets_list), 5):
-        row_assets = assets_list[row_start:row_start + 5]
-        cols = st.columns(len(row_assets))
-        for col, (asset, symbol) in zip(cols, row_assets):
-            result = compute_asset_sentiment(asset, symbol, api_key, timeframe)
-            results[asset] = result
-            with col:
-                ret_label = "Tagesreturn" if timeframe == "Heute" else "Wochenreturn"
-                ret_value = result["day_pct"] if timeframe == "Heute" else result["week_pct"]
-                st.metric(
-                    asset,
-                    result["label"],
-                    f"{ret_value:+.2f}% ({ret_label})" if ret_value is not None else "n/a",
-                )
-                st.caption(f"Score: {result['score']:+.2f}")
+    ret_label = "Tagesreturn" if timeframe == "Heute" else "Wochenreturn"
+    summary_rows = []
+    for asset, symbol in EXTRA_ASSETS.items():
+        result = compute_asset_sentiment(asset, symbol, api_key, timeframe)
+        results[asset] = result
+        ret_value = result["day_pct"] if timeframe == "Heute" else result["week_pct"]
+        percent, signal = sentiment_signal_label(result["score"])
+        summary_rows.append({
+            "Asset": asset,
+            "Signal": f"{percent:.0f}% {signal}",
+            "Score": f"{result['score']:+.2f}",
+            ret_label: f"{ret_value:+.2f}%" if ret_value is not None else "n/a",
+        })
+    summary_df = pd.DataFrame(summary_rows).set_index("Asset")
+    st.dataframe(summary_df.style.map(_signal_cell_color, subset=["Signal"]), use_container_width=True)
 
     # ── Abschnitt 3: Detailaufschluesselung ──────────────────────────────────
     st.subheader("🔍 Detailaufschluesselung")
