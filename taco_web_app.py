@@ -10598,6 +10598,28 @@ def matrix_percent_label(score: float) -> tuple[float, str]:
     return percent, label
 
 
+# Swing-Gewichtung (Richtung fuer die naechsten Tage): Struktur/Positionierung und
+# Fundamentaldaten tragen, 4h-Momentum ergaenzt, 15m ist zu verrauscht (Gewicht 0).
+SWING_WEIGHTS = {"Long (Struktur)": 0.40, "Makro (Wochen)": 0.35, "Mid (4h)": 0.25}
+
+
+def swing_ampel_row(asset: str, scores: dict) -> dict:
+    available = {k: scores[k] for k in SWING_WEIGHTS if scores.get(k) is not None}
+    if not available:
+        return {"Asset": asset, "Gesamt": "n/a", "Uebereinstimmung": "n/a"}
+    total_weight = sum(SWING_WEIGHTS[k] for k in available)
+    total = sum(SWING_WEIGHTS[k] * v for k, v in available.items()) / total_weight
+    percent, signal = sentiment_signal_label(float(np.clip(total, -1, 1)))
+    labels = [matrix_percent_label(v)[1] for v in available.values()]
+    n_long, n_short = labels.count("BULLISH"), labels.count("BEARISH")
+    agree = {"LONG": n_long, "SHORT": n_short}.get(signal, labels.count("NEUTRAL"))
+    return {
+        "Asset": asset,
+        "Gesamt": f"{percent:.0f}% {signal}",
+        "Uebereinstimmung": f"{agree} von {len(available)} Signalen",
+    }
+
+
 def sentiment_signal_label(score: float) -> tuple[float, str]:
     """Wie matrix_percent_label, aber LONG/SHORT statt BULLISH/BEARISH fuer die
     Sentiment-Uebersicht (Trader-Sprache statt Marktkommentator-Sprache)."""
@@ -10846,11 +10868,13 @@ def render_currency_matrix_section() -> None:
         )
 
     rows = []
+    ampel_rows = []
     macro_details = {}
     for currency in CURRENCY_MATRIX_ASSETS:
         scores = compute_currency_matrix_row(currency)
         macro = compute_macro_score_row(currency, fred_key)
         macro_details[currency] = macro["detail"]
+        ampel_rows.append(swing_ampel_row(currency, {**scores, "Makro (Wochen)": macro["score"]}))
         row = {"Asset": currency}
         for col_label, score in scores.items():
             if score is None:
@@ -10865,8 +10889,20 @@ def render_currency_matrix_section() -> None:
             row["Makro (Wochen)"] = f"{percent:.0f}% {label}"
         rows.append(row)
 
+    st.markdown("#### 🚦 Gesamt-Ampel (Swing, Richtung naechste Tage)")
+    st.caption(
+        "Faellt zusammen aus: Long (Struktur) 40% + Makro (Wochen) 35% + Mid (4h) 25%. "
+        "Short (15m) zaehlt bewusst nicht mit (fuer Swing zu viel Rauschen). Fehlt ein Signal, werden "
+        "die uebrigen Gewichte hochgerechnet. 'Uebereinstimmung' zeigt, wie viele der Signale in dieselbe "
+        "Richtung zeigen — je weniger, desto unsicherer die Ampel. Vereinfachte Heuristik, kein "
+        "validiertes Modell, kein Finanzrat."
+    )
+    ampel_df = pd.DataFrame(ampel_rows).set_index("Asset")
+    st.dataframe(ampel_df.style.map(_signal_cell_color, subset=["Gesamt"]), use_container_width=True)
+
     matrix_df = pd.DataFrame(rows).set_index("Asset")
     cols_to_style = list(matrix_df.columns)
+    st.markdown("#### Einzelsignale")
     st.dataframe(matrix_df.style.map(_matrix_cell_color, subset=cols_to_style), use_container_width=True)
 
     with st.expander("🌍 Wochenview Makro-Fundamentaldaten (Detail je Waehrung)"):
@@ -10973,9 +11009,14 @@ def render_extra_makro_sentiment() -> None:
                 st.caption("Kein Alpha-Vantage-Key hinterlegt — Makro-Ueberraschungen nicht verfuegbar.")
             st.caption("Retail-Sentiment: nicht verfuegbar (kein kostenloser, ToS-konformer Anbieter bekannt). Gewicht = 0.")
 
-    # ── Abschnitt 4: Candlestick-Chart ───────────────────────────────────────
-    st.subheader("📈 Kursverlauf (3 Monate)")
+    # ── Abschnitt 4: Asset-Auswahl + KI Marktanalyse (direkt unter dem Sentiment) ──
+    # Vor der (langsamen) Waehrungsmatrix, damit die KI-Analyse sofort erscheint
+    # und nicht erst nach allen API-Calls der Seite.
+    st.subheader("📈 Asset-Auswahl (Kursverlauf, COT, KI-Analyse)")
     chart_asset = st.selectbox("Asset", list(EXTRA_ASSETS.keys()), key="extra_chart_asset")
+    render_ki_analyse(chart_asset, EXTRA_ASSETS[chart_asset])
+
+    st.subheader("📈 Kursverlauf (3 Monate)")
     chart_df = results[chart_asset]["price_df"]
     if chart_df.empty:
         st.warning(f"Keine Kursdaten fuer {chart_asset} verfuegbar.")
@@ -11000,9 +11041,6 @@ def render_extra_makro_sentiment() -> None:
 
     # ── Abschnitt 6: Waehrungsmatrix ──────────────────────────────────────────
     render_currency_matrix_section()
-
-    # ── Abschnitt 7: KI Marktanalyse (bestehendes Gemini-Modul) ──────────────
-    render_ki_analyse(chart_asset, EXTRA_ASSETS[chart_asset])
 
 
 # ── Extra: COT Commercials vs. Non-Commercials Edge-Analyse ──────────────────
