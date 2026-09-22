@@ -1064,9 +1064,9 @@ Schreibe einen kompakten deutschen Fließtext in 6-8 Sätzen mit konkreten Zahle
     # high demand" ist ein Kapazitaetsproblem bei Google, kein Konto-/Quota-Problem und
     # betrifft typischerweise nur ein einzelnes Modell zu einem bestimmten Zeitpunkt).
     attempts = [
-        {"model": "gemini-3.5-flash", "config": _grounding_tool_config()},
+        {"model": "gemini-3.6-flash", "config": _grounding_tool_config()},
+        {"model": "gemini-3.6-flash", "config": None},
         {"model": "gemini-3.5-flash", "config": None},
-        {"model": "gemini-2.5-flash", "config": None},
     ]
     last_exc: Exception | None = None
     for i, attempt in enumerate(attempts):
