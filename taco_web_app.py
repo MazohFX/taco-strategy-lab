@@ -10967,7 +10967,20 @@ def render_extra_makro_sentiment() -> None:
             use_container_width=True, hide_index=True,
         )
 
-    # ── Abschnitt 2: Sentiment-Uebersicht ─────────────────────────────────────
+    # ── Abschnitt 2: Asset-Auswahl + CFTC COT Positionierung (Tacho) ──────────
+    # Ganz oben, direkt nach dem Kalender: dient auch als Asset-Wahl fuer die
+    # KI-Analyse weiter unten.
+    st.subheader("📊 CFTC COT Positionierung (Detail)")
+    chart_asset = st.selectbox("Asset", list(EXTRA_ASSETS.keys()), key="extra_chart_asset")
+    auto_match_extra_cot = st.checkbox("Auto-match an oben gewaehltes Asset", value=False, key="extra_auto_match_cot")
+    st.caption(
+        "Standardmaessig frei waehlbar (Dropdown direkt unten: NQ, EURO, CANADA, YEN, CHF, Pfund, "
+        "AUD, NZD Futures, Silver, Copper, Platinum, ...). Haekchen aktivieren, um den COT-Markt "
+        "stattdessen automatisch an das oben gewaehlte Asset zu koppeln."
+    )
+    render_cot_panel(auto_match_extra_cot, chart_asset, EXTRA_ASSETS[chart_asset])
+
+    # ── Abschnitt 3: Sentiment-Uebersicht ─────────────────────────────────────
     st.subheader("🧭 Sentiment pro Asset")
     st.caption(
         "Momentum: yfinance-Kurse, alle 15 Min. neu geladen — 'Heute' = Return letzter Handelstag "
@@ -10993,7 +11006,7 @@ def render_extra_makro_sentiment() -> None:
     summary_df = pd.DataFrame(summary_rows).set_index("Asset")
     st.dataframe(summary_df.style.map(_signal_cell_color, subset=["Signal"]), use_container_width=True)
 
-    # ── Abschnitt 3: Detailaufschluesselung ──────────────────────────────────
+    # ── Abschnitt 4: Detailaufschluesselung ──────────────────────────────────
     st.subheader("🔍 Detailaufschluesselung")
     for asset, result in results.items():
         with st.expander(f"{asset} — {result['label']} ({result['score']:+.2f})"):
@@ -11014,38 +11027,14 @@ def render_extra_makro_sentiment() -> None:
                 st.caption("Kein Alpha-Vantage-Key hinterlegt — Makro-Ueberraschungen nicht verfuegbar.")
             st.caption("Retail-Sentiment: nicht verfuegbar (kein kostenloser, ToS-konformer Anbieter bekannt). Gewicht = 0.")
 
-    # ── Abschnitt 4: Asset-Auswahl + KI Marktanalyse (direkt unter dem Sentiment) ──
-    # Vor der (langsamen) Waehrungsmatrix, damit die KI-Analyse sofort erscheint
-    # und nicht erst nach allen API-Calls der Seite.
-    st.subheader("📈 Asset-Auswahl (Kursverlauf, COT, KI-Analyse)")
-    chart_asset = st.selectbox("Asset", list(EXTRA_ASSETS.keys()), key="extra_chart_asset")
-    render_ki_analyse(chart_asset, EXTRA_ASSETS[chart_asset])
-
-    st.subheader("📈 Kursverlauf (3 Monate)")
-    chart_df = results[chart_asset]["price_df"]
-    if chart_df.empty:
-        st.warning(f"Keine Kursdaten fuer {chart_asset} verfuegbar.")
-    else:
-        fig = go.Figure(go.Candlestick(
-            x=chart_df["Date"], open=chart_df["Open"], high=chart_df["High"],
-            low=chart_df["Low"], close=chart_df["Close"], name=chart_asset,
-        ))
-        fig.update_layout(title=f"{chart_asset} — 3 Monate", height=420, template="plotly_dark",
-                           xaxis_rangeslider_visible=False, margin=dict(t=40, b=20))
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ── Abschnitt 5: CFTC COT Positionierung (bestehendes COT-Modul) ─────────
-    st.subheader("📊 CFTC COT Positionierung (Detail)")
-    auto_match_extra_cot = st.checkbox("Auto-match an oben gewaehltes Asset", value=False, key="extra_auto_match_cot")
-    st.caption(
-        "Standardmaessig frei waehlbar (Dropdown direkt unten: NQ, EURO, CANADA, YEN, CHF, Pfund, "
-        "AUD, NZD Futures, Silver, Copper, Platinum, ...). Haekchen aktivieren, um den COT-Markt "
-        "stattdessen automatisch an das oben gewaehlte Chart-Asset zu koppeln."
-    )
-    render_cot_panel(auto_match_extra_cot, chart_asset, EXTRA_ASSETS[chart_asset])
-
-    # ── Abschnitt 6: Waehrungsmatrix ──────────────────────────────────────────
+    # ── Abschnitt 5: Waehrungsmatrix + Gesamt-Ampel ───────────────────────────
     render_currency_matrix_section()
+
+    # ── Abschnitt 6: KI Marktanalyse ──────────────────────────────────────────
+    # Bewusst als letztes: die Web-Suche blockiert mehrere Sekunden, da Streamlit
+    # synchron von oben nach unten rendert -- COT/Sentiment/Ampel sollen nicht
+    # darauf warten muessen.
+    render_ki_analyse(chart_asset, EXTRA_ASSETS[chart_asset])
 
 
 # ── Extra: COT Commercials vs. Non-Commercials Edge-Analyse ──────────────────
