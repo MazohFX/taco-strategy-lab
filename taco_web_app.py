@@ -10673,6 +10673,17 @@ _MACRO_COUNTRY_NAMES = {
     "AUD": "Australia", "NZD": "New Zealand", "CAD": "Canada",
     "CHF": "Switzerland", "JPY": "Japan",
 }
+_MACRO_ISO3 = {
+    "USD": "USA", "EUR": "EA19", "GBP": "GBR", "AUD": "AUS",
+    "NZD": "NZL", "CAD": "CAN", "CHF": "CHE", "JPY": "JPN",
+}
+# Praefix fuer Indikatoren, bei denen die FRED-Volltextsuche unzuverlaessig ist
+# (z.B. "Composite Leading Indicator" landet bei manchen Laendern auf dem
+# falschen, aehnlich betitelten "Consumer Confidence"-Pendant). Die OECD-
+# Namenskonvention ist hier deterministisch (ISO3 + fester Suffix) und wurde
+# fuer alle 8 Laender einzeln per direktem Serien-Lookup verifiziert -> Serie
+# direkt referenzieren statt suchen.
+FRED_ID_PREFIX = "FREDID:"
 
 # "Offene Stellen" (Jobangebote/Vakanzen, das "Openings"-Gegenstueck zu JOLTS):
 # fuer CAD gibt es keine per FRED-Volltextsuche auffindbare Serie -> Sonderfall
@@ -10704,6 +10715,8 @@ CURRENCY_MACRO_QUERIES = {
             "Current Account Balance Percent of GDP Euro Area" if cur == "EUR"
             else f"{name} Current Account Balance Revenue Minus Expenditure"
         ),
+        "BIP-Wachstum": f"Gross Domestic Product {name} growth rate same period previous year",
+        "Fruehindikator (CLI)": f"{FRED_ID_PREFIX}{_MACRO_ISO3[cur]}LOLITOAASTSAM",
     }
     for cur, name in _MACRO_COUNTRY_NAMES.items()
 }
@@ -10818,6 +10831,10 @@ def compute_macro_score_row(currency: str, api_key: str) -> dict:
         if query == STATCAN_CAD_SENTINEL:
             series_label = "StatCan 14-10-0371-01"
             values = fetch_statcan_job_vacancy_rate()
+        elif query.startswith(FRED_ID_PREFIX):
+            series_id = query[len(FRED_ID_PREFIX):]
+            series_label = series_id
+            values = fetch_fred_series_values(series_id, api_key) if api_key else pd.DataFrame()
         else:
             series_id = find_fred_series_id(query, api_key) if api_key else None
             series_label = series_id or "n/a"
@@ -10912,10 +10929,13 @@ def render_signal_scatter(raw_scores: dict) -> None:
         ))
 
     fig.update_layout(
-        template="plotly_dark", height=420, margin=dict(t=20, b=20),
+        template="plotly_dark", height=420, margin=dict(t=20, b=20, l=60, r=90),
         xaxis=dict(
             type="log", title="Horizont (illustrativ)",
             tickvals=list(SIGNAL_HORIZON_DAYS.values()), ticktext=list(SIGNAL_HORIZON_DAYS.keys()),
+            # Range bewusst breiter als die Datenpunkte, sonst faellt die letzte
+            # Achsenbeschriftung ("Makro (Wochen)") aus dem Plot-Rand raus.
+            range=[math.log10(0.03), math.log10(45)],
         ),
         yaxis=dict(title="Signal-Staerke (%)", range=[0, 100]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
@@ -10930,10 +10950,12 @@ def render_currency_matrix_section() -> None:
         "Feiertagen/Datenluecken 'n/a' zeigen). Long (Struktur): Momentum (60%, wochenbasiert) + "
         "CFTC-COT-Score (40%). Makro (Wochen): Trend (letzte verfuegbare Werte, meist Monatsdaten) "
         "bei Leitzins, Inflation, Arbeitslosenquote, 10J-Anleiherendite, offenen Stellen, "
-        "Einzelhandelsumsatz, Geschaeftsklima und Leistungsbilanz je Land (FRED, fuer CAD Statistics "
-        "Canada, gleichgewichtet). Steigender Leitzins/Inflation/Rendite/offene Stellen/Umsatz/"
-        "Geschaeftsklima/Leistungsbilanz = angenommen bullish (hawkishe Notenbank bzw. staerkere "
-        "Wirtschaft), fallende Arbeitslosenquote = bullish. Fuer NZD gibt es keine automatisierbare Vakanzen-Quelle "
+        "Einzelhandelsumsatz, Geschaeftsklima, Leistungsbilanz, BIP-Wachstum und Fruehindikator (OECD "
+        "Composite Leading Indicator, PMI-Ersatz -- echte PMI-Daten sind proprietaer/nicht frei "
+        "verfuegbar) je Land (FRED, fuer CAD Statistics Canada, gleichgewichtet). Steigender "
+        "Leitzins/Inflation/Rendite/offene Stellen/Umsatz/Geschaeftsklima/Leistungsbilanz/BIP/"
+        "Fruehindikator = angenommen bullish (hawkishe Notenbank bzw. staerkere Wirtschaft), fallende "
+        "Arbeitslosenquote = bullish. Fuer NZD gibt es keine automatisierbare Vakanzen-Quelle "
         "(einziger offizieller Datensatz MBIE 'Jobs Online' liegt hinter Bot-Schutz) — dort bleibt "
         "'Offene Stellen' 'n/a'. Eine 'Kuendigungen'-Kennzahl wie beim US-JOLTS gibt es international "
         "sonst nirgends offiziell vergleichbar. Vereinfachte Heuristik, kein validiertes Modell, kein "
@@ -10946,13 +10968,22 @@ def render_currency_matrix_section() -> None:
             "Kostenloser Key: fred.stlouisfed.org/docs/api/api_key.html"
         )
 
+    # 10 Makro-Indikatoren x 8 Waehrungen -> potenziell ~150 sequenzielle FRED-Requests
+    # bei kaltem Cache. Pro Waehrung parallelisieren (jede ist unabhaengig), sonst
+    # dauert der Seitenaufbau bei kaltem Cache mehrere Minuten.
+    with ThreadPoolExecutor(max_workers=len(CURRENCY_MATRIX_ASSETS)) as pool:
+        futures = {
+            currency: pool.submit(lambda c=currency: (compute_currency_matrix_row(c), compute_macro_score_row(c, fred_key)))
+            for currency in CURRENCY_MATRIX_ASSETS
+        }
+        per_currency = {currency: fut.result() for currency, fut in futures.items()}
+
     rows = []
     ampel_rows = []
     macro_details = {}
     raw_scores = {}
     for currency in CURRENCY_MATRIX_ASSETS:
-        scores = compute_currency_matrix_row(currency)
-        macro = compute_macro_score_row(currency, fred_key)
+        scores, macro = per_currency[currency]
         macro_details[currency] = macro["detail"]
         combined_scores = {**scores, "Makro (Wochen)": macro["score"]}
         raw_scores[currency] = combined_scores
