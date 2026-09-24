@@ -10695,6 +10695,15 @@ CURRENCY_MACRO_QUERIES = {
             else "Unfilled Vacancies Germany" if cur == "EUR"
             else f"Unfilled Vacancies {name}"
         ),
+        "Einzelhandelsumsatz": f"Retail Trade Volume {name} growth rate same period previous year",
+        "Geschaeftsklima": (
+            "Business Confidence Canada" if cur == "CAD"
+            else f"Business Confidence Amplitude Adjusted {name}"
+        ),
+        "Leistungsbilanz": (
+            "Current Account Balance Percent of GDP Euro Area" if cur == "EUR"
+            else f"{name} Current Account Balance Revenue Minus Expenditure"
+        ),
     }
     for cur, name in _MACRO_COUNTRY_NAMES.items()
 }
@@ -10849,16 +10858,82 @@ def _signal_cell_color(value: str) -> str:
     return ""
 
 
+# Grobe, illustrative Horizont-Platzierung der 4 Einzelsignale auf einer Tage-Achse
+# (log). KEIN gemessener/validierter Vorhersage-Horizont -- reine Einordnung, wie
+# "kurzfristig" vs. "langfristig" jedes Signal in etwa gemeint ist (15m-Kerzen vs.
+# Monatsdaten). Bewusst kein ML-Modell, keine Backtest-Wahrscheinlichkeit.
+SIGNAL_HORIZON_DAYS = {
+    "Short (15m)": 0.05, "Mid (4h)": 0.3, "Long (Struktur)": 5, "Makro (Wochen)": 25,
+}
+_SCATTER_COLORS = [
+    "#3b82f6", "#f59e0b", "#a855f7", "#ec4899", "#14b8a6", "#f97316", "#84cc16", "#06b6d4",
+]
+
+
+def render_signal_scatter(raw_scores: dict) -> None:
+    st.markdown("#### 📊 Signal-Scatter (Horizont-Vergleich)")
+    st.caption(
+        "Dieselben 4 Signale wie oben (Short/Mid/Struktur/Makro), nur als Punkte ueber einen "
+        "groben Zeithorizont verteilt -- **kein trainiertes ML-Modell**, keine Backtest-"
+        "Wahrscheinlichkeit, keine Trefferquote. Nur eine andere Ansicht derselben Heuristik-Werte. "
+        "Oben (gruen) = Long-Signal, unten (rot) = Short-Signal, Mitte = neutral. Waehle 1-3 "
+        "Waehrungen zum Vergleichen."
+    )
+    selected = st.multiselect(
+        "Waehrungen", CURRENCY_MATRIX_ASSETS, default=CURRENCY_MATRIX_ASSETS[:2], key="scatter_assets",
+    )
+    if not selected:
+        st.info("Mindestens eine Waehrung auswaehlen.")
+        return
+
+    fig = go.Figure()
+    fig.add_hrect(y0=50, y1=100, fillcolor="rgba(34,197,94,.10)", line_width=0)
+    fig.add_hrect(y0=0, y1=50, fillcolor="rgba(239,68,68,.10)", line_width=0)
+    fig.add_hline(y=50, line_dash="dot", line_color="rgba(148,163,184,.4)")
+
+    for i, currency in enumerate(selected):
+        scores = raw_scores.get(currency, {})
+        xs, ys, texts = [], [], []
+        for label, horizon in SIGNAL_HORIZON_DAYS.items():
+            score = scores.get(label)
+            if score is None:
+                continue
+            percent, signal = matrix_percent_label(score)
+            xs.append(horizon)
+            ys.append(percent)
+            texts.append(f"{currency} · {label}: {percent:.0f}% {signal}")
+        if not xs:
+            continue
+        color = _SCATTER_COLORS[i % len(_SCATTER_COLORS)]
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="lines+markers", name=currency,
+            line=dict(color=color, width=2), marker=dict(size=11, color=color),
+            hovertext=texts, hoverinfo="text",
+        ))
+
+    fig.update_layout(
+        template="plotly_dark", height=420, margin=dict(t=20, b=20),
+        xaxis=dict(
+            type="log", title="Horizont (illustrativ)",
+            tickvals=list(SIGNAL_HORIZON_DAYS.values()), ticktext=list(SIGNAL_HORIZON_DAYS.keys()),
+        ),
+        yaxis=dict(title="Signal-Staerke (%)", range=[0, 100]),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def render_currency_matrix_section() -> None:
     st.subheader("💱 Multi-Timeframe Waehrungsmatrix")
     st.caption(
         "Short (15m) und Mid (4h): reines Preis-Momentum auf Intraday-Kursen (yfinance, kann bei "
         "Feiertagen/Datenluecken 'n/a' zeigen). Long (Struktur): Momentum (60%, wochenbasiert) + "
         "CFTC-COT-Score (40%). Makro (Wochen): Trend (letzte verfuegbare Werte, meist Monatsdaten) "
-        "bei Leitzins, Inflation, Arbeitslosenquote, 10J-Anleiherendite und offenen Stellen je Land "
-        "(FRED, fuer CAD Statistics Canada, gleichgewichtet). Steigender Leitzins/Inflation/Rendite/"
-        "offene Stellen = angenommen bullish (hawkishe Notenbank bzw. enger Arbeitsmarkt), fallende "
-        "Arbeitslosenquote = bullish. Fuer NZD gibt es keine automatisierbare Vakanzen-Quelle "
+        "bei Leitzins, Inflation, Arbeitslosenquote, 10J-Anleiherendite, offenen Stellen, "
+        "Einzelhandelsumsatz, Geschaeftsklima und Leistungsbilanz je Land (FRED, fuer CAD Statistics "
+        "Canada, gleichgewichtet). Steigender Leitzins/Inflation/Rendite/offene Stellen/Umsatz/"
+        "Geschaeftsklima/Leistungsbilanz = angenommen bullish (hawkishe Notenbank bzw. staerkere "
+        "Wirtschaft), fallende Arbeitslosenquote = bullish. Fuer NZD gibt es keine automatisierbare Vakanzen-Quelle "
         "(einziger offizieller Datensatz MBIE 'Jobs Online' liegt hinter Bot-Schutz) — dort bleibt "
         "'Offene Stellen' 'n/a'. Eine 'Kuendigungen'-Kennzahl wie beim US-JOLTS gibt es international "
         "sonst nirgends offiziell vergleichbar. Vereinfachte Heuristik, kein validiertes Modell, kein "
@@ -10874,11 +10949,14 @@ def render_currency_matrix_section() -> None:
     rows = []
     ampel_rows = []
     macro_details = {}
+    raw_scores = {}
     for currency in CURRENCY_MATRIX_ASSETS:
         scores = compute_currency_matrix_row(currency)
         macro = compute_macro_score_row(currency, fred_key)
         macro_details[currency] = macro["detail"]
-        ampel_rows.append(swing_ampel_row(currency, {**scores, "Makro (Wochen)": macro["score"]}))
+        combined_scores = {**scores, "Makro (Wochen)": macro["score"]}
+        raw_scores[currency] = combined_scores
+        ampel_rows.append(swing_ampel_row(currency, combined_scores))
         row = {"Asset": currency}
         for col_label, score in scores.items():
             if score is None:
@@ -10909,6 +10987,8 @@ def render_currency_matrix_section() -> None:
     cols_to_style = list(matrix_df.columns)
     st.markdown("#### Einzelsignale")
     st.dataframe(matrix_df.style.map(_matrix_cell_color, subset=cols_to_style), use_container_width=True)
+
+    render_signal_scatter(raw_scores)
 
     with st.expander("🌍 Wochenview Makro-Fundamentaldaten (Detail je Waehrung)"):
         for currency in CURRENCY_MATRIX_ASSETS:
