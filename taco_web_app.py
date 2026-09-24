@@ -10704,6 +10704,9 @@ CURRENCY_MACRO_QUERIES = {
         "Offene Stellen": (
             "JOLTS Job Openings Rate Total Nonfarm" if cur == "USD"
             else "Unfilled Vacancies Germany" if cur == "EUR"
+            # Japans OECD-Reihe heisst "New Vacancies", nicht "Unfilled Vacancies" --
+            # letzteres liefert dort null Treffer (war der Bug: JPY zeigte n/a).
+            else "New Vacancies Japan" if cur == "JPY"
             else f"Unfilled Vacancies {name}"
         ),
         "Einzelhandelsumsatz": f"Retail Trade Volume {name} growth rate same period previous year",
@@ -10731,8 +10734,19 @@ MACRO_INVERT_INDICATORS = {"Arbeitslosenquote"}
 _FRED_FREQ_PRIORITY = {"M": 0, "Q": 1, "A": 2, "SA": 3, "W": 4, "D": 5}
 
 
+_FRED_FREQ_LABELS = {
+    "D": "Taeglich", "W": "Woechentlich", "M": "Monatlich",
+    "Q": "Quartalsweise", "SA": "Halbjaehrlich", "A": "Jaehrlich",
+}
+
+
+def freq_label(freq_short: str | None) -> str:
+    return _FRED_FREQ_LABELS.get(freq_short or "", freq_short or "n/a")
+
+
 @st.cache_data(ttl=24 * 60 * 60)
-def find_fred_series_id(query: str, api_key: str) -> str | None:
+def find_fred_series_id(query: str, api_key: str) -> tuple[str, str] | None:
+    """Gibt (series_id, frequency_short) zurueck, oder None wenn nichts gefunden."""
     if not api_key:
         return None
     try:
@@ -10751,9 +10765,26 @@ def find_fred_series_id(query: str, api_key: str) -> str | None:
             return None
         candidates = [s for s in series if "DISCONTINUED" not in s.get("title", "").upper()] or series
         candidates.sort(key=lambda s: _FRED_FREQ_PRIORITY.get(s.get("frequency_short", ""), 9))
-        return candidates[0]["id"]
+        best = candidates[0]
+        return best["id"], best.get("frequency_short", "")
     except Exception:
         return None
+
+
+@st.cache_data(ttl=24 * 60 * 60)
+def get_fred_series_frequency(series_id: str, api_key: str) -> str:
+    if not series_id or not api_key:
+        return ""
+    try:
+        import requests
+
+        params = {"series_id": series_id, "api_key": api_key, "file_type": "json"}
+        response = requests.get("https://api.stlouisfed.org/fred/series", params=params, timeout=12)
+        response.raise_for_status()
+        series = response.json().get("seriess", [])
+        return series[0].get("frequency_short", "") if series else ""
+    except Exception:
+        return ""
 
 
 @st.cache_data(ttl=24 * 60 * 60)
@@ -10825,18 +10856,21 @@ def compute_macro_score_row(currency: str, api_key: str) -> dict:
         if query is None:
             rows.append({
                 "Indikator": indicator, "Serie": "nicht verfuegbar (keine automatisierbare Quelle gefunden)",
-                "Letzter Wert": None, "Wert vor Fenster": None, "Trend": "n/a",
+                "Frequenz": "n/a", "Letzter Wert": None, "Wert vor Fenster": None, "Trend": "n/a",
             })
             continue
         if query == STATCAN_CAD_SENTINEL:
             series_label = "StatCan 14-10-0371-01"
+            freq = "M"
             values = fetch_statcan_job_vacancy_rate()
         elif query.startswith(FRED_ID_PREFIX):
             series_id = query[len(FRED_ID_PREFIX):]
             series_label = series_id
+            freq = get_fred_series_frequency(series_id, api_key) if api_key else ""
             values = fetch_fred_series_values(series_id, api_key) if api_key else pd.DataFrame()
         else:
-            series_id = find_fred_series_id(query, api_key) if api_key else None
+            resolved = find_fred_series_id(query, api_key) if api_key else None
+            series_id, freq = resolved if resolved else (None, "")
             series_label = series_id or "n/a"
             values = fetch_fred_series_values(series_id, api_key) if series_id else pd.DataFrame()
         trend = fred_trend_score(values, invert=indicator in MACRO_INVERT_INDICATORS)
@@ -10845,6 +10879,7 @@ def compute_macro_score_row(currency: str, api_key: str) -> dict:
         rows.append({
             "Indikator": indicator,
             "Serie": series_label,
+            "Frequenz": freq_label(freq),
             "Letzter Wert": round(float(values["value"].iloc[-1]), 2) if not values.empty else None,
             "Wert vor Fenster": round(float(values["value"].iloc[0]), 2) if not values.empty else None,
             "Trend": "n/a" if trend is None else ("BULLISH" if trend > 0 else "BEARISH" if trend < 0 else "NEUTRAL"),
