@@ -2,6 +2,8 @@ import json
 import math
 import calendar
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date
@@ -10744,23 +10746,44 @@ def freq_label(freq_short: str | None) -> str:
     return _FRED_FREQ_LABELS.get(freq_short or "", freq_short or "n/a")
 
 
+# Die Makro-Ampel feuert Anfragen fuer 8 Waehrungen parallel ab (siehe
+# ThreadPoolExecutor in render_currency_matrix_section) -- ohne Bremse reisst
+# das FRED's Rate-Limit (viele gleichzeitige Requests von 8 Threads), einzelne
+# Indikatoren kamen dann als "n/a" zurueck obwohl die Serie existiert. Zwei
+# Gegenmassnahmen: (1) ein Semaphore begrenzt gleichzeitige FRED-Requests
+# prozessweit auf 4, unabhaengig davon wie viele Waehrungen parallel laufen;
+# (2) bei HTTP 429 (Rate Limit) automatisch mit Backoff erneut versuchen statt
+# sofort aufzugeben.
+_FRED_REQUEST_SEMAPHORE = threading.Semaphore(4)
+
+
+def _fred_get_json(url: str, params: dict, retries: int = 3) -> dict:
+    import requests
+
+    with _FRED_REQUEST_SEMAPHORE:
+        for attempt in range(retries):
+            response = requests.get(url, params=params, timeout=15)
+            if response.status_code == 429 and attempt < retries - 1:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            response.raise_for_status()
+            return response.json()
+    return {}
+
+
 @st.cache_data(ttl=24 * 60 * 60)
 def find_fred_series_id(query: str, api_key: str) -> tuple[str, str] | None:
     """Gibt (series_id, frequency_short) zurueck, oder None wenn nichts gefunden."""
     if not api_key:
         return None
     try:
-        import requests
-
         params = {
             "search_text": query,
             "api_key": api_key,
             "file_type": "json",
             "limit": 5,
         }
-        response = requests.get("https://api.stlouisfed.org/fred/series/search", params=params, timeout=12)
-        response.raise_for_status()
-        series = response.json().get("seriess", [])
+        series = _fred_get_json("https://api.stlouisfed.org/fred/series/search", params).get("seriess", [])
         if not series:
             return None
         candidates = [s for s in series if "DISCONTINUED" not in s.get("title", "").upper()] or series
@@ -10776,12 +10799,8 @@ def get_fred_series_frequency(series_id: str, api_key: str) -> str:
     if not series_id or not api_key:
         return ""
     try:
-        import requests
-
         params = {"series_id": series_id, "api_key": api_key, "file_type": "json"}
-        response = requests.get("https://api.stlouisfed.org/fred/series", params=params, timeout=12)
-        response.raise_for_status()
-        series = response.json().get("seriess", [])
+        series = _fred_get_json("https://api.stlouisfed.org/fred/series", params).get("seriess", [])
         return series[0].get("frequency_short", "") if series else ""
     except Exception:
         return ""
@@ -10792,8 +10811,6 @@ def fetch_fred_series_values(series_id: str, api_key: str, limit: int = 6) -> pd
     if not series_id or not api_key:
         return pd.DataFrame()
     try:
-        import requests
-
         params = {
             "series_id": series_id,
             "api_key": api_key,
@@ -10801,9 +10818,7 @@ def fetch_fred_series_values(series_id: str, api_key: str, limit: int = 6) -> pd
             "sort_order": "desc",
             "limit": limit,
         }
-        response = requests.get("https://api.stlouisfed.org/fred/series/observations", params=params, timeout=12)
-        response.raise_for_status()
-        data = response.json()
+        data = _fred_get_json("https://api.stlouisfed.org/fred/series/observations", params)
         obs = data.get("observations", [])
         if not obs:
             return pd.DataFrame()
@@ -10978,6 +10993,36 @@ def render_signal_scatter(raw_scores: dict) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+_DONUT_COLORS = {"BULLISH": "#22c55e", "BEARISH": "#ef4444", "NEUTRAL": "#94a3b8", "n/a": "#334155"}
+
+
+def render_macro_donut(currency: str, detail: pd.DataFrame, macro_score: float | None) -> None:
+    """Kreisdiagramm: Anteil bullish/bearish/neutral/n-a unter den Makro-Indikatoren
+    einer Waehrung -- die Flaeche pro Segment gewichtet die Richtung visuell,
+    die Mitte zeigt den zusammengefassten Makro-Score derselben Waehrung."""
+    counts = detail["Trend"].value_counts()
+    labels = [l for l in ("BULLISH", "BEARISH", "NEUTRAL", "n/a") if counts.get(l, 0) > 0]
+    values = [int(counts.get(l, 0)) for l in labels]
+    if not values:
+        st.caption("Keine Daten.")
+        return
+    if macro_score is None:
+        center_text = "n/a"
+    else:
+        percent, signal = matrix_percent_label(macro_score)
+        center_text = f"{percent:.0f}%<br>{signal}"
+    fig = go.Figure(go.Pie(
+        labels=labels, values=values, hole=0.65,
+        marker=dict(colors=[_DONUT_COLORS[l] for l in labels]),
+        textinfo="value", sort=False, showlegend=False,
+    ))
+    fig.update_layout(
+        template="plotly_dark", height=200, margin=dict(t=10, b=10, l=10, r=10),
+        annotations=[dict(text=center_text, showarrow=False, font=dict(size=14))],
+    )
+    st.plotly_chart(fig, use_container_width=True, key=f"macro_donut_{currency}")
+
+
 def render_currency_matrix_section() -> None:
     st.subheader("💱 Multi-Timeframe Waehrungsmatrix")
     st.caption(
@@ -11063,10 +11108,15 @@ def render_currency_matrix_section() -> None:
             if not fred_key:
                 st.caption("Kein FRED_API_KEY — keine Detaildaten.")
             else:
-                st.dataframe(
-                    detail.style.map(_matrix_cell_color, subset=["Trend"]),
-                    use_container_width=True, hide_index=True,
-                )
+                col_donut, col_table = st.columns([1, 3])
+                with col_donut:
+                    render_macro_donut(currency, detail, raw_scores[currency].get("Makro (Wochen)"))
+                with col_table:
+                    st.dataframe(
+                        detail.style.map(_matrix_cell_color, subset=["Trend"]),
+                        use_container_width=True, hide_index=True,
+                    )
+            st.divider()
 
 
 def render_extra_makro_sentiment() -> None:
