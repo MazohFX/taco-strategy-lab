@@ -10671,13 +10671,19 @@ def compute_currency_matrix_row(currency: str) -> dict:
 # FRED fuer AUD/NZD/CHF keine per Volltextsuche auffindbare Leitzins-Serie fuehrt --
 # der 3M-Interbankensatz ist ein etablierter, fuer alle 8 Waehrungen konsistent
 # auffindbarer Proxy (bewegt sich eng mit dem Leitzinszyklus).
+# EUR nutzt Deutschland als Proxy, nicht die "Euro Area"-Aggregatsreihen: die
+# aggregierten EA19-Reihen sind bei FRED fuer mehrere Indikatoren seit 2022/23
+# eingefroren (Leitzins, Inflation, Arbeitslosenquote, Einzelhandel, CLI --
+# einzeln verifiziert), waehrend die deutschen Landesreihen durchgehend aktuell
+# gepflegt werden. Deutschland ist mit ~30% des Euroraum-BIP die groesste und
+# ueblicherweise als EUR-Proxy verwendete Einzelwirtschaft.
 _MACRO_COUNTRY_NAMES = {
-    "USD": "United States", "EUR": "Euro Area", "GBP": "United Kingdom",
+    "USD": "United States", "EUR": "Germany", "GBP": "United Kingdom",
     "AUD": "Australia", "NZD": "New Zealand", "CAD": "Canada",
     "CHF": "Switzerland", "JPY": "Japan",
 }
 _MACRO_ISO3 = {
-    "USD": "USA", "EUR": "EA19", "GBP": "GBR", "AUD": "AUS",
+    "USD": "USA", "EUR": "DEU", "GBP": "GBR", "AUD": "AUS",
     "NZD": "NZL", "CAD": "CAN", "CHF": "CHE", "JPY": "JPN",
 }
 # Praefix fuer Indikatoren, bei denen die FRED-Volltextsuche unzuverlaessig ist
@@ -10706,7 +10712,6 @@ CURRENCY_MACRO_QUERIES = {
         "10J-Anleiherendite": f"Long-Term Government Bond Yields: 10-year: Main for {name}",
         "Offene Stellen": (
             "JOLTS Job Openings Rate Total Nonfarm" if cur == "USD"
-            else "Unfilled Vacancies Germany" if cur == "EUR"
             # Japans OECD-Reihe heisst "New Vacancies", nicht "Unfilled Vacancies" --
             # letzteres liefert dort null Treffer (war der Bug: JPY zeigte n/a).
             else "New Vacancies Japan" if cur == "JPY"
@@ -11055,15 +11060,18 @@ def render_signal_scatter(raw_scores: dict) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
-_DONUT_COLORS = {"BULLISH": "#22c55e", "BEARISH": "#ef4444", "NEUTRAL": "#94a3b8", "n/a": "#334155"}
+_DONUT_COLORS = {
+    "BULLISH": "#22c55e", "BEARISH": "#ef4444", "NEUTRAL": "#94a3b8",
+    "n/a (veraltet)": "#eab308", "n/a": "#334155",
+}
 
 
 def render_macro_donut(currency: str, detail: pd.DataFrame, macro_score: float | None) -> None:
-    """Kreisdiagramm: Anteil bullish/bearish/neutral/n-a unter den Makro-Indikatoren
-    einer Waehrung -- die Flaeche pro Segment gewichtet die Richtung visuell,
-    die Mitte zeigt den zusammengefassten Makro-Score derselben Waehrung."""
+    """Kreisdiagramm: Anteil bullish/bearish/neutral/veraltet/n-a unter den
+    Makro-Indikatoren einer Waehrung -- die Flaeche pro Segment gewichtet die
+    Richtung visuell, die Mitte zeigt den zusammengefassten Makro-Score."""
     counts = detail["Trend"].value_counts()
-    labels = [l for l in ("BULLISH", "BEARISH", "NEUTRAL", "n/a") if counts.get(l, 0) > 0]
+    labels = [l for l in _DONUT_COLORS if counts.get(l, 0) > 0]
     values = [int(counts.get(l, 0)) for l in labels]
     if not values:
         st.caption("Keine Daten.")
