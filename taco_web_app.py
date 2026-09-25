@@ -11180,7 +11180,15 @@ def render_extra_makro_sentiment() -> None:
     # Bewusst als letztes: die Web-Suche blockiert mehrere Sekunden, da Streamlit
     # synchron von oben nach unten rendert -- COT/Sentiment/Ampel sollen nicht
     # darauf warten muessen.
-    render_ki_analyse(chart_asset, EXTRA_ASSETS[chart_asset])
+    # Eigene Asset-Auswahl direkt hier (nicht die ganz oben beim COT-Panel), damit
+    # man beim Durchschauen der Paare nicht jedes Mal nach oben scrollen muss.
+    ki_assets = list(EXTRA_ASSETS.keys())
+    ki_asset = st.selectbox(
+        "Asset (KI-Analyse)", ki_assets,
+        index=ki_assets.index(chart_asset) if chart_asset in ki_assets else 0,
+        key="ki_chart_asset",
+    )
+    render_ki_analyse(ki_asset, EXTRA_ASSETS[ki_asset])
 
 
 # ── Extra: COT Commercials vs. Non-Commercials Edge-Analyse ──────────────────
