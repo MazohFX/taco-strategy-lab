@@ -10706,7 +10706,13 @@ STATCAN_CAD_SENTINEL = "__STATCAN_CAD_JOB_VACANCY_RATE__"
 
 CURRENCY_MACRO_QUERIES = {
     cur: {
-        "Leitzins": f"3-Month Interbank Rate {name}",
+        "Leitzins": (
+            # GBPs OECD-Interbankensatz haengt bei Jan 2026 fest -- SONIA (Bank
+            # of England, tagesaktueller offizieller Referenzsatz) ist die
+            # einzige noch aktiv gepflegte UK-Alternative, direkt referenziert.
+            f"{FRED_ID_PREFIX}IUDSOIA" if cur == "GBP"
+            else f"3-Month Interbank Rate {name}"
+        ),
         "Inflation (CPI YoY)": f"Consumer Price Index Total All Items {name} growth rate same period previous year",
         "Arbeitslosenquote": f"Harmonized Unemployment Rate: Total: All Persons for {'the ' if name in ('United Kingdom', 'United States', 'Euro Area') else ''}{name}",
         "10J-Anleiherendite": f"Long-Term Government Bond Yields: 10-year: Main for {name}",
