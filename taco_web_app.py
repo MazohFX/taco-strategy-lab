@@ -4,6 +4,7 @@ import calendar
 import re
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date
@@ -10728,6 +10729,11 @@ CURRENCY_MACRO_QUERIES = {
 CURRENCY_MACRO_QUERIES["DXY"] = CURRENCY_MACRO_QUERIES["USD"]
 CURRENCY_MACRO_QUERIES["CAD"]["Offene Stellen"] = STATCAN_CAD_SENTINEL
 CURRENCY_MACRO_QUERIES["NZD"]["Offene Stellen"] = None
+# Japans OECD-CPI-YoY-Reihe (CPALTT01JPM659N) wird seit Juni 2021 nicht mehr
+# befuellt (nicht als "DISCONTINUED" markiert, aber faktisch tot) -- World-
+# Bank-Reihe ueber FRED ist die einzige noch aktiv gepflegte Alternative
+# (jaehrlich statt monatlich, aber echt aktuell).
+CURRENCY_MACRO_QUERIES["JPY"]["Inflation (CPI YoY)"] = f"{FRED_ID_PREFIX}FPCPITOTLZGJPN"
 
 MACRO_INVERT_INDICATORS = {"Arbeitslosenquote"}
 
@@ -10747,27 +10753,54 @@ def freq_label(freq_short: str | None) -> str:
 
 
 # Die Makro-Ampel feuert Anfragen fuer 8 Waehrungen parallel ab (siehe
-# ThreadPoolExecutor in render_currency_matrix_section) -- ohne Bremse reisst
-# das FRED's Rate-Limit (viele gleichzeitige Requests von 8 Threads), einzelne
-# Indikatoren kamen dann als "n/a" zurueck obwohl die Serie existiert. Zwei
-# Gegenmassnahmen: (1) ein Semaphore begrenzt gleichzeitige FRED-Requests
-# prozessweit auf 4, unabhaengig davon wie viele Waehrungen parallel laufen;
-# (2) bei HTTP 429 (Rate Limit) automatisch mit Backoff erneut versuchen statt
-# sofort aufzugeben.
+# ThreadPoolExecutor in render_currency_matrix_section) -- bei kaltem Cache
+# kommen so leicht 150+ FRED-Requests zusammen. Ein reiner Concurrency-
+# Semaphore (max. N gleichzeitig) reicht NICHT: FRED limitiert Anfragen pro
+# Minute, nicht nur gleichzeitige Verbindungen -- 4 parallele Threads koennen
+# trotzdem in 15 Sekunden weit mehr als 120 Requests abfeuern und das
+# Minuten-Limit reissen. Deshalb zusaetzlich ein echter Sliding-Window-
+# Rate-Limiter (max. ~100 Requests/60s, Sicherheitsabstand zu FRED's 120/min),
+# plus Retry mit Backoff bei 429/5xx/Netzwerkfehlern statt sofort aufzugeben.
 _FRED_REQUEST_SEMAPHORE = threading.Semaphore(4)
+_FRED_RATE_LOCK = threading.Lock()
+_FRED_REQUEST_TIMES: deque = deque()
+_FRED_MAX_PER_WINDOW = 100
+_FRED_WINDOW_SECONDS = 60.0
 
 
-def _fred_get_json(url: str, params: dict, retries: int = 3) -> dict:
+def _fred_rate_limit_wait() -> None:
+    while True:
+        with _FRED_RATE_LOCK:
+            now = time.monotonic()
+            while _FRED_REQUEST_TIMES and now - _FRED_REQUEST_TIMES[0] > _FRED_WINDOW_SECONDS:
+                _FRED_REQUEST_TIMES.popleft()
+            if len(_FRED_REQUEST_TIMES) < _FRED_MAX_PER_WINDOW:
+                _FRED_REQUEST_TIMES.append(now)
+                return
+            wait_for = _FRED_WINDOW_SECONDS - (now - _FRED_REQUEST_TIMES[0]) + 0.05
+        time.sleep(max(wait_for, 0.05))
+
+
+def _fred_get_json(url: str, params: dict, retries: int = 4) -> dict:
     import requests
 
     with _FRED_REQUEST_SEMAPHORE:
+        last_exc: Exception | None = None
         for attempt in range(retries):
-            response = requests.get(url, params=params, timeout=15)
-            if response.status_code == 429 and attempt < retries - 1:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            response.raise_for_status()
-            return response.json()
+            _fred_rate_limit_wait()
+            try:
+                response = requests.get(url, params=params, timeout=15)
+                if (response.status_code == 429 or response.status_code >= 500) and attempt < retries - 1:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.RequestException as exc:
+                last_exc = exc
+                if attempt < retries - 1:
+                    time.sleep(1.0 * (attempt + 1))
+        if last_exc:
+            raise last_exc
     return {}
 
 
@@ -10838,6 +10871,24 @@ def fred_trend_score(df: pd.DataFrame, invert: bool) -> float | None:
     return -sign if invert else sign
 
 
+# FRED serviert manche OECD-Reihen weiter aus, obwohl die Quelle (OECD/nationale
+# Statistikaemter) sie laengst nicht mehr befuellt -- ohne "(DISCONTINUED)" im
+# Titel, also faengt der Discontinued-Filter das nicht ab (z.B. Japans CPI-
+# YoY-Reihe: letzter echter Wert Juni 2021). Grosszuegige, an die Frequenz
+# angepasste Schwellenwerte, ab wann ein Wert als veraltet gilt (Tage seit dem
+# letzten Datenpunkt) -- grosszuegig, um normale Meldeverzoegerung nicht
+# faelschlich als "tot" einzustufen.
+_STALE_THRESHOLD_DAYS = {"D": 30, "W": 45, "M": 120, "Q": 240, "SA": 400, "A": 700}
+
+
+def is_series_stale(last_date: pd.Timestamp | None, freq_short: str) -> bool:
+    if last_date is None or pd.isna(last_date):
+        return False
+    threshold = _STALE_THRESHOLD_DAYS.get(freq_short, 180)
+    age_days = (pd.Timestamp(date.today()) - pd.Timestamp(last_date)).days
+    return age_days > threshold
+
+
 # Statistics Canada Web Data Service (WDS) API: kostenlos, kein API-Key.
 # Tabelle 14-10-0371-01 "Job vacancies, payroll employees, and job vacancy
 # rate by provinces and territories, monthly" -- Koordinate 1.4.* = Kanada
@@ -10871,7 +10922,7 @@ def compute_macro_score_row(currency: str, api_key: str) -> dict:
         if query is None:
             rows.append({
                 "Indikator": indicator, "Serie": "nicht verfuegbar (keine automatisierbare Quelle gefunden)",
-                "Frequenz": "n/a", "Letzter Wert": None, "Wert vor Fenster": None, "Trend": "n/a",
+                "Frequenz": "n/a", "Stand": "n/a", "Letzter Wert": None, "Wert vor Fenster": None, "Trend": "n/a",
             })
             continue
         if query == STATCAN_CAD_SENTINEL:
@@ -10888,22 +10939,33 @@ def compute_macro_score_row(currency: str, api_key: str) -> dict:
             series_id, freq = resolved if resolved else (None, "")
             series_label = series_id or "n/a"
             values = fetch_fred_series_values(series_id, api_key) if series_id else pd.DataFrame()
-        trend = fred_trend_score(values, invert=indicator in MACRO_INVERT_INDICATORS)
+        last_date = values["date"].iloc[-1] if not values.empty else None
+        stale = is_series_stale(last_date, freq)
+        trend = None if stale else fred_trend_score(values, invert=indicator in MACRO_INVERT_INDICATORS)
         if trend is not None:
             contributions.append(trend)
+        if stale:
+            trend_label = "n/a (veraltet)"
+        elif trend is None:
+            trend_label = "n/a"
+        else:
+            trend_label = "BULLISH" if trend > 0 else "BEARISH" if trend < 0 else "NEUTRAL"
         rows.append({
             "Indikator": indicator,
             "Serie": series_label,
             "Frequenz": freq_label(freq),
+            "Stand": last_date.strftime("%Y-%m") if last_date is not None and not pd.isna(last_date) else "n/a",
             "Letzter Wert": round(float(values["value"].iloc[-1]), 2) if not values.empty else None,
             "Wert vor Fenster": round(float(values["value"].iloc[0]), 2) if not values.empty else None,
-            "Trend": "n/a" if trend is None else ("BULLISH" if trend > 0 else "BEARISH" if trend < 0 else "NEUTRAL"),
+            "Trend": trend_label,
         })
     macro_score = float(np.clip(np.mean(contributions), -1, 1)) if contributions else None
     return {"score": macro_score, "detail": pd.DataFrame(rows)}
 
 
 def _matrix_cell_color(value: str) -> str:
+    if "veraltet" in value:
+        return "background-color: rgba(234,179,8,.30); color: white"
     if "BULLISH" in value:
         return "background-color: rgba(34,197,94,.35); color: white"
     if "BEARISH" in value:
@@ -11038,7 +11100,11 @@ def render_currency_matrix_section() -> None:
         "Arbeitslosenquote = bullish. Fuer NZD gibt es keine automatisierbare Vakanzen-Quelle "
         "(einziger offizieller Datensatz MBIE 'Jobs Online' liegt hinter Bot-Schutz) — dort bleibt "
         "'Offene Stellen' 'n/a'. Eine 'Kuendigungen'-Kennzahl wie beim US-JOLTS gibt es international "
-        "sonst nirgends offiziell vergleichbar. Vereinfachte Heuristik, kein validiertes Modell, kein "
+        "sonst nirgends offiziell vergleichbar. Neue Spalte 'Stand' im Detailbereich zeigt das Datum "
+        "des letzten echten Datenpunkts je Indikator -- manche FRED/OECD-Reihen werden von der Quelle "
+        "nicht mehr befuellt, ohne als 'discontinued' markiert zu sein. Ab ca. 4 Monaten (Monatsdaten) "
+        "bzw. 23 Monaten (Jahresdaten) Verzug gilt eine Reihe als veraltet (gelb, 'n/a (veraltet)') und "
+        "zaehlt nicht mehr in den Score. Vereinfachte Heuristik, kein validiertes Modell, kein "
         "Bezug zu Short/Mid/Long."
     )
     fred_key = get_fred_api_key()
