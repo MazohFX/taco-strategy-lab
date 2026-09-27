@@ -10713,7 +10713,15 @@ CURRENCY_MACRO_QUERIES = {
             f"{FRED_ID_PREFIX}IUDSOIA" if cur == "GBP"
             else f"3-Month Interbank Rate {name}"
         ),
-        "Inflation (CPI YoY)": f"Consumer Price Index Total All Items {name} growth rate same period previous year",
+        "Inflation (CPI YoY)": (
+            # NZDs OECD-Monatsreihe haengt seit Juli 2023 fest -- World-Bank-
+            # Jahresreihe ist hier die einzige noch aktiv gepflegte Alternative
+            # (wie bei JPY). Fuer die anderen Waehrungen ist die OECD-Reihe
+            # trotz Verzoegerung weiterhin aktueller als die World-Bank-Version,
+            # daher dort bewusst kein Wechsel.
+            f"{FRED_ID_PREFIX}FPCPITOTLZGNZL" if cur == "NZD"
+            else f"Consumer Price Index Total All Items {name} growth rate same period previous year"
+        ),
         "Arbeitslosenquote": f"Harmonized Unemployment Rate: Total: All Persons for {'the ' if name in ('United Kingdom', 'United States', 'Euro Area') else ''}{name}",
         "10J-Anleiherendite": f"Long-Term Government Bond Yields: 10-year: Main for {name}",
         "Offene Stellen": (
@@ -10724,14 +10732,6 @@ CURRENCY_MACRO_QUERIES = {
             else f"Unfilled Vacancies {name}"
         ),
         "Einzelhandelsumsatz": f"Retail Trade Volume {name} growth rate same period previous year",
-        "Geschaeftsklima": (
-            "Business Confidence Canada" if cur == "CAD"
-            else f"Business Confidence Amplitude Adjusted {name}"
-        ),
-        "Leistungsbilanz": (
-            "Current Account Balance Percent of GDP Euro Area" if cur == "EUR"
-            else f"{name} Current Account Balance Revenue Minus Expenditure"
-        ),
         "BIP-Wachstum": f"Gross Domestic Product {name} growth rate same period previous year",
         "Fruehindikator (CLI)": f"{FRED_ID_PREFIX}{_MACRO_ISO3[cur]}LOLITOAASTSAM",
     }
@@ -11106,20 +11106,21 @@ def render_currency_matrix_section() -> None:
         "Feiertagen/Datenluecken 'n/a' zeigen). Long (Struktur): Momentum (60%, wochenbasiert) + "
         "CFTC-COT-Score (40%). Makro (Wochen): Trend (letzte verfuegbare Werte, meist Monatsdaten) "
         "bei Leitzins, Inflation, Arbeitslosenquote, 10J-Anleiherendite, offenen Stellen, "
-        "Einzelhandelsumsatz, Geschaeftsklima, Leistungsbilanz, BIP-Wachstum und Fruehindikator (OECD "
-        "Composite Leading Indicator, PMI-Ersatz -- echte PMI-Daten sind proprietaer/nicht frei "
-        "verfuegbar) je Land (FRED, fuer CAD Statistics Canada, gleichgewichtet). Steigender "
-        "Leitzins/Inflation/Rendite/offene Stellen/Umsatz/Geschaeftsklima/Leistungsbilanz/BIP/"
-        "Fruehindikator = angenommen bullish (hawkishe Notenbank bzw. staerkere Wirtschaft), fallende "
-        "Arbeitslosenquote = bullish. Fuer NZD gibt es keine automatisierbare Vakanzen-Quelle "
-        "(einziger offizieller Datensatz MBIE 'Jobs Online' liegt hinter Bot-Schutz) — dort bleibt "
-        "'Offene Stellen' 'n/a'. Eine 'Kuendigungen'-Kennzahl wie beim US-JOLTS gibt es international "
-        "sonst nirgends offiziell vergleichbar. Neue Spalte 'Stand' im Detailbereich zeigt das Datum "
-        "des letzten echten Datenpunkts je Indikator -- manche FRED/OECD-Reihen werden von der Quelle "
-        "nicht mehr befuellt, ohne als 'discontinued' markiert zu sein. Ab ca. 4 Monaten (Monatsdaten) "
-        "bzw. 23 Monaten (Jahresdaten) Verzug gilt eine Reihe als veraltet (gelb, 'n/a (veraltet)') und "
-        "zaehlt nicht mehr in den Score. Vereinfachte Heuristik, kein validiertes Modell, kein "
-        "Bezug zu Short/Mid/Long."
+        "Einzelhandelsumsatz, BIP-Wachstum und Fruehindikator (OECD Composite Leading Indicator, "
+        "PMI-Ersatz -- echte PMI-Daten sind proprietaer/nicht frei verfuegbar) je Land (FRED, fuer CAD "
+        "Statistics Canada, gleichgewichtet). Geschaeftsklima und Leistungsbilanz wurden bewusst "
+        "entfernt: die zugrundeliegenden OECD-Reihen werden fuer alle 8 Laender seit 2023/2024 nicht "
+        "mehr aktualisiert, keine kostenlose Alternative gefunden -- haetten nie etwas zum Score "
+        "beigetragen. Steigender Leitzins/Inflation/Rendite/offene Stellen/Umsatz/BIP/Fruehindikator = "
+        "angenommen bullish (hawkishe Notenbank bzw. staerkere Wirtschaft), fallende Arbeitslosenquote "
+        "= bullish. Fuer NZD gibt es keine automatisierbare Vakanzen-Quelle (einziger offizieller "
+        "Datensatz MBIE 'Jobs Online' liegt hinter Bot-Schutz) — dort bleibt 'Offene Stellen' 'n/a'. "
+        "Eine 'Kuendigungen'-Kennzahl wie beim US-JOLTS gibt es international sonst nirgends offiziell "
+        "vergleichbar. Spalte 'Stand' im Detailbereich zeigt das Datum des letzten echten Datenpunkts "
+        "je Indikator -- manche FRED/OECD-Reihen werden von der Quelle nicht mehr befuellt, ohne als "
+        "'discontinued' markiert zu sein. Ab ca. 4 Monaten (Monatsdaten) bzw. 23 Monaten (Jahresdaten) "
+        "Verzug gilt eine Reihe als veraltet (gelb, 'n/a (veraltet)') und zaehlt nicht mehr in den "
+        "Score. Vereinfachte Heuristik, kein validiertes Modell, kein Bezug zu Short/Mid/Long."
     )
     fred_key = get_fred_api_key()
     if not fred_key:
