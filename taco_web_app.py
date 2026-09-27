@@ -10731,7 +10731,12 @@ CURRENCY_MACRO_QUERIES = {
             else "New Vacancies Japan" if cur == "JPY"
             else f"Unfilled Vacancies {name}"
         ),
-        "Einzelhandelsumsatz": f"Retail Trade Volume {name} growth rate same period previous year",
+        "Einzelhandelsumsatz": (
+            # Die Volltextsuche rankt fuer USD die Quartalsreihe (haengt seit
+            # 2018 fest) vor der aktiv gepflegten Monatsreihe -- direkt referenziert.
+            f"{FRED_ID_PREFIX}USASLRTTO01GYSAM" if cur == "USD"
+            else f"Retail Trade Volume {name} growth rate same period previous year"
+        ),
         "BIP-Wachstum": f"Gross Domestic Product {name} growth rate same period previous year",
         "Fruehindikator (CLI)": f"{FRED_ID_PREFIX}{_MACRO_ISO3[cur]}LOLITOAASTSAM",
     }
