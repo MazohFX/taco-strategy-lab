@@ -11146,7 +11146,9 @@ def render_pair_comparison(raw_scores: dict) -> None:
         b, q = base_scores.get(label), quote_scores.get(label)
         diff_scores[label] = float(np.clip((b - q) / 2, -1, 1)) if b is not None and q is not None else None
 
-    pair_label = f"{base}{quote}" if quote != "DXY" else f"{base}USD"
+    # DXY ist unser USD-Proxy, im Paarnamen aber als "USD" schreiben (egal ob
+    # Basis- oder Gegenwaehrung) -- "DXYCAD" ist kein echtes Forex-Paar.
+    pair_label = ("USD" if base == "DXY" else base) + ("USD" if quote == "DXY" else quote)
     st.markdown(f"**{pair_label}** — Basis: {base} vs. Gegenwaehrung: {quote}")
 
     pair_row = swing_ampel_row(pair_label, diff_scores)
