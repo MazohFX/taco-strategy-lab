@@ -11027,6 +11027,7 @@ def render_signal_scatter(raw_scores: dict) -> None:
     )
     selected = st.multiselect(
         "Waehrungen", CURRENCY_MATRIX_ASSETS, default=CURRENCY_MATRIX_ASSETS[:2], key="scatter_assets",
+        max_selections=3,
     )
     if not selected:
         st.info("Mindestens eine Waehrung auswaehlen.")
@@ -11037,15 +11038,20 @@ def render_signal_scatter(raw_scores: dict) -> None:
     fig.add_hrect(y0=0, y1=50, fillcolor="rgba(239,68,68,.10)", line_width=0)
     fig.add_hline(y=50, line_dash="dot", line_color="rgba(148,163,184,.4)")
 
+    # Kleiner horizontaler Versatz pro Waehrung (multiplikativ, da Log-Achse):
+    # bei (fast) identischen Werten faellt sonst der Punkt einer Waehrung genau
+    # auf den einer anderen und verschwindet optisch komplett dahinter.
+    n_selected = len(selected)
     for i, currency in enumerate(selected):
         scores = raw_scores.get(currency, {})
+        jitter = 1.0 + (i - (n_selected - 1) / 2) * 0.10
         xs, ys, texts = [], [], []
         for label, horizon in SIGNAL_HORIZON_DAYS.items():
             score = scores.get(label)
             if score is None:
                 continue
             percent, signal = matrix_percent_label(score)
-            xs.append(horizon)
+            xs.append(horizon * jitter)
             ys.append(percent)
             texts.append(f"{currency} · {label}: {percent:.0f}% {signal}")
         if not xs:
@@ -11053,7 +11059,8 @@ def render_signal_scatter(raw_scores: dict) -> None:
         color = _SCATTER_COLORS[i % len(_SCATTER_COLORS)]
         fig.add_trace(go.Scatter(
             x=xs, y=ys, mode="lines+markers", name=currency,
-            line=dict(color=color, width=2), marker=dict(size=11, color=color),
+            line=dict(color=color, width=2),
+            marker=dict(size=11, color=color, line=dict(color="rgba(0,0,0,.6)", width=1)),
             hovertext=texts, hoverinfo="text",
         ))
 
