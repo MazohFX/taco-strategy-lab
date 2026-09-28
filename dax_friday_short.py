@@ -387,6 +387,10 @@ def _render_scanner(A, tf_min, mtime, d_from, d_to, spread_mode, spread_pts, com
         min_trades = st.number_input("Min. Trades", 10, 5000, max(30, int(0.5 * n_days_cov)),
                                      key="dfs_mint", help="Szenarien mit weniger Trades werden ignoriert.")
         robust = st.checkbox("Robustheits-Wertung (Nachbarn mitteln)", True, key="dfs_robust")
+        min_cov = st.slider("Min. Datenabdeckung der Einstiegszeit %", 0, 100, 90, 5, key="dfs_mincov",
+                            help="Anteil der Freitage, an denen es zur Einstiegszeit eine Kerze gibt. Dukascopy hat "
+                                 "2015–2018 keine Kurse vor 08:00 — solche Zeiten wären nur auf einem Teil der Jahre "
+                                 "getestet und in der WFA nicht durchgehend prüfbar.")
 
     slots_per_h = 60 // tf_min
     entry_slots = tuple(range(e_rng[0] * slots_per_h, (e_rng[1] + 1) * slots_per_h))
@@ -417,6 +421,9 @@ def _render_scanner(A, tf_min, mtime, d_from, d_to, spread_mode, spread_pts, com
     res, es, xs, ps = scan["res"], scan["entry_slots"], scan["exit_slots"], scan["sl_list"]
     raw = res[metric].copy()
     raw[(res["n"] < min_trades) | np.isnan(res["n"])] = np.nan
+    in_rng = (A["days"] >= np.datetime64(scan["d_from"])) & (A["days"] <= np.datetime64(scan["d_to"]))
+    cov_e = A["valid"][in_rng][:, list(es)].mean(axis=0) * 100
+    raw[cov_e < min_cov] = np.nan
     score = _smooth(raw, ps) if robust else raw
 
     flat = np.argsort(np.nan_to_num(score, nan=-np.inf), axis=None)[::-1]
@@ -576,15 +583,20 @@ def _run_wfa(A, S, combos, base_key, folds, metric, min_is, comm_pct):
         oos_label = f"{f['oos_start'].date()} – {f['oos_end'].date()}"
         fx = {k: float(m_oos[k][base_ci]) for k in m_oos}
         fix_ok = fx["n"] >= 1 and fx["pf"] > 1.0 and fx["total"] > 0
+        fix_status = "⚪" if fx["n"] == 0 else "✅" if fix_ok else "❌"
         oos_fixed.append(pd.Series(R[base_ci, oos_m], index=days[oos_m]))
         if not np.isfinite(sc.max()):
-            rows.append({"Fold": fi + 1, "IS": label, "OOS": oos_label, "Status": "⚠️ Kein IS-Ergebnis",
-                         "Fix OOS PF": round(fx["pf"], 2), "Fix OOS Ret %": round(fx["total"], 2),
-                         "Fix Status": "✅" if fix_ok else "❌"})
+            # Keine Kombination mit genug IS-Trades — bei Einstiegen vor 08:00 fehlen z. B. 2015–2018 die Kurse
+            no_data = m_is["n"].max() == 0
+            rows.append({"Fold": fi + 1, "IS": label, "OOS": oos_label,
+                         "Status": "⚪ Keine Daten" if no_data else "⚠️ Zu wenig IS-Trades",
+                         "Fix OOS Trades": int(fx["n"]), "Fix OOS PF": round(fx["pf"], 2),
+                         "Fix OOS Ret %": round(fx["total"], 2), "Fix Status": fix_status})
             continue
         b = int(np.argmax(sc))
         e, x, p = combos[b]
         ok = m_oos["n"][b] >= 1 and m_oos["pf"][b] > 1.0 and m_oos["total"][b] > 0
+        status = "⚪ Keine OOS-Daten" if m_oos["n"][b] == 0 else "✅ Bestanden" if ok else "❌ Fail"
         oos_chain.append(pd.Series(R[b, oos_m], index=days[oos_m]))
         rows.append({
             "Fold": fi + 1, "IS": label, "OOS": oos_label,
@@ -593,9 +605,9 @@ def _run_wfa(A, S, combos, base_key, folds, metric, min_is, comm_pct):
             "OOS Trades": int(m_oos["n"][b]), "OOS WR %": round(float(m_oos["wr"][b]), 1),
             "OOS PF": round(float(m_oos["pf"][b]), 2), "OOS Ret %": round(float(m_oos["total"][b]), 2),
             "OOS Max DD %": round(float(m_oos["dd"][b]), 2),
-            "Status": "✅ Bestanden" if ok else "❌ Fail",
-            "Fix OOS PF": round(fx["pf"], 2), "Fix OOS Ret %": round(fx["total"], 2),
-            "Fix Status": "✅" if fix_ok else "❌",
+            "Status": status,
+            "Fix OOS Trades": int(fx["n"]), "Fix OOS PF": round(fx["pf"], 2),
+            "Fix OOS Ret %": round(fx["total"], 2), "Fix Status": fix_status,
         })
     chain = pd.concat(oos_chain).dropna() if oos_chain else pd.Series(dtype=float)
     fixed = pd.concat(oos_fixed).dropna() if oos_fixed else pd.Series(dtype=float)
@@ -675,7 +687,7 @@ def _render_wfa(A, tf_min, d_from, d_to, spread_mode, spread_pts, comm_pct, save
                     r_k = _run_wfa(Asub, S, combos, base_key, f_k, opt_metric, int(min_is), float(comm_pct))
                     ok_k = sum(1 for r in r_k["rows"] if r["Status"] == "✅ Bestanden")
                     fix_k = sum(1 for r in r_k["rows"] if r.get("Fix Status") == "✅")
-                    ens.append({"Lauf": k + 1, "Start-Versatz (Tage)": k * step, "Folds": len(r_k["rows"]),
+                    ens.append({"Lauf": k + 1, "Start-Versatz (Tage)": k * step, "Folds": sum(1 for r in r_k["rows"] if r["Status"] in ("✅ Bestanden", "❌ Fail")),
                                 "WFA bestanden": ok_k, "Fix bestanden": fix_k,
                                 "WFA OOS Summe %": round(float(r_k["chain"].sum()), 2),
                                 "Fix OOS Summe %": round(float(r_k["fixed"].sum()), 2)})
@@ -718,23 +730,30 @@ def _show_wfa(result, tf_min, min_pass, evaluate_edge_fn):
         st.error("Keine WFA-Ergebnisse — Parameter oder Zeitraum anpassen.")
         return
     df = pd.DataFrame(rows)
-    n_tot = len(df)
+    rated = df["Status"].isin(["✅ Bestanden", "❌ Fail"])
+    n_tot = int(rated.sum())
+    n_skip = len(df) - n_tot
     n_ok = int((df["Status"] == "✅ Bestanden").sum())
     n_fix = int((df["Fix Status"] == "✅").sum())
+    n_fix_tot = int(df["Fix Status"].isin(["✅", "❌"]).sum())
+    if n_tot == 0:
+        st.error("Kein Fold enthält auswertbare Trades — für diese Uhrzeit fehlen im Zeitraum die Kursdaten.")
+        return
 
     st.markdown("---")
     st.subheader(f"Ergebnis · {_fmt_scn(base, tf_min)}")
+    skip_txt = (f" · {n_skip} Fold(s) ohne Kursdaten/IS-Ergebnis nicht gewertet" if n_skip else "")
     if n_ok / n_tot * 100 >= min_pass and n_ok >= 2:
         bc, bt = "#22c55e", f"✅ ROBUST — {n_ok}/{n_tot} Folds bestanden · Strategie empfohlen"
     elif n_ok / n_tot >= 0.4:
         bc, bt = "#f0c040", f"⚠️ INSTABIL — nur {n_ok}/{n_tot} Folds bestanden · mit Vorsicht handeln"
-    elif n_ok == 1:
-        bc, bt = "#ef5350", f"❌ NICHT EMPFOHLEN — nur 1/{n_tot} Fold bestanden"
+    elif n_ok >= 1:
+        bc, bt = "#ef5350", f"❌ NICHT EMPFOHLEN — nur {n_ok}/{n_tot} Folds bestanden"
     else:
         bc, bt = "#ef5350", f"❌ GESCHEITERT — 0/{n_tot} Folds bestanden"
     _banner(bc, bt, f"WFA (IS-Optimierung in der Nachbarschaft): OOS-Summe {wfa['chain'].sum():.2f} % · "
-                    f"Fixes Szenario ohne Nachoptimierung: {n_fix}/{n_tot} Folds positiv, "
-                    f"OOS-Summe {wfa['fixed'].sum():.2f} %")
+                    f"Fixes Szenario ohne Nachoptimierung: {n_fix}/{n_fix_tot} Folds positiv, "
+                    f"OOS-Summe {wfa['fixed'].sum():.2f} %{skip_txt}")
 
     if evaluate_edge_fn is not None and len(wfa["chain"]) >= 10:
         try:
@@ -765,10 +784,14 @@ def _show_wfa(result, tf_min, min_pass, evaluate_edge_fn):
         return ("color:#22c55e" if v > 0 else "color:#ef5350") if isinstance(v, (int, float)) and not pd.isna(v) else ""
 
     num_cols = [c for c in ("OOS Ret %", "Fix OOS Ret %") if c in show]
+    fmt = {c: "{:.2f}" for c in show.columns if c.endswith("PF") or c.endswith("%")}
+    fmt.update({c: "{:.0f}" for c in show.columns if c.endswith("Trades")})
     st.dataframe(show.style.map(_c_status, subset=[c for c in ("Status", "Fix Status") if c in show])
-                 .map(_c_num, subset=num_cols), use_container_width=True, hide_index=True)
+                 .map(_c_num, subset=num_cols).format(fmt, na_rep="–"),
+                 use_container_width=True, hide_index=True)
     st.caption("**Status** = in-sample optimierte Parameter auf dem folgenden OOS-Fenster. "
-               "**Fix** = dein gewähltes Szenario unverändert auf demselben OOS-Fenster.")
+               "**Fix** = dein gewähltes Szenario unverändert auf demselben OOS-Fenster. "
+               "⚪ = keine Kursdaten zu dieser Uhrzeit im Zeitraum (Dukascopy 2015–2018 erst ab 08:00) → nicht gewertet.")
 
     # OOS-Rendite je Fold
     st.subheader("OOS-Rendite je Fold")
