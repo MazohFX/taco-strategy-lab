@@ -11112,6 +11112,59 @@ def render_macro_donut(currency: str, detail: pd.DataFrame, macro_score: float |
     st.plotly_chart(fig, use_container_width=True, key=f"macro_donut_{currency}")
 
 
+def render_pair_comparison(raw_scores: dict) -> None:
+    """Relativer Paar-Vergleich: Basis- gegen Gegenwaehrung verrechnet (Basis minus
+    Gegenwaehrung), damit ein echtes Richtungssignal fuer ein FX-Paar entsteht. Die
+    Gesamt-Ampel/Makro-Spalte weiter oben ist bewusst absolut pro Land -- 'EUR
+    bullish' und 'USD bullish' gleichzeitig ist dort kein Widerspruch, sagt aber
+    nichts darueber, wohin z.B. EURUSD tendiert. Hier schon."""
+    st.markdown("#### 🔀 Paar-Vergleich (relativ)")
+    st.caption(
+        "Die Ampel/Makro-Spalte oben bewertet jedes Land fuer sich -- 'alle bullish' ist dort kein "
+        "Fehler, sondern moeglich (z.B. wenn Zinsen/Renditen global gleichzeitig steigen). Fuer ein "
+        "echtes Paar-Signal (z.B. EURUSD) wird hier der Score der Basiswaehrung gegen die "
+        "Gegenwaehrung verrechnet. DXY dient als USD-Proxy (EUR vs. DXY ≈ EURUSD-Richtung). "
+        "Vereinfachte Heuristik, kein validiertes Modell, kein Finanzrat."
+    )
+    col_base, col_quote = st.columns(2)
+    with col_base:
+        default_base = "EUR" if "EUR" in CURRENCY_MATRIX_ASSETS else CURRENCY_MATRIX_ASSETS[0]
+        base = st.selectbox(
+            "Basiswaehrung", CURRENCY_MATRIX_ASSETS, index=CURRENCY_MATRIX_ASSETS.index(default_base), key="pair_base",
+        )
+    with col_quote:
+        quote_options = [c for c in CURRENCY_MATRIX_ASSETS if c != base]
+        default_quote = "DXY" if "DXY" in quote_options else quote_options[0]
+        quote = st.selectbox(
+            "Gegenwaehrung", quote_options, index=quote_options.index(default_quote), key="pair_quote",
+        )
+
+    base_scores = raw_scores.get(base, {})
+    quote_scores = raw_scores.get(quote, {})
+    diff_scores = {}
+    for label in SIGNAL_HORIZON_DAYS:
+        b, q = base_scores.get(label), quote_scores.get(label)
+        diff_scores[label] = float(np.clip((b - q) / 2, -1, 1)) if b is not None and q is not None else None
+
+    pair_label = f"{base}{quote}" if quote != "DXY" else f"{base}USD"
+    st.markdown(f"**{pair_label}** — Basis: {base} vs. Gegenwaehrung: {quote}")
+
+    pair_row = swing_ampel_row(pair_label, diff_scores)
+    pair_df = pd.DataFrame([pair_row]).set_index("Asset")
+    st.dataframe(pair_df.style.map(_signal_cell_color, subset=["Gesamt"]), use_container_width=True)
+
+    detail_rows = []
+    for label in SIGNAL_HORIZON_DAYS:
+        b_score, q_score = base_scores.get(label), quote_scores.get(label)
+        b_txt = f"{matrix_percent_label(b_score)[0]:.0f}% {matrix_percent_label(b_score)[1]}" if b_score is not None else "n/a"
+        q_txt = f"{matrix_percent_label(q_score)[0]:.0f}% {matrix_percent_label(q_score)[1]}" if q_score is not None else "n/a"
+        d = diff_scores[label]
+        d_txt = f"{matrix_percent_label(d)[0]:.0f}% {matrix_percent_label(d)[1]}" if d is not None else "n/a"
+        detail_rows.append({"Signal": label, base: b_txt, quote: q_txt, "Differenz": d_txt})
+    detail_df = pd.DataFrame(detail_rows).set_index("Signal")
+    st.dataframe(detail_df.style.map(_matrix_cell_color, subset=["Differenz"]), use_container_width=True)
+
+
 def render_currency_matrix_section() -> None:
     st.subheader("💱 Multi-Timeframe Waehrungsmatrix")
     st.caption(
@@ -11187,6 +11240,8 @@ def render_currency_matrix_section() -> None:
     )
     ampel_df = pd.DataFrame(ampel_rows).set_index("Asset")
     st.dataframe(ampel_df.style.map(_signal_cell_color, subset=["Gesamt"]), use_container_width=True)
+
+    render_pair_comparison(raw_scores)
 
     matrix_df = pd.DataFrame(rows).set_index("Asset")
     cols_to_style = list(matrix_df.columns)
