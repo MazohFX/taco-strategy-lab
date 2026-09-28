@@ -17,6 +17,7 @@ import streamlit as st
 
 from edge_validation import evaluate_edge, kelly_position_size
 from fib618_bos_backtest import Fib618Config, run_fib618_backtest
+from dax_friday_short import render_dax_friday_short
 
 
 # ── Muster-Notizen (JSON-Persistenz) ─────────────────────────────────────────
@@ -11821,7 +11822,7 @@ def render_extra_fib618_bos() -> None:
     )
 
 
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "Extra: Makro & Sentiment", "Extra: COT Commercials vs. Spekulanten", "Extra: Fib 0.618 + BOS Backtest"], horizontal=False, label_visibility="collapsed")
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "DAX Freitag Short", "Extra: Makro & Sentiment", "Extra: COT Commercials vs. Spekulanten", "Extra: Fib 0.618 + BOS Backtest"], horizontal=False, label_visibility="collapsed")
 
 # Fear&Greed + COT sind separate Marktstimmungs-Panels weiter unten. Ihre externen Requests
 # hier schon anstossen (fire-and-forget, kein wait), damit sie waehrend der restlichen
@@ -11864,6 +11865,10 @@ if test_mode == "Crypto WeekdayMA WFA":
 
 if test_mode == "DAX EMA Strategie":
     render_dax_ema_wfa()
+    st.stop()
+
+if test_mode == "DAX Freitag Short":
+    render_dax_friday_short(save_fn=_save_wfa_result, load_fn=_load_wfa_result, evaluate_edge_fn=evaluate_edge)
     st.stop()
 
 if test_mode == "Extra: Makro & Sentiment":
