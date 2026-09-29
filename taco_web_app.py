@@ -10229,7 +10229,92 @@ def fetch_fred_release_dates(release_id: int, event_name: str, impact: str, api_
         return pd.DataFrame()
 
 
+# Forex-Factory-Wochenkalender (oeffentlicher JSON-Feed von faireconomy.media, den
+# Forex Factory selbst als Export anbietet): deckt ALLE Waehrungen ab (RBA, BoC,
+# RBNZ, SNB, BoJ, CPI/BIP/Jobs aller Laender) inkl. Impact-Einstufung, Forecast und
+# Previous -- die hand gepflegten Fed/EZB/BoE-Termine + FRED-CPI/NFP decken dagegen
+# nur USD/EUR/GBP ab. Feed enthaelt KEIN Actual und nur die laufende Woche. Der
+# Anbieter drosselt haeufige Abrufe -> 1h Cache; Fehler werden geraist, damit
+# st.cache_data den leeren Zustand nicht einfriert.
+FF_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+FF_DISPLAY_TZ = "Europe/Berlin"
+
+
+@st.cache_data(ttl=60 * 60)
+def _fetch_forexfactory_week_cached() -> pd.DataFrame:
+    import requests
+
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
+    response = requests.get(FF_CALENDAR_URL, headers=headers, timeout=12)
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, list) or not data:
+        raise RuntimeError("Forex-Factory-Feed leer oder unerwartetes Format")
+    df = pd.DataFrame(data)
+    ts = pd.to_datetime(df["date"], utc=True, errors="coerce").dt.tz_convert(FF_DISPLAY_TZ)
+    out = pd.DataFrame({
+        "date": ts.dt.date,
+        "time": ts.dt.strftime("%H:%M"),
+        "currency": df["country"].astype(str),
+        "event": df["title"].astype(str),
+        "impact": df["impact"].astype(str),
+        "forecast": df.get("forecast", "").fillna("").astype(str),
+        "previous": df.get("previous", "").fillna("").astype(str),
+    })
+    return out.dropna(subset=["date"]).reset_index(drop=True)
+
+
+def fetch_forexfactory_week() -> pd.DataFrame:
+    try:
+        return _fetch_forexfactory_week_cached()
+    except Exception:
+        return pd.DataFrame()
+
+
+# Zinsentscheid-Events im FF-Feed je Waehrung (DXY = USD).
+FF_RATE_DECISION_TITLES = {
+    "USD": "Federal Funds Rate", "EUR": "Main Refinancing Rate", "GBP": "Official Bank Rate",
+    "AUD": "Cash Rate", "NZD": "Official Cash Rate", "CAD": "Overnight Rate",
+    "CHF": "SNB Policy Rate", "JPY": "BOJ Policy Rate",
+}
+
+
+def _parse_ff_number(value: str) -> float | None:
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value or "").replace(",", ""))
+    return float(match.group()) if match else None
+
+
+def ff_rate_decision_row(currency: str) -> tuple[dict, float | None]:
+    """Zinsentscheid dieser Woche aus dem FF-Feed: Forecast (Konsensus) vs. vorheriger
+    Satz. Erhoehung erwartet = BULLISH (hawkish), Senkung = BEARISH, unveraendert =
+    NEUTRAL. Kein Actual im Feed -> Konsensus als Naeherung (bei Zinsentscheiden
+    trifft der in der Regel zu)."""
+    cur = "USD" if currency == "DXY" else currency
+    title = FF_RATE_DECISION_TITLES.get(cur)
+    ff = fetch_forexfactory_week()
+    base = {"Indikator": "Zinsentscheid (Forex Factory)", "Serie": f"FF: {title}", "Frequenz": "Event"}
+    if ff.empty or title is None:
+        return {**base, "Stand": "n/a", "Letzter Wert": None, "Wert vor Fenster": None, "Trend": "n/a"}, None
+    hit = ff[(ff["currency"] == cur) & (ff["event"] == title)]
+    if hit.empty:
+        return {**base, "Stand": "diese Woche keiner", "Letzter Wert": None, "Wert vor Fenster": None, "Trend": "n/a"}, None
+    ev = hit.iloc[0]
+    fc, prev = _parse_ff_number(ev["forecast"]), _parse_ff_number(ev["previous"])
+    if fc is None or prev is None:
+        return {**base, "Stand": str(ev["date"]), "Letzter Wert": None, "Wert vor Fenster": prev, "Trend": "n/a"}, None
+    trend = float(np.sign(fc - prev))
+    label = "BULLISH" if trend > 0 else "BEARISH" if trend < 0 else "NEUTRAL"
+    return {**base, "Stand": str(ev["date"]), "Letzter Wert": fc, "Wert vor Fenster": prev, "Trend": label}, trend
+
+
 def get_economic_calendar(start: date, end: date) -> pd.DataFrame:
+    ff = fetch_forexfactory_week()
+    if not ff.empty:
+        ff = ff[(ff["date"] >= start) & (ff["date"] <= end)]
+        # Forex Factory ist die Obermenge (inkl. FOMC/EZB/BoE, CPI, NFP) -> keine
+        # Vermischung mit den Fallback-Quellen, sonst doppelte Eintraege.
+        return ff.sort_values(["date", "time"]).reset_index(drop=True)
+
     months = sorted({(start.year, start.month), (end.year, end.month)})
     bls_frames = [fetch_bls_calendar(y, m) for y, m in months]
     bls = pd.concat(bls_frames, ignore_index=True) if any(not f.empty for f in bls_frames) else pd.DataFrame()
@@ -10976,6 +11061,10 @@ def compute_macro_score_row(currency: str, api_key: str) -> dict:
             "Wert vor Fenster": round(float(values["value"].iloc[0]), 2) if not values.empty else None,
             "Trend": trend_label,
         })
+    ff_row, ff_trend = ff_rate_decision_row(currency)
+    rows.insert(1, ff_row)
+    if ff_trend is not None:
+        contributions.append(ff_trend)
     macro_score = float(np.clip(np.mean(contributions), -1, 1)) if contributions else None
     return {"score": macro_score, "detail": pd.DataFrame(rows)}
 
@@ -11267,6 +11356,21 @@ def render_currency_matrix_section() -> None:
                         detail.style.map(_matrix_cell_color, subset=["Trend"]),
                         use_container_width=True, hide_index=True,
                     )
+            ff_week = fetch_forexfactory_week()
+            ff_cur = "USD" if currency == "DXY" else currency
+            if not ff_week.empty:
+                high = ff_week[(ff_week["currency"] == ff_cur) & (ff_week["impact"] == "High")]
+                if high.empty:
+                    st.caption("Forex Factory: diese Woche keine High-Impact-Events.")
+                else:
+                    st.caption("🔴 High-Impact diese Woche (Forex Factory, Uhrzeit Berlin):")
+                    st.dataframe(
+                        high[["date", "time", "event", "forecast", "previous"]].rename(columns={
+                            "date": "Datum", "time": "Uhrzeit", "event": "Event",
+                            "forecast": "Forecast", "previous": "Previous",
+                        }),
+                        use_container_width=True, hide_index=True,
+                    )
             st.divider()
 
 
@@ -11303,11 +11407,20 @@ def render_extra_makro_sentiment() -> None:
             "Kostenloser Key: fred.stlouisfed.org/docs/api/api_key.html"
         )
     calendar_df = get_economic_calendar(start, end)
+    if "forecast" in calendar_df.columns:
+        st.caption("Quelle: Forex Factory Wochenkalender (alle Waehrungen, Uhrzeit Berlin, Forecast/Previous; kein Actual im Feed).")
+        impact_filter = st.multiselect(
+            "Impact", ["High", "Medium", "Low", "Holiday"], default=["High", "Medium"], key="extra_cal_impact",
+        )
+        calendar_df = calendar_df[calendar_df["impact"].isin(impact_filter)]
+    else:
+        st.caption("Forex-Factory-Feed gerade nicht erreichbar — Fallback: nur Fed/EZB/BoE + CPI/NFP.")
     if calendar_df.empty:
-        st.warning("Keine Kalenderdaten verfuegbar (BLS ggf. gerade nicht erreichbar) oder keine Termine im gewaehlten Zeitraum.")
+        st.warning("Keine Kalenderdaten verfuegbar oder keine Termine im gewaehlten Zeitraum.")
     else:
         display_df = calendar_df.rename(columns={
             "date": "Datum", "time": "Uhrzeit", "currency": "Waehrung", "event": "Event", "impact": "Impact",
+            "forecast": "Forecast", "previous": "Previous",
         })
         st.dataframe(
             display_df.style.map(_impact_color, subset=["Impact"]),
