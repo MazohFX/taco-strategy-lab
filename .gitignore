@@ -9,3 +9,4 @@ taco_web_app_UPLOAD.py
 .DS_Store
 wf_cache.pkl
 .streamlit/secrets.toml
+data/macro_calendar/sync.log
