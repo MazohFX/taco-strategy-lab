@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-305429,840510001,chicago-pmi,USD,US,MNI Chicago Geschäftsklima,High,none,2026-07-31 13:45,2026-07-01,57.6,56.5,56.7,,positive
 268710,840210001,michigan-consumer-sentiment,USD,US,Michigan Konsumklima,Medium,none,2026-07-31 14:00,2026-07-01,55.2,54.4,54.4,,positive
 268734,840210002,michigan-consumer-expectations,USD,US,Michigan Konsumentenerwartungen,Medium,none,2026-07-31 14:00,2026-07-01,55.4,54.0,54.0,,positive
 268782,840210004,michigan-inflation-expectations,USD,US,Michigan Inflationserwartungen,Medium,percent,2026-07-31 14:00,2026-07-01,4.2,4.2,4.2,,
