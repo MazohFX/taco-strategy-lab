@@ -10307,7 +10307,195 @@ def ff_rate_decision_row(currency: str) -> tuple[dict, float | None]:
     return {**base, "Stand": str(ev["date"]), "Letzter Wert": fc, "Wert vor Fenster": prev, "Trend": label}, trend
 
 
+# ── MT5-Wirtschaftskalender (Actual-Werte) ────────────────────────────────────
+# Quelle: eingebauter MetaQuotes-Kalender in MT5, exportiert vom EA
+# Export_MacroCalendar_MT5_CSV.mq5 und per sync_mt5_macro_calendar.py ins Repo
+# geschoben (data/macro_calendar/). Liefert pro Release Actual/Forecast/Previous/
+# Revised + MetaQuotes' Einstufung, ob der Wert positiv oder negativ fuer die
+# Waehrung ist (impact) -- damit ist die Richtung je Indikator (z.B. steigende
+# Arbeitslosenquote = negativ) nicht mehr unsere Faustregel, sondern MetaQuotes'.
+# Nur so aktuell wie der letzte Sync (MT5 muss dafuer laufen).
+MT5_MACRO_DIR = Path(__file__).parent / "data" / "macro_calendar"
+
+# Zinsentscheid-Event je Waehrung im MT5-Kalender. EUR: Einlagensatz statt
+# Hauptrefinanzierungssatz -- der Einlagensatz ist seit 2022 der tatsaechlich
+# steuernde EZB-Leitzins.
+MT5_RATE_DECISION_CODES = {
+    "USD": "fed-interest-rate-decision", "EUR": "ecb-deposit-rate-decision",
+    "GBP": "boe-interest-rate-decision", "AUD": "rba-interest-rate-decision",
+    "NZD": "rbnz-interest-rate-decision", "CAD": "boc-interest-rate-decision",
+    "CHF": "snb-interest-rate-decision", "JPY": "boj-interest-rate-decision",
+}
+# Surprise-Index: Fenster, Halbwertszeit (Tage) und Gewicht je Impact-Stufe.
+# Angelehnt an den Citi Economic Surprise Index (Ueberraschung = Actual - Forecast,
+# normiert auf die typische Ueberraschungsgroesse genau dieses Releases).
+SURPRISE_WINDOW_DAYS = 90
+SURPRISE_HALFLIFE_DAYS = 30
+SURPRISE_IMPORTANCE_WEIGHT = {"High": 1.0, "Medium": 0.5}
+SURPRISE_MIN_HISTORY = 8
+SURPRISE_Z_CAP = 3.0
+# Daempfung bei wenigen Releases (z.B. CHF: nur Medium-Impact, wenige Termine):
+# wirkt wie ein zusaetzliches High-Release mit Ueberraschung 0 im Nenner.
+SURPRISE_PRIOR_WEIGHT = 1.0
+
+
+def _mt5_currency(currency: str) -> str:
+    return "USD" if currency == "DXY" else currency
+
+
+@st.cache_data(ttl=10 * 60)
+def load_mt5_macro_calendar() -> pd.DataFrame:
+    frames = []
+    for name in ("mt5_history.csv.gz", "mt5_recent.csv"):
+        path = MT5_MACRO_DIR / name
+        if path.exists():
+            frames.append(pd.read_csv(path))
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True).drop_duplicates("value_id", keep="last")
+    df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce")
+    for col in ("actual", "forecast", "previous", "revised_previous"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["impact"] = df["impact"].fillna("")
+    return df.dropna(subset=["time_utc"]).sort_values("time_utc").reset_index(drop=True)
+
+
+def mt5_macro_exported_at() -> str | None:
+    try:
+        meta = json.loads((MT5_MACRO_DIR / "meta.json").read_text())
+        ts = pd.Timestamp(meta["exported_at_utc"]).tz_convert(FF_DISPLAY_TZ)
+        return ts.strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=10 * 60)
+def mt5_surprise_scores() -> pd.DataFrame:
+    """Eine Zeile je Release mit Actual+Forecast: z = |Actual-Forecast| / typische
+    Abweichung dieses Releases (Std aller bisherigen Ueberraschungen), gedeckelt auf
+    3, Vorzeichen aus MetaQuotes' impact (positiv/negativ fuer die Waehrung).
+    Zinsentscheide raus (dort gibt es keinen Forecast, die laufen ueber die
+    Leitzins-Zeile)."""
+    df = load_mt5_macro_calendar()
+    if df.empty:
+        return pd.DataFrame()
+    df = df[df["actual"].notna() & df["forecast"].notna() & df["importance"].isin(SURPRISE_IMPORTANCE_WEIGHT)].copy()
+    df = df[~df["event_code"].astype(str).str.contains("rate-decision")]
+    df["raw"] = df["actual"] - df["forecast"]
+    df["std"] = df.groupby("event_id")["raw"].transform("std")
+    df["n"] = df.groupby("event_id")["raw"].transform("count")
+    df = df[(df["n"] >= SURPRISE_MIN_HISTORY) & (df["std"] > 0)]
+    sign = df["impact"].map({"positive": 1.0, "negative": -1.0})
+    # impact leer + Actual == Forecast -> echte "wie erwartet"-Nullueberraschung;
+    # impact leer bei Abweichung -> keine Richtungsinfo, raus.
+    sign = sign.where(sign.notna(), np.where(df["raw"] == 0, 0.0, np.nan))
+    df["z"] = np.minimum(df["raw"].abs() / df["std"], SURPRISE_Z_CAP) * sign
+    df["w"] = df["importance"].map(SURPRISE_IMPORTANCE_WEIGHT)
+    return df.dropna(subset=["z"])[["time_utc", "currency", "event", "importance", "actual", "forecast", "z", "w"]]
+
+
+def _surprise_index_at(scores: pd.DataFrame, as_of: pd.Timestamp) -> float | None:
+    window = scores[(scores["time_utc"] <= as_of) & (scores["time_utc"] > as_of - pd.Timedelta(days=SURPRISE_WINDOW_DAYS))]
+    if window.empty:
+        return None
+    age = (as_of - window["time_utc"]).dt.total_seconds() / 86400
+    weight = window["w"] * 0.5 ** (age / SURPRISE_HALFLIFE_DAYS)
+    return float((weight * window["z"]).sum() / (weight.sum() + SURPRISE_PRIOR_WEIGHT))
+
+
+def mt5_surprise_index(currency: str) -> tuple[float | None, int]:
+    scores = mt5_surprise_scores()
+    if scores.empty:
+        return None, 0
+    cur_scores = scores[scores["currency"] == _mt5_currency(currency)]
+    now = pd.Timestamp.now(tz="UTC").tz_localize(None)
+    n = int((cur_scores["time_utc"] > now - pd.Timedelta(days=SURPRISE_WINDOW_DAYS)).sum())
+    return _surprise_index_at(cur_scores, now), n
+
+
+@st.cache_data(ttl=10 * 60)
+def mt5_surprise_history(days: int = 365) -> pd.DataFrame:
+    scores = mt5_surprise_scores()
+    if scores.empty:
+        return pd.DataFrame()
+    end = pd.Timestamp.now(tz="UTC").tz_localize(None)
+    dates = pd.date_range(end - pd.Timedelta(days=days), end, freq="D")
+    out = {}
+    for cur in MT5_RATE_DECISION_CODES:
+        cur_scores = scores[scores["currency"] == cur]
+        out[cur] = [_surprise_index_at(cur_scores, d) for d in dates]
+    return pd.DataFrame(out, index=dates)
+
+
+def mt5_policy_rate_row(currency: str, lookback_days: int = 180) -> tuple[dict, float | None, pd.Timestamp | None]:
+    """Echter Leitzins aus den Zinsentscheid-Actuals: letzter Satz vs. Satz vor
+    ~6 Monaten. Rueckgabe: (Detailzeile, Trend, Zeitpunkt letzter Entscheid)."""
+    cur = _mt5_currency(currency)
+    code = MT5_RATE_DECISION_CODES.get(cur)
+    df = load_mt5_macro_calendar()
+    if df.empty or code is None:
+        return {}, None, None
+    rates = df[(df["event_code"] == code) & df["actual"].notna()]
+    if rates.empty:
+        return {}, None, None
+    last = rates.iloc[-1]
+    before = rates[rates["time_utc"] <= last["time_utc"] - pd.Timedelta(days=lookback_days)]
+    ref = float(before["actual"].iloc[-1]) if not before.empty else float(rates["actual"].iloc[0])
+    trend = float(np.sign(float(last["actual"]) - ref))
+    label = "BULLISH" if trend > 0 else "BEARISH" if trend < 0 else "NEUTRAL"
+    row = {
+        "Indikator": "Leitzins", "Serie": f"MT5: {last['event']}", "Frequenz": "Zinsentscheid",
+        "Stand": last["time_utc"].strftime("%Y-%m-%d"), "Letzter Wert": round(float(last["actual"]), 2),
+        "Wert vor Fenster": round(ref, 2), "Trend": label,
+    }
+    return row, trend, last["time_utc"]
+
+
+def mt5_calendar_range(start: date, end: date) -> pd.DataFrame:
+    """MT5-Kalender fuer [start, end] (Berliner Datum) im Format des Wirtschaftskalenders."""
+    df = load_mt5_macro_calendar()
+    if df.empty:
+        return pd.DataFrame()
+    local = df["time_utc"].dt.tz_localize("UTC").dt.tz_convert(FF_DISPLAY_TZ)
+    # Deckt der Export den Zeitraum nicht ab (Sync zu alt), lieber Forex Factory nehmen.
+    if local.max().date() < end:
+        return pd.DataFrame()
+    mask = (local.dt.date >= start) & (local.dt.date <= end)
+    sub = df[mask].copy()
+    sub_local = local[mask]
+    return pd.DataFrame({
+        "date": sub_local.dt.date, "time": sub_local.dt.strftime("%H:%M"),
+        "currency": sub["currency"], "event": sub["event"], "impact": sub["importance"],
+        "actual": sub["actual"], "forecast": sub["forecast"], "previous": sub["previous"],
+        "surprise": [_surprise_text(r) for r in sub.itertuples()],
+    }).sort_values(["date", "time"]).reset_index(drop=True)
+
+
+def _surprise_text(row) -> str:
+    if pd.isna(row.actual):
+        return ""
+    if row.impact == "positive":
+        return f"▲ positiv fuer {row.currency}"
+    if row.impact == "negative":
+        return f"▼ negativ fuer {row.currency}"
+    if pd.notna(row.forecast) and row.actual == row.forecast:
+        return "= wie erwartet"
+    return ""
+
+
+def _surprise_cell_color(value: str) -> str:
+    if str(value).startswith("▲"):
+        return "background-color: rgba(34,197,94,.35); color: white"
+    if str(value).startswith("▼"):
+        return "background-color: rgba(239,68,68,.35); color: white"
+    return ""
+
+
 def get_economic_calendar(start: date, end: date) -> pd.DataFrame:
+    mt5 = mt5_calendar_range(start, end)
+    if not mt5.empty:
+        return mt5
+
     ff = fetch_forexfactory_week()
     if not ff.empty:
         ff = ff[(ff["date"] >= start) & (ff["date"] <= end)]
@@ -11061,10 +11249,36 @@ def compute_macro_score_row(currency: str, api_key: str) -> dict:
             "Wert vor Fenster": round(float(values["value"].iloc[0]), 2) if not values.empty else None,
             "Trend": trend_label,
         })
+    # Leitzins: echte Zinsentscheid-Actuals aus MT5 statt 3M-Interbanken-Proxy (der
+    # hinkt als Monatsreihe Wochen hinterher, z.B. RBA-Erhoehung erst nach Monatsende).
+    mt5_rate_row, mt5_rate_trend, mt5_last_decision = mt5_policy_rate_row(currency)
+    if mt5_rate_row:
+        proxy_idx = next(i for i, r in enumerate(rows) if r["Indikator"] == "Leitzins")
+        proxy = rows[proxy_idx]
+        rows[proxy_idx] = mt5_rate_row
+        if proxy["Trend"] in ("BULLISH", "BEARISH", "NEUTRAL"):
+            contributions.remove({"BULLISH": 1.0, "BEARISH": -1.0, "NEUTRAL": 0.0}[proxy["Trend"]])
+        contributions.append(mt5_rate_trend)
+    # FF-Zinsentscheid nur, solange MT5 fuer diesen Entscheid noch kein Actual hat
+    # (= Entscheid steht noch bevor -> Markterwartung als Vorab-Signal).
     ff_row, ff_trend = ff_rate_decision_row(currency)
-    rows.insert(1, ff_row)
-    if ff_trend is not None:
-        contributions.append(ff_trend)
+    ff_date = pd.to_datetime(ff_row.get("Stand"), errors="coerce")
+    ff_pending = pd.notna(ff_date) and (mt5_last_decision is None or mt5_last_decision.normalize() < ff_date.normalize())
+    if ff_pending or not mt5_rate_row:
+        rows.insert(1, ff_row)
+        if ff_trend is not None:
+            contributions.append(ff_trend)
+    surprise, n_releases = mt5_surprise_index(currency)
+    if surprise is not None:
+        surprise_trend = float(np.tanh(surprise / 0.5))
+        contributions.append(surprise_trend)
+        label = "BULLISH" if surprise > 0.15 else "BEARISH" if surprise < -0.15 else "NEUTRAL"
+        rows.insert(1, {
+            "Indikator": "Surprise-Index (Actual vs. Forecast)",
+            "Serie": f"MT5: {n_releases} Releases / {SURPRISE_WINDOW_DAYS}T",
+            "Frequenz": "Taeglich", "Stand": date.today().isoformat(),
+            "Letzter Wert": round(surprise, 2), "Wert vor Fenster": None, "Trend": label,
+        })
     macro_score = float(np.clip(np.mean(contributions), -1, 1)) if contributions else None
     return {"score": macro_score, "detail": pd.DataFrame(rows)}
 
@@ -11201,6 +11415,34 @@ def render_macro_donut(currency: str, detail: pd.DataFrame, macro_score: float |
     st.plotly_chart(fig, use_container_width=True, key=f"macro_donut_{currency}")
 
 
+def render_surprise_index_section() -> None:
+    """Economic Surprise Index je Waehrung (MT5-Actuals vs. Forecast), Verlauf 1 Jahr."""
+    st.markdown("#### 📈 Economic Surprise Index (MT5, Actual vs. Forecast)")
+    history = mt5_surprise_history()
+    if history.empty:
+        st.caption("Keine MT5-Kalenderdaten im Repo (data/macro_calendar) — EA + Sync laufen lassen.")
+        return
+    st.caption(
+        f"Pro Release: (Actual - Forecast) geteilt durch die typische Ueberraschung genau dieses Releases "
+        f"(z-Score, max. ±{SURPRISE_Z_CAP:g}), Vorzeichen = MetaQuotes' Einstufung positiv/negativ fuer die "
+        f"Waehrung. High-Impact zaehlt voll, Medium halb, gleitend ueber {SURPRISE_WINDOW_DAYS} Tage mit "
+        f"{SURPRISE_HALFLIFE_DAYS} Tagen Halbwertszeit, bei wenigen Releases (z.B. CHF) leicht gegen 0 gedaempft. > 0 = Daten kommen besser rein als erwartet "
+        f"(Rueckenwind fuer die Waehrung), < 0 = schlechter. Angelehnt an den Citi Surprise Index, "
+        f"kein validiertes Handelsmodell. Stand MT5-Export: {mt5_macro_exported_at() or 'unbekannt'}."
+    )
+    latest = history.ffill().iloc[-1].sort_values(ascending=False)
+    cols = st.columns(len(latest))
+    for col, (cur, val) in zip(cols, latest.items()):
+        col.metric(cur, "n/a" if pd.isna(val) else f"{val:+.2f}")
+    fig = go.Figure()
+    for cur in history.columns:
+        fig.add_trace(go.Scatter(x=history.index, y=history[cur], mode="lines", name=cur))
+    fig.add_hline(y=0, line_color="#64748b", line_dash="dot")
+    fig.update_layout(template="plotly_dark", height=380, margin=dict(t=10, b=10, l=10, r=10),
+                      yaxis_title="Surprise (z)", legend=dict(orientation="h"))
+    st.plotly_chart(fig, use_container_width=True, key="surprise_index_all")
+
+
 def render_pair_comparison(raw_scores: dict) -> None:
     """Relativer Paar-Vergleich: Basis- gegen Gegenwaehrung verrechnet (Basis minus
     Gegenwaehrung), damit ein echtes Richtungssignal fuer ein FX-Paar entsteht. Die
@@ -11254,6 +11496,25 @@ def render_pair_comparison(raw_scores: dict) -> None:
         detail_rows.append({"Signal": label, base: b_txt, quote: q_txt, "Differenz": d_txt})
     detail_df = pd.DataFrame(detail_rows).set_index("Signal")
     st.dataframe(detail_df.style.map(_matrix_cell_color, subset=["Differenz"]), use_container_width=True)
+
+    # Surprise-Differenz: Basis minus Gegenwaehrung (DXY -> USD)
+    history = mt5_surprise_history()
+    b_cur, q_cur = _mt5_currency(base), _mt5_currency(quote)
+    if not history.empty and b_cur in history and q_cur in history:
+        diff = (history[b_cur] - history[q_cur]).dropna()
+        if not diff.empty:
+            st.markdown(f"**Surprise-Differenz {pair_label}** (Surprise {b_cur} minus {q_cur}, MT5)")
+            st.caption(
+                f"> 0 = Wirtschaftsdaten aus {b_cur} ueberraschen zuletzt staerker positiv als aus {q_cur} "
+                f"-> fundamentaler Rueckenwind fuer {pair_label}. Aktuell: {diff.iloc[-1]:+.2f}."
+            )
+            fig = go.Figure(go.Scatter(
+                x=diff.index, y=diff.values, mode="lines", fill="tozeroy",
+                line=dict(color="#22c55e" if diff.iloc[-1] >= 0 else "#ef4444"),
+            ))
+            fig.add_hline(y=0, line_color="#64748b", line_dash="dot")
+            fig.update_layout(template="plotly_dark", height=240, margin=dict(t=10, b=10, l=10, r=10))
+            st.plotly_chart(fig, use_container_width=True, key=f"surprise_diff_{base}_{quote}")
 
 
 def render_currency_matrix_section() -> None:
@@ -11341,6 +11602,8 @@ def render_currency_matrix_section() -> None:
 
     render_signal_scatter(raw_scores)
 
+    render_surprise_index_section()
+
     with st.expander("🌍 Wochenview Makro-Fundamentaldaten (Detail je Waehrung)"):
         for currency in CURRENCY_MATRIX_ASSETS:
             detail = macro_details[currency]
@@ -11356,9 +11619,31 @@ def render_currency_matrix_section() -> None:
                         detail.style.map(_matrix_cell_color, subset=["Trend"]),
                         use_container_width=True, hide_index=True,
                     )
+            mt5_cal = load_mt5_macro_calendar()
             ff_week = fetch_forexfactory_week()
             ff_cur = "USD" if currency == "DXY" else currency
-            if not ff_week.empty:
+            if not mt5_cal.empty:
+                now_utc = pd.Timestamp.now(tz="UTC").tz_localize(None)
+                cur_cal = mt5_cal[(mt5_cal["currency"] == ff_cur) & (mt5_cal["importance"] == "High")]
+                past = cur_cal[cur_cal["actual"].notna() & (cur_cal["time_utc"] > now_utc - pd.Timedelta(days=14))]
+                upcoming = cur_cal[cur_cal["actual"].isna() & (cur_cal["time_utc"] > now_utc) & (cur_cal["time_utc"] < now_utc + pd.Timedelta(days=7))]
+                for title, part in (("🔴 High-Impact letzte 14 Tage (MT5, mit Actual)", past), ("⏭️ High-Impact naechste 7 Tage (MT5)", upcoming)):
+                    if part.empty:
+                        continue
+                    st.caption(title)
+                    local = part["time_utc"].dt.tz_localize("UTC").dt.tz_convert(FF_DISPLAY_TZ)
+                    show = pd.DataFrame({
+                        "Zeit (Berlin)": local.dt.strftime("%d.%m. %H:%M"), "Event": part["event"],
+                        "Actual": part["actual"], "Forecast": part["forecast"], "Previous": part["previous"],
+                        "Ueberraschung": [_surprise_text(r) for r in part.itertuples()],
+                    })
+                    st.dataframe(
+                        show.style.map(_surprise_cell_color, subset=["Ueberraschung"]).format(
+                            {c: "{:g}" for c in ("Actual", "Forecast", "Previous")}, na_rep="",
+                        ),
+                        use_container_width=True, hide_index=True,
+                    )
+            elif not ff_week.empty:
                 high = ff_week[(ff_week["currency"] == ff_cur) & (ff_week["impact"] == "High")]
                 if high.empty:
                     st.caption("Forex Factory: diese Woche keine High-Impact-Events.")
@@ -11407,8 +11692,19 @@ def render_extra_makro_sentiment() -> None:
             "Kostenloser Key: fred.stlouisfed.org/docs/api/api_key.html"
         )
     calendar_df = get_economic_calendar(start, end)
-    if "forecast" in calendar_df.columns:
-        st.caption("Quelle: Forex Factory Wochenkalender (alle Waehrungen, Uhrzeit Berlin, Forecast/Previous; kein Actual im Feed).")
+    if "surprise" in calendar_df.columns:
+        exported = mt5_macro_exported_at()
+        st.caption(
+            "Quelle: MT5-Wirtschaftskalender (MetaQuotes) mit ACTUAL, Forecast, Previous, Uhrzeit Berlin. "
+            "'positiv/negativ fuer ...' = MetaQuotes' Einstufung des Actual gegen den Forecast aus Sicht "
+            f"der Waehrung. Stand MT5-Export: {exported or 'unbekannt'} (aktualisiert nur, solange MT5 mit dem EA laeuft)."
+        )
+        impact_filter = st.multiselect(
+            "Impact", ["High", "Medium"], default=["High", "Medium"], key="extra_cal_impact",
+        )
+        calendar_df = calendar_df[calendar_df["impact"].isin(impact_filter)]
+    elif "forecast" in calendar_df.columns:
+        st.caption("Quelle: Forex Factory Wochenkalender (MT5-Export fehlt/zu alt; alle Waehrungen, Uhrzeit Berlin, Forecast/Previous; kein Actual im Feed).")
         impact_filter = st.multiselect(
             "Impact", ["High", "Medium", "Low", "Holiday"], default=["High", "Medium"], key="extra_cal_impact",
         )
@@ -11420,10 +11716,17 @@ def render_extra_makro_sentiment() -> None:
     else:
         display_df = calendar_df.rename(columns={
             "date": "Datum", "time": "Uhrzeit", "currency": "Waehrung", "event": "Event", "impact": "Impact",
-            "forecast": "Forecast", "previous": "Previous",
+            "forecast": "Forecast", "previous": "Previous", "actual": "Actual", "surprise": "Ueberraschung",
         })
+        if "Actual" in display_df.columns:
+            display_df = display_df[["Datum", "Uhrzeit", "Waehrung", "Event", "Impact", "Actual", "Forecast", "Previous", "Ueberraschung"]]
+        styler = display_df.style.map(_impact_color, subset=["Impact"])
+        if "Ueberraschung" in display_df.columns:
+            styler = styler.map(_surprise_cell_color, subset=["Ueberraschung"]).format(
+                {c: "{:g}" for c in ("Actual", "Forecast", "Previous")}, na_rep="",
+            )
         st.dataframe(
-            display_df.style.map(_impact_color, subset=["Impact"]),
+            styler,
             use_container_width=True, hide_index=True,
         )
 
