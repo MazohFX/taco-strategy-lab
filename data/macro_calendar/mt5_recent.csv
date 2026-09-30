@@ -1,12 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-287359,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-07-31 19:30,2026-07-28,-40.0,,-37.7,,
-287500,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-07-31 19:30,2026-07-28,-163.4,,-152.1,,
-287735,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-07-31 19:30,2026-07-28,-64.8,,-55.6,,
-287876,840520003,cftc-gold-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-07-31 19:30,2026-07-28,182.1,,183.9,,
-287923,840520004,cftc-crude-oil-non-commercial-net-positions,USD,US,CFTC Rohöl nichtkommerzielle Nettopositionen,Medium,position,2026-07-31 19:30,2026-07-28,120.1,,81.7,,
-287970,840520005,cftc-sp-500-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-07-31 19:30,2026-07-28,-17.2,,-16.8,,
-288252,840520011,cftc-nasdaq-100-non-commercial-net-positions,USD,US,CFTC Nasdaq 100 Nichtkommerzielle Nettopositionen,Medium,position,2026-07-31 19:30,2026-07-28,4.9,,4.5,,
-288299,999520001,cftc-eur-non-commercial-net-positions,EUR,EU,CFTC EUR nichtkommerzielle Nettopositionen,Medium,position,2026-07-31 19:30,2026-07-28,-72.4,,-41.3,,
 319791,276010016,retail-sales-mm,EUR,DE,Einzelhandelsumsatz m/m,Medium,percent,2026-08-03 06:00,2026-06-01,-1.1,,1.1,1.2,
 270612,756020001,cpi-mm,CHF,CH,CPI m/m,Medium,percent,2026-08-03 06:30,2026-07-01,-0.1,0.0,0.0,,negative
 309984,724500001,markit-manufacturing-pmi,EUR,ES,S&P Global PMI der Hersteller,Medium,none,2026-08-03 07:15,2026-07-01,50.2,51.5,49.7,,negative
@@ -860,3 +852,5 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 319696,276010021,cpi-yy,EUR,DE,CPI y/y,Medium,percent,2026-10-13 06:00,2026-09-01,,,,,
 287287,840120001,existing-home-sales,USD,US,Tatsächliche Hausverkäufe,High,none,2026-10-13 14:00,2026-09-01,,4.02,3.98,,
 287298,840120002,existing-home-sales-mm,USD,US,Tatsächliche Hausverkäufe m/m,Medium,percent,2026-10-13 14:00,2026-09-01,,-2.4,-2.0,,
+272954,840150001,federal-budget-balance,USD,US,Staatshaushalt,Medium,currency,2026-10-13 18:00,2026-09-01,,386.1,-166.8,,
+281032,392060040,boj-l-money-stock-yy,JPY,JP,BoJ L Geldmenge y/y,High,percent,2026-10-13 23:50,2026-09-01,,4.2,4.4,,
