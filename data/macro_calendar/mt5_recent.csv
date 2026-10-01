@@ -945,3 +945,5 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 270248,840020007,business-inventories-mm,USD,US,Lagerbestände der Hersteller Einzel- und Großhändler m/m,Medium,percent,2026-10-15 14:00,2026-08-01,,1.1,0.8,,
 270509,840020027,retail-inventories-mm,USD,US,Lagerbestände der Einzelhändler m/m,Medium,percent,2026-10-15 14:00,2026-08-01,,,,,
 270533,840020028,retail-inventories-ex-autos-mm,USD,US,Lagerbestände der Einzelhändler exkl. Autos m/m,Medium,percent,2026-10-15 14:00,2026-08-01,,,,,
+314973,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-10-15 16:00,2026-10-09,,,,,
+314974,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-10-15 16:00,2026-10-09,,,,,
