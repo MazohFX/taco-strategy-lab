@@ -867,3 +867,4 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 302108,36010003,employment-change,AUD,AU,Beschäftigungsentwicklung,Medium,job,2026-10-15 00:30,2026-09-01,,14.0,39.5,,
 302109,36010004,full-employment-change,AUD,AU,Beschäftigungsentwicklung Vollzeit,Medium,job,2026-10-15 00:30,2026-09-01,,,-6.3,,
 302111,36010006,unemployment-rate,AUD,AU,Arbeitslosenrate,Medium,percent,2026-10-15 00:30,2026-09-01,,4.6,4.6,,
+289149,392020006,industrial-production-mm,JPY,JP,Industrieproduktion m/m,Medium,percent,2026-10-15 04:30,2026-08-01,,,,,
