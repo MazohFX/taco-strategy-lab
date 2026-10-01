@@ -11288,6 +11288,105 @@ def mt5_indicator_values(currency: str, indicator: str, limit: int = 6) -> tuple
     return None
 
 
+# ── Offizielle Statistikaemter fuer Luecken in MT5/FRED ───────────────────────
+# Nur fuer Indikatoren, die weder MT5 noch FRED aktuell liefern. Alle Quellen
+# kostenlos, ohne API-Key, fuer automatisierte Abfragen gedacht:
+#   ONS (UK)      Zeitreihen-JSON je CDID (AP2Y offene Stellen, MGSX Arbeitslosenquote)
+#   Eurostat      jvs_q_r21 (NACE 2.1, ersetzt das 2025 eingefrorene jvs_q_nace2), EA21
+#   ABS (AU)      SDMX-API: JV (offene Stellen), HSI_M (Household Spending Indicator --
+#                 Nachfolger der 2025 eingestellten Einzelhandelsstatistik)
+#   BFS (CH)      PxWeb: Offene Stellen Schweiz (nicht saisonbereinigt -> Vorjahresvergleich)
+# Rueckgabe je Quelle: DataFrame date/value, aufsteigend.
+
+def _ons_series(cdid: str, topic: str) -> pd.DataFrame:
+    import requests
+
+    url = f"https://www.ons.gov.uk/employmentandlabourmarket/{topic}/timeseries/{cdid}/lms/data"
+    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+    response.raise_for_status()
+    rows = []
+    for m in response.json().get("months", []):
+        # Label "2026 JUN-AUG" = rollierender 3-Monats-Schnitt -> Stand = letzter Monat
+        label = str(m.get("label", ""))
+        match = re.match(r"(\d{4}) [A-Z]{3}-([A-Z]{3})", label)
+        when = pd.to_datetime(f"{match.group(1)} {match.group(2)}", format="%Y %b") if match else pd.to_datetime(m.get("date"), format="%Y %b", errors="coerce")
+        rows.append({"date": when, "value": pd.to_numeric(m.get("value"), errors="coerce")})
+    return pd.DataFrame(rows)
+
+
+def _eurostat_jvr(geo: str) -> pd.DataFrame:
+    import requests
+
+    params = {"geo": geo, "indic_em": "JVR", "s_adj": "SA", "sizeclas": "TOTAL", "nace_r2_1": "B-T", "sinceTimePeriod": "2023-Q1"}
+    response = requests.get("https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/jvs_q_r21", params=params, timeout=20)
+    response.raise_for_status()
+    data = response.json()
+    times = {v: k for k, v in data["dimension"]["time"]["category"]["index"].items()}
+    rows = [{"date": pd.Period(times[int(i)], freq="Q").start_time, "value": float(v)} for i, v in data.get("value", {}).items()]
+    return pd.DataFrame(rows)
+
+
+def _abs_series(dataflow: str, key: str) -> pd.DataFrame:
+    from io import StringIO
+    import requests
+
+    url = f"https://data.api.abs.gov.au/rest/data/ABS,{dataflow}/{key}?startPeriod=2023-01"
+    response = requests.get(url, headers={"Accept": "application/vnd.sdmx.data+csv"}, timeout=20)
+    response.raise_for_status()
+    raw = pd.read_csv(StringIO(response.text))
+    period = raw["TIME_PERIOD"].astype(str)
+    dates = [pd.Period(p, freq="Q").start_time if "Q" in p else pd.Timestamp(p + "-01") for p in period]
+    return pd.DataFrame({"date": dates, "value": pd.to_numeric(raw["OBS_VALUE"], errors="coerce")})
+
+
+def _bfs_job_vacancies() -> pd.DataFrame:
+    import requests
+
+    url = "https://www.pxweb.bfs.admin.ch/api/v1/de/px-x-0602000000_104/px-x-0602000000_104.px"
+    query = {"query": [
+        {"code": "Offene Stellen", "selection": {"filter": "item", "values": ["1"]}},
+        {"code": "Grossregion", "selection": {"filter": "item", "values": ["0"]}},
+        {"code": "Quartal", "selection": {"filter": "top", "values": ["12"]}},
+    ], "response": {"format": "json"}}
+    response = requests.post(url, json=query, timeout=20)
+    response.raise_for_status()
+    rows = [{"date": pd.Period(d["key"][2], freq="Q").start_time, "value": float(d["values"][0])} for d in response.json()["data"]]
+    return pd.DataFrame(rows)
+
+
+# (Waehrung, Indikator) -> (Serien-Label, Frequenz, Loader, Anzahl Werte fuer den Trend).
+# Anzahl 5 bei Quartalsdaten ohne Saisonbereinigung = letzter Wert vs. Vorjahresquartal.
+OFFICIAL_MACRO_SOURCES = {
+    ("GBP", "Offene Stellen"): ("ONS AP2Y (UK Vacancies)", "M", lambda: _ons_series("ap2y", "peopleinwork/employmentandemployeetypes"), 6),
+    ("GBP", "Arbeitslosenquote"): ("ONS MGSX (UK Unemployment rate)", "M", lambda: _ons_series("mgsx", "peoplenotinwork/unemployment"), 6),
+    ("EUR", "Offene Stellen"): ("Eurostat jvs_q_r21 EA21 Vakanzquote", "Q", lambda: _eurostat_jvr("EA21"), 6),
+    ("AUD", "Offene Stellen"): ("ABS JV Job Vacancies (sa)", "Q", lambda: _abs_series("JV,1.0", "M1.7.TOT.20.AUS.Q"), 6),
+    ("AUD", "Einzelhandelsumsatz"): ("ABS HSI_M Household Spending y/y (sa)", "M", lambda: _abs_series("HSI_M,1.6.0", "9.TOT.CUR.20.AUS.M"), 6),
+    ("CHF", "Offene Stellen"): ("BFS Offene Stellen Schweiz (Vorjahresvergleich)", "Q", _bfs_job_vacancies, 5),
+}
+
+
+@st.cache_data(ttl=12 * 60 * 60)
+def _fetch_official_cached(currency: str, indicator: str) -> pd.DataFrame:
+    _label, _freq, loader, _n = OFFICIAL_MACRO_SOURCES[(currency, indicator)]
+    df = loader().dropna(subset=["date", "value"]).sort_values("date").drop_duplicates("date", keep="last")
+    if df.empty:
+        raise RuntimeError("leer")  # nicht cachen, naechster Lauf versucht es erneut
+    return df.reset_index(drop=True)
+
+
+def official_indicator_values(currency: str, indicator: str) -> tuple[str, str, pd.DataFrame] | None:
+    key = (_mt5_currency(currency), indicator)
+    if key not in OFFICIAL_MACRO_SOURCES:
+        return None
+    label, freq, _loader, n = OFFICIAL_MACRO_SOURCES[key]
+    try:
+        values = _fetch_official_cached(*key)
+    except Exception:
+        return None
+    return label, freq, values.tail(n).reset_index(drop=True)
+
+
 def compute_macro_score_row(currency: str, api_key: str) -> dict:
     queries = CURRENCY_MACRO_QUERIES.get(currency, {})
     rows = []
@@ -11299,7 +11398,9 @@ def compute_macro_score_row(currency: str, api_key: str) -> dict:
                 "Frequenz": "n/a", "Stand": "n/a", "Letzter Wert": None, "Wert vor Fenster": None, "Trend": "n/a",
             })
             continue
-        mt5_series = mt5_indicator_values(currency, indicator)
+        # Offizielle Statistikaemter nur dort, wo MT5/FRED nichts Aktuelles haben.
+        official = official_indicator_values(currency, indicator)
+        mt5_series = official or mt5_indicator_values(currency, indicator)
         mt5_fresh = mt5_series is not None and not is_series_stale(mt5_series[2]["date"].iloc[-1], mt5_series[1])
         if mt5_fresh:
             series_label, freq, values = mt5_series
@@ -11619,7 +11720,7 @@ def render_currency_matrix_section() -> None:
         "CFTC-COT-Score (40%). Makro (Wochen): Trend (letzte verfuegbare Werte, meist Monatsdaten) "
         "bei Leitzins, Inflation, Arbeitslosenquote, 10J-Anleiherendite, offenen Stellen, "
         "Einzelhandelsumsatz, BIP-Wachstum und Fruehindikator (OECD Composite Leading Indicator, "
-        "PMI-Ersatz -- echte PMI-Daten sind proprietaer/nicht frei verfuegbar) je Land (FRED, fuer CAD "
+        "PMI-Ersatz -- echte PMI-Daten sind proprietaer/nicht frei verfuegbar) je Land (vorrangig MT5-Kalender, Luecken ueber die Statistikaemter ONS/Eurostat/ABS/BFS, sonst FRED; fuer CAD "
         "Statistics Canada, gleichgewichtet). Geschaeftsklima und Leistungsbilanz wurden bewusst "
         "entfernt: die zugrundeliegenden OECD-Reihen werden fuer alle 8 Laender seit 2023/2024 nicht "
         "mehr aktualisiert, keine kostenlose Alternative gefunden -- haetten nie etwas zum Score "
