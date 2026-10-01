@@ -874,3 +874,5 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 321572,826010030,trade-balance-non-eu,GBP,GB,Handelsbilanz Non-EU,Medium,currency,2026-10-15 06:00,2026-08-01,,-4.324,-10.448,,
 321586,826010039,gdp-mm,GBP,GB,BIP m/m,High,percent,2026-10-15 06:00,2026-08-01,,0.0,0.3,,
 321587,826010040,gdp-3m3m,GBP,GB,BIP 3m/3m,Medium,percent,2026-10-15 06:00,2026-08-01,,,0.4,,
+309893,250010001,cpi-mm,EUR,FR,CPI m/m,Medium,percent,2026-10-15 06:45,2026-09-01,,,,,
+309901,250010003,hicp-mm,EUR,FR,HVPI m/m,Medium,percent,2026-10-15 06:45,2026-09-01,,,,,
