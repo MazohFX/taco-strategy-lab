@@ -11204,6 +11204,90 @@ def fetch_statcan_job_vacancy_rate(limit: int = 6) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# Aktuelle MT5-Reihen statt FRED/OECD je Waehrung + Indikator. Kandidaten in
+# Reihenfolge, (Land, event_code); genommen wird der erste mit Daten in den letzten
+# ~9 Monaten. Die FRED/OECD-Reihen sind fuer viele Laender seit Monaten/Jahren
+# eingefroren (CPI JP/AU/NZ/CH, Arbeitslosenquote, Einzelhandel, Vakanzen) -- der
+# MetaQuotes-Kalender hat die offiziellen Releases tagesaktuell. Fehlt eine Reihe
+# (z.B. AUD-Einzelhandel: ABS hat die Statistik 2025 eingestellt), bleibt FRED.
+MT5_MACRO_SERIES = {
+    "USD": {
+        "Inflation (CPI YoY)": [("US", "consumer-price-index-yy")],
+        "Arbeitslosenquote": [("US", "unemployment-rate")],
+        "Offene Stellen": [("US", "jolts-job-openings")],
+        "Einzelhandelsumsatz": [("US", "retail-sales-yy"), ("US", "retail-sales-mm")],
+        "BIP-Wachstum": [("US", "gross-domestic-product-qq")],
+    },
+    "EUR": {
+        "Inflation (CPI YoY)": [("EU", "consumer-price-index-yy"), ("DE", "cpi-yy")],
+        "Arbeitslosenquote": [("EU", "unemployment-rate"), ("DE", "unemployment-rate")],
+        "Einzelhandelsumsatz": [("EU", "retail-sales-yy"), ("DE", "retail-sales-yy")],
+        "BIP-Wachstum": [("EU", "gross-domestic-product-yy"), ("DE", "gdp-yy")],
+    },
+    "GBP": {
+        "Inflation (CPI YoY)": [("GB", "cpi-yy")],
+        "Arbeitslosenquote": [("GB", "unemployment-rate")],
+        "Einzelhandelsumsatz": [("GB", "retail-sales-yy")],
+        "BIP-Wachstum": [("GB", "gdp-yy")],
+    },
+    "AUD": {
+        "Inflation (CPI YoY)": [("AU", "cpi-yy")],
+        "Arbeitslosenquote": [("AU", "unemployment-rate")],
+        "BIP-Wachstum": [("AU", "gdp-yy")],
+    },
+    "NZD": {
+        "Inflation (CPI YoY)": [("NZ", "cpi-yy")],
+        "Arbeitslosenquote": [("NZ", "unemployment-rate")],
+        "Einzelhandelsumsatz": [("NZ", "retail-sales-yy")],
+        "BIP-Wachstum": [("NZ", "gdp-yy"), ("NZ", "gdp-annual-change")],
+    },
+    "CAD": {
+        "Inflation (CPI YoY)": [("CA", "cpi-yy")],
+        "Arbeitslosenquote": [("CA", "unemployment-rate")],
+        "Einzelhandelsumsatz": [("CA", "retail-sales-mm")],
+        "BIP-Wachstum": [("CA", "gdp-yy")],
+    },
+    "CHF": {
+        "Inflation (CPI YoY)": [("CH", "cpi-yy")],
+        "Arbeitslosenquote": [("CH", "unemployment-rate")],
+        "Einzelhandelsumsatz": [("CH", "retail-sales-yy")],
+        "BIP-Wachstum": [("CH", "gdp-yy")],
+    },
+    "JPY": {
+        "Inflation (CPI YoY)": [("JP", "national-consumer-price-index-yy")],
+        "Arbeitslosenquote": [("JP", "unemployment-rate")],
+        "Offene Stellen": [("JP", "jobs-to-applicants-ratio")],
+        "Einzelhandelsumsatz": [("JP", "retail-sales-yy")],
+        "BIP-Wachstum": [("JP", "gross-domestic-product-yy")],
+    },
+}
+MT5_SERIES_MAX_AGE_DAYS = 270
+
+
+def mt5_indicator_values(currency: str, indicator: str, limit: int = 6) -> tuple[str, str, pd.DataFrame] | None:
+    """Letzte `limit` Releases (Actual, Referenzperiode) einer MT5-Reihe im FRED-Format
+    (date/value) -- gleiche Trendlogik wie FRED (letzter vs. erster Wert im Fenster).
+    Rueckgabe (Serien-Label, Frequenz M/Q, Werte) oder None."""
+    candidates = MT5_MACRO_SERIES.get(_mt5_currency(currency), {}).get(indicator)
+    df = load_mt5_macro_calendar()
+    if not candidates or df.empty:
+        return None
+    cutoff = pd.Timestamp.now(tz="UTC").tz_localize(None) - pd.Timedelta(days=MT5_SERIES_MAX_AGE_DAYS)
+    for country, code in candidates:
+        rel = df[(df["country"] == country) & (df["event_code"] == code) & df["actual"].notna()]
+        if rel.empty or rel["time_utc"].max() < cutoff:
+            continue
+        rel = rel.assign(date=pd.to_datetime(rel["period"], errors="coerce").fillna(rel["time_utc"]))
+        # BIP u.ae. kommen pro Periode mehrfach (Vorab-/zweite/finale Schaetzung) ->
+        # je Referenzperiode nur die letzte (revidierte) Meldung.
+        rel = rel.sort_values("time_utc").drop_duplicates("date", keep="last").sort_values("date").tail(limit)
+        gaps = rel["date"].diff().dt.days.dropna()
+        freq = "M" if gaps.empty or gaps.median() < 50 else "Q"
+        values = pd.DataFrame({"date": rel["date"].values, "value": rel["actual"].values})
+        return f"MT5: {country} {rel['event'].iloc[-1]}", freq, values
+    return None
+
+
 def compute_macro_score_row(currency: str, api_key: str) -> dict:
     queries = CURRENCY_MACRO_QUERIES.get(currency, {})
     rows = []
@@ -11215,7 +11299,11 @@ def compute_macro_score_row(currency: str, api_key: str) -> dict:
                 "Frequenz": "n/a", "Stand": "n/a", "Letzter Wert": None, "Wert vor Fenster": None, "Trend": "n/a",
             })
             continue
-        if query == STATCAN_CAD_SENTINEL:
+        mt5_series = mt5_indicator_values(currency, indicator)
+        mt5_fresh = mt5_series is not None and not is_series_stale(mt5_series[2]["date"].iloc[-1], mt5_series[1])
+        if mt5_fresh:
+            series_label, freq, values = mt5_series
+        elif query == STATCAN_CAD_SENTINEL:
             series_label = "StatCan 14-10-0371-01"
             freq = "M"
             values = fetch_statcan_job_vacancy_rate()
@@ -11229,6 +11317,12 @@ def compute_macro_score_row(currency: str, api_key: str) -> dict:
             series_id, freq = resolved if resolved else (None, "")
             series_label = series_id or "n/a"
             values = fetch_fred_series_values(series_id, api_key) if series_id else pd.DataFrame()
+        # MT5 veraltet (z.B. UK-Arbeitsmarkt fehlt im MetaQuotes-Kalender) -> die
+        # frischere der beiden Quellen nehmen.
+        if not mt5_fresh and mt5_series is not None and (
+            values.empty or mt5_series[2]["date"].iloc[-1] > values["date"].iloc[-1]
+        ):
+            series_label, freq, values = mt5_series
         last_date = values["date"].iloc[-1] if not values.empty else None
         stale = is_series_stale(last_date, freq)
         trend = None if stale else fred_trend_score(values, invert=indicator in MACRO_INVERT_INDICATORS)

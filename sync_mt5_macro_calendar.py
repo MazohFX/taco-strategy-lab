@@ -6,7 +6,7 @@ Ziel:   data/macro_calendar/mt5_recent.csv       (letzte 60 + naechste 14 Tage, 
         data/macro_calendar/mt5_history.csv.gz   (alles aelter als 60 Tage, max. 1x/Woche)
         data/macro_calendar/meta.json            (Zeitpunkt des letzten Exports)
 
-Nur High/Medium-Impact (Low traegt nichts zum Score bei und blaeht das Repo auf).
+Nur High/Medium-Impact plus KEEP_LOW_CODES (Low blaeht sonst das Repo auf).
 
 Aufruf:  python sync_mt5_macro_calendar.py            -> nur Dateien schreiben
          python sync_mt5_macro_calendar.py --push     -> bei Aenderung commit + push
@@ -35,9 +35,22 @@ KEEP_COLS = [
 ]
 
 
+# Low-Impact-Releases, die trotzdem gebraucht werden: MetaQuotes stuft einige
+# Kern-Kennzahlen je Land als "Low" ein (z.B. Arbeitslosenquote JP/CH/NZ, CPI y/y
+# CA/CH/IT, Einzelhandel y/y) -- die App nutzt sie als aktuelle Quelle fuer die
+# Makro-Indikatoren statt der teils seit Jahren eingefrorenen FRED/OECD-Reihen.
+KEEP_LOW_CODES = {
+    "consumer-price-index-yy", "cpi-yy", "national-consumer-price-index-yy",
+    "unemployment-rate", "retail-sales-yy", "retail-sales-mm", "gdp-yy",
+    "gross-domestic-product-yy", "jobs-to-applicants-ratio",
+    "household-spending-mm", "household-spending-yy",
+}
+
+
 def load_export(name: str) -> pd.DataFrame:
     df = pd.read_csv(COMMON_FILES / name, encoding="cp1252")
-    df = df[df["importance"].isin(["High", "Medium"])].copy()
+    keep = df["importance"].isin(["High", "Medium"]) | df["event_code"].isin(KEEP_LOW_CODES)
+    df = df[keep].copy()
     df["unit"] = df["unit"].str.replace("CALENDAR_UNIT_", "", regex=False).str.lower()
     df["time_utc"] = pd.to_datetime(df["time_utc"], format="%Y.%m.%d %H:%M")
     df["period"] = df["period"].astype(str).str.replace(".", "-", regex=False)
