@@ -1,8 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-270174,840020002,construction-spending-mm,USD,US,Bauinvestitionen m/m,Medium,percent,2026-08-03 14:00,2026-06-01,-0.1,0.1,0.1,0.0,negative
-283015,840040001,ism-manufacturing-pmi,USD,US,ISM Einkaufsmanagerindex Hersteller PMI,High,none,2026-08-03 14:00,2026-07-01,55.6,53.0,53.3,,positive
-283021,840040002,ism-prices-paid,USD,US,ISM bezahlte Herstellerpreise,High,none,2026-08-03 14:00,2026-07-01,71.1,65.7,73.0,,positive
-283033,840040004,ism-manufacturing-employment,USD,US,ISM Verarbeitendes Gewerbe Beschäftigung,Medium,none,2026-08-03 14:00,2026-07-01,52.8,48.6,49.7,,positive
 309448,392070009,10-year-jgb-auction,JPY,JP,10-jährige JGB Auktion,Medium,percent,2026-08-04 03:35,1970-01-01,2.84,,2.729,,
 286726,724050001,unemployment-change,EUR,ES,Änderung der Arbeitslosigkeit,Medium,people,2026-08-04 07:00,2026-07-01,19.517,-50.784,-28.739,,negative
 281545,380010014,retail-sales-mm,EUR,IT,Einzelhandelsumsatz m/m,Low,percent,2026-08-04 08:00,2026-06-01,-0.1,-0.5,0.2,,positive
