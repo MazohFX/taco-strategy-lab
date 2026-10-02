@@ -949,3 +949,5 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 277564,840030011,import-price-index-mm,USD,US,Import Preisindex m/m,Medium,percent,2026-10-16 12:30,2026-09-01,,0.4,0.7,,
 277588,840030013,export-price-index-mm,USD,US,Export Preisindex m/m,Medium,percent,2026-10-16 12:30,2026-09-01,,3.1,0.6,,
 278166,124010019,foreign-securities-purchases,CAD,CA,Ausländische Wertpapierkäufe,Medium,currency,2026-10-16 12:30,2026-08-01,,,20.653,,
+280469,840050011,industrial-production-mm,USD,US,Fed Industrieproduktion m/m,Medium,percent,2026-10-16 13:15,2026-09-01,,-0.1,0.0,,
+280517,840050026,industrial-production-yy,USD,US,Fed Industrieproduktion y/y,Medium,percent,2026-10-16 13:15,2026-09-01,,1.2,1.4,,
