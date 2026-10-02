@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-309986,840500001,markit-manufacturing-pmi,USD,US,S&P Global PMI der Hersteller,High,none,2026-08-03 13:45,2026-07-01,53.9,54.5,55.7,,negative
 270174,840020002,construction-spending-mm,USD,US,Bauinvestitionen m/m,Medium,percent,2026-08-03 14:00,2026-06-01,-0.1,0.1,0.1,0.0,negative
 283015,840040001,ism-manufacturing-pmi,USD,US,ISM Einkaufsmanagerindex Hersteller PMI,High,none,2026-08-03 14:00,2026-07-01,55.6,53.0,53.3,,positive
 283021,840040002,ism-prices-paid,USD,US,ISM bezahlte Herstellerpreise,High,none,2026-08-03 14:00,2026-07-01,71.1,65.7,73.0,,positive
