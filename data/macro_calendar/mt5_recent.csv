@@ -945,3 +945,4 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 319084,999030018,trade-balance,EUR,EU,Handelsbilanz,Medium,currency,2026-10-16 09:00,2026-08-01,,0.6,5.0,,
 319085,999030019,trade-balance-nsa,EUR,EU,Handelsbilanz n.s.a.,Medium,currency,2026-10-16 09:00,2026-08-01,,-0.2,14.2,,
 319091,999030027,core-consumer-price-index,EUR,EU,Kern VPI,Medium,none,2026-10-16 09:00,2026-09-01,,,,,
+280255,124030001,cmhc-housing-starts,CAD,CA,CMHC Baubeginne,Medium,building,2026-10-16 12:15,2026-09-01,,,,,
