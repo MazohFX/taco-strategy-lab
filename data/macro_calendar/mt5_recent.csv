@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-319791,276010016,retail-sales-mm,EUR,DE,Einzelhandelsumsatz m/m,Medium,percent,2026-08-03 06:00,2026-06-01,-1.1,,1.1,1.2,
-319793,276010017,retail-sales-yy,EUR,DE,Einzelhandelsumsatz y/y,Low,percent,2026-08-03 06:00,2026-06-01,-0.2,,1.8,2.1,
 270612,756020001,cpi-mm,CHF,CH,CPI m/m,Medium,percent,2026-08-03 06:30,2026-07-01,-0.1,0.0,0.0,,negative
 270618,756020002,cpi-yy,CHF,CH,CPI y/y,Low,percent,2026-08-03 06:30,2026-07-01,0.4,0.4,0.5,,
 309984,724500001,markit-manufacturing-pmi,EUR,ES,S&P Global PMI der Hersteller,Medium,none,2026-08-03 07:15,2026-07-01,50.2,51.5,49.7,,negative
