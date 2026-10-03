@@ -1,14 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-309448,392070009,10-year-jgb-auction,JPY,JP,10-jährige JGB Auktion,Medium,percent,2026-08-04 03:35,1970-01-01,2.84,,2.729,,
-286726,724050001,unemployment-change,EUR,ES,Änderung der Arbeitslosigkeit,Medium,people,2026-08-04 07:00,2026-07-01,19.517,-50.784,-28.739,,negative
-281545,380010014,retail-sales-mm,EUR,IT,Einzelhandelsumsatz m/m,Low,percent,2026-08-04 08:00,2026-06-01,-0.1,-0.5,0.2,,positive
-281556,380010015,retail-sales-yy,EUR,IT,Einzelhandelsumsatz y/y,Low,percent,2026-08-04 08:00,2026-06-01,3.1,0.6,2.2,,positive
-270162,840020001,trade-balance,USD,US,Handelsbilanz,Medium,currency,2026-08-04 12:30,2026-06-01,-73.261,-67.134,-77.585,-77.647,negative
-270450,840020023,exports,USD,US,Exporte,Medium,currency,2026-08-04 12:30,2026-06-01,314.728,,317.677,317.633,
-270462,840020024,imports,USD,US,Importe,Medium,currency,2026-08-04 12:30,2026-06-01,387.989,,395.263,395.28,
-278152,124010018,trade-balance,CAD,CA,Handelsbilanz,Medium,currency,2026-08-04 12:30,2026-06-01,3.855,5.728,4.243,3.697,negative
-270186,840020003,factory-orders,USD,US,Auftragseingänge der Hersteller m/m,Medium,percent,2026-08-04 14:00,2026-06-01,-0.3,0.1,-1.3,-1.1,negative
-289568,840030021,jolts-job-openings,USD,US,JOLTS Stellenangebote,High,job,2026-08-04 14:00,2026-06-01,7.359,6.948,7.594,7.537,positive
 309558,554010014,unemployment-rate,NZD,NZ,Arbeitslosenrate,Low,percent,2026-08-04 22:45,2026-04-01,5.6,5.4,5.3,5.4,negative
 309560,554010016,employment-change-qq,NZD,NZ,Beschäftigungsentwicklung q/q,High,percent,2026-08-04 22:45,2026-04-01,0.5,0.2,0.2,,positive
 289307,36020004,ai-group-industry-index,AUD,AU,Ai Group Herstellerindex,Medium,none,2026-08-04 23:00,2026-07-01,-29.9,,-30.0,,
@@ -946,3 +936,14 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 278166,124010019,foreign-securities-purchases,CAD,CA,Ausländische Wertpapierkäufe,Medium,currency,2026-10-16 12:30,2026-08-01,,,20.653,,
 280469,840050011,industrial-production-mm,USD,US,Fed Industrieproduktion m/m,Medium,percent,2026-10-16 13:15,2026-09-01,,-0.1,0.0,,
 280517,840050026,industrial-production-yy,USD,US,Fed Industrieproduktion y/y,Medium,percent,2026-10-16 13:15,2026-09-01,,1.2,1.4,,
+316786,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-10-16 17:00,2026-10-16,,,,,
+316787,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-10-16 17:00,2026-10-16,,,,,
+287370,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-10-16 19:30,2026-10-13,,,,,
+287511,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-10-16 19:30,2026-10-13,,,,,
+287746,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-10-16 19:30,2026-10-13,,,,,
+287887,840520003,cftc-gold-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-10-16 19:30,2026-10-13,,,,,
+287934,840520004,cftc-crude-oil-non-commercial-net-positions,USD,US,CFTC Rohöl nichtkommerzielle Nettopositionen,Medium,position,2026-10-16 19:30,2026-10-13,,,,,
+287981,840520005,cftc-sp-500-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-10-16 19:30,2026-10-13,,,,,
+288263,840520011,cftc-nasdaq-100-non-commercial-net-positions,USD,US,CFTC Nasdaq 100 Nichtkommerzielle Nettopositionen,Medium,position,2026-10-16 19:30,2026-10-13,,,,,
+288310,999520001,cftc-eur-non-commercial-net-positions,EUR,EU,CFTC EUR nichtkommerzielle Nettopositionen,Medium,position,2026-10-16 19:30,2026-10-13,,,,,
+276710,840220001,tic-net-long-term-transactions,USD,US,TIC Langfristige Nettotransaktionen,Medium,currency,2026-10-16 20:00,2026-08-01,,118.6,-27.9,,
