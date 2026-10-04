@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-305757,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-08-05 14:30,2026-07-31,2.479,-1.257,-7.167,,negative
-305758,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-08-05 14:30,2026-07-31,2.356,0.417,-0.771,,negative
 313249,840050029,fed-governor-cook-speech,USD,US,Fed Gouverneur Cook spricht,Medium,none,2026-08-05 20:05,1970-01-01,,,,,
 302080,36010011,trade-balance,AUD,AU,Handelsbilanz,Medium,currency,2026-08-06 01:30,2026-06-01,1.929,0.932,-3.018,-2.367,positive
 279539,756040003,unemployment-rate,CHF,CH,Arbeitslosenrate,Low,percent,2026-08-06 05:45,2026-07-01,3.1,3.1,3.1,,
