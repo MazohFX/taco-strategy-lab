@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-310202,840500002,markit-services-pmi,USD,US,S&P Global PMI der Dienstleister,High,none,2026-08-05 13:45,2026-07-01,54.6,52.7,51.2,,positive
-310203,840500003,markit-composite-pmi,USD,US,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-08-05 13:45,2026-07-01,53.6,53.0,52.2,,positive
 237162,840040003,ism-non-manufacturing-pmi,USD,US,ISM Dienstleistungen PMI,High,none,2026-08-05 14:00,2026-07-01,54.1,54.3,54.0,,negative
 237189,840040005,ism-non-manufacturing-employment,USD,US,ISM Nicht-verarbeitendes Gewerbe Beschäftigung,Medium,none,2026-08-05 14:00,2026-07-01,47.4,51.9,51.2,,negative
 237229,840040008,ism-non-manufacturing-prices,USD,US,ISM Nicht-verarbeitendes Gewerbe bezahlte Preise,High,none,2026-08-05 14:00,2026-07-01,70.3,62.0,67.7,,positive
