@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-237162,840040003,ism-non-manufacturing-pmi,USD,US,ISM Dienstleistungen PMI,High,none,2026-08-05 14:00,2026-07-01,54.1,54.3,54.0,,negative
-237189,840040005,ism-non-manufacturing-employment,USD,US,ISM Nicht-verarbeitendes Gewerbe Beschäftigung,Medium,none,2026-08-05 14:00,2026-07-01,47.4,51.9,51.2,,negative
-237229,840040008,ism-non-manufacturing-prices,USD,US,ISM Nicht-verarbeitendes Gewerbe bezahlte Preise,High,none,2026-08-05 14:00,2026-07-01,70.3,62.0,67.7,,positive
 305757,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-08-05 14:30,2026-07-31,2.479,-1.257,-7.167,,negative
 305758,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-08-05 14:30,2026-07-31,2.356,0.417,-0.771,,negative
 313249,840050029,fed-governor-cook-speech,USD,US,Fed Gouverneur Cook spricht,Medium,none,2026-08-05 20:05,1970-01-01,,,,,
