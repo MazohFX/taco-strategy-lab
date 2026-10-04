@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-274876,840190001,adp-nonfarm-employment-change,USD,US,ADP Änderung der außerlandwirtschaftliche Beschäftigung,High,none,2026-08-05 12:15,2026-07-01,44.0,-12.0,98.0,,positive
 310202,840500002,markit-services-pmi,USD,US,S&P Global PMI der Dienstleister,High,none,2026-08-05 13:45,2026-07-01,54.6,52.7,51.2,,positive
 310203,840500003,markit-composite-pmi,USD,US,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-08-05 13:45,2026-07-01,53.6,53.0,52.2,,positive
 237162,840040003,ism-non-manufacturing-pmi,USD,US,ISM Dienstleistungen PMI,High,none,2026-08-05 14:00,2026-07-01,54.1,54.3,54.0,,negative
