@@ -1,21 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-309558,554010014,unemployment-rate,NZD,NZ,Arbeitslosenrate,Low,percent,2026-08-04 22:45,2026-04-01,5.6,5.4,5.3,5.4,negative
-309560,554010016,employment-change-qq,NZD,NZ,Beschäftigungsentwicklung q/q,High,percent,2026-08-04 22:45,2026-04-01,0.5,0.2,0.2,,positive
-289307,36020004,ai-group-industry-index,AUD,AU,Ai Group Herstellerindex,Medium,none,2026-08-04 23:00,2026-07-01,-29.9,,-30.0,,
-310179,36500002,commonwealth-bank-services-pmi,AUD,AU,S&P Global PMI der Dienstleister,Medium,none,2026-08-04 23:00,2026-07-01,53.6,58.9,50.5,,negative
-310180,36500003,commonwealth-bank-composite-pmi,AUD,AU,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-08-04 23:00,2026-07-01,53.2,,50.4,,
-264447,392060019,boj-monetary-policy-meeting-minutes,JPY,JP,BoJ Protokoll der geldpolitischen Sitzung,Medium,none,2026-08-04 23:50,1970-01-01,,,,,
-310194,392500002,nikkei-services-pmi,JPY,JP,au Jibun Bank Japan Einkaufsmanagerindex (PMI) Dienstleistungen,Medium,none,2026-08-05 00:30,2026-07-01,51.2,52.6,51.9,,negative
-310198,724500002,markit-services-pmi,EUR,ES,S&P Global PMI der Dienstleister,Medium,none,2026-08-05 07:15,2026-07-01,58.3,52.2,54.2,,positive
-310199,724500003,markit-composite-pmi,EUR,ES,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-08-05 07:15,2026-07-01,56.5,,53.3,,
-310192,380500002,markit-services-pmi,EUR,IT,S&P Global PMI der Dienstleister,Medium,none,2026-08-05 07:45,2026-07-01,52.5,50.8,50.2,,positive
-310185,250500002,markit-services-pmi,EUR,FR,S&P Global PMI der Dienstleister,Medium,none,2026-08-05 07:50,2026-07-01,49.6,49.8,49.8,,negative
-310187,276500002,markit-services-pmi,EUR,DE,S&P Global PMI der Dienstleister,Medium,none,2026-08-05 07:55,2026-07-01,49.8,49.6,49.6,,positive
-310204,999500002,markit-services-pmi,EUR,EU,S&P Global PMI der Dienstleister,Medium,none,2026-08-05 08:00,2026-07-01,51.7,51.6,51.6,,positive
-310205,999500003,markit-composite-pmi,EUR,EU,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-08-05 08:00,2026-07-01,52.0,51.9,51.9,,positive
-310200,826500002,markit-services-pmi,GBP,GB,S&P Global/CIPS PMI der Dienstleister,Medium,none,2026-08-05 08:30,2026-07-01,52.1,51.8,51.8,,positive
-310201,826500005,markit-composite-pmi,GBP,GB,S&P Global/CIPS Zusammengesetzter PMI,Medium,none,2026-08-05 08:30,2026-07-01,52.2,,52.1,,
-313317,276020003,10-year-bond-auction,EUR,DE,Auktion 10-jähriger Schuldverschreibungen,Medium,percent,2026-08-05 09:40,1970-01-01,3.01,,3.13,,
 274876,840190001,adp-nonfarm-employment-change,USD,US,ADP Änderung der außerlandwirtschaftliche Beschäftigung,High,none,2026-08-05 12:15,2026-07-01,44.0,-12.0,98.0,,positive
 310202,840500002,markit-services-pmi,USD,US,S&P Global PMI der Dienstleister,High,none,2026-08-05 13:45,2026-07-01,54.6,52.7,51.2,,positive
 310203,840500003,markit-composite-pmi,USD,US,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-08-05 13:45,2026-07-01,53.6,53.0,52.2,,positive
