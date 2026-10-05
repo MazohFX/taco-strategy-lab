@@ -1,13 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-310284,999500004,markit-construction-pmi,EUR,EU,S&P Global PMI des Baugewerbes,Medium,none,2026-08-06 07:30,2026-07-01,44.3,,42.8,,
-308867,999010008,ecb-economic-bulletin,EUR,EU,ECB Wirtschatsbericht,Medium,none,2026-08-06 08:00,1970-01-01,,,,,
-310283,826500003,markit-construction-pmi,GBP,GB,S&P Global/CIPS Einkaufsmanagerindex (PMI) des Baugewerbes,Medium,none,2026-08-06 08:30,2026-07-01,44.7,39.0,38.4,,positive
-309991,999030003,retail-sales-mm,EUR,EU,Einzelhandelsumsatz m/m,Low,percent,2026-08-06 09:00,2026-06-01,-0.3,0.1,0.2,0.4,negative
-309992,999030004,retail-sales-yy,EUR,EU,Einzelhandelsumsatz y/y,Low,percent,2026-08-06 09:00,2026-06-01,0.7,0.8,1.6,1.9,negative
-277727,840030028,nonfarm-productivity-qq,USD,US,Außerlandwirtschaftliche Produktivität q/q,Medium,percent,2026-08-06 12:30,2026-04-01,1.4,1.4,0.3,0.8,
-277735,840030029,unit-labor-costs-qq,USD,US,Lohnstückkosten q/q,Medium,percent,2026-08-06 12:30,2026-04-01,1.3,0.4,1.8,1.3,positive
-309701,840140001,initial-jobless-claims,USD,US,Erstanträge auf Arbeitslosenhilfe,High,none,2026-08-06 12:30,2026-08-01,199.0,196.0,197.0,198.0,negative
-309705,840140002,continuing-jobless-claims,USD,US,Folgeanträge auf Arbeitslosenhilfe,Medium,none,2026-08-06 12:30,2026-07-25,1.801,1.772,1.782,1.777,negative
 286747,392030008,household-spending-yy,JPY,JP,Ausgaben der Privathaushalte y/y,Medium,percent,2026-08-06 23:30,2026-06-01,-3.3,-1.8,-0.4,,negative
 286759,392030009,household-spending-mm,JPY,JP,Haushalte Ausgaben m/m,Medium,percent,2026-08-06 23:30,2026-06-01,-6.4,0.9,3.7,,negative
 300595,250010014,unemployment-rate,EUR,FR,Arbeitslosenrate,Low,percent,2026-08-07 05:30,2026-04-01,8.3,8.3,8.1,,
@@ -919,3 +910,8 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 276710,840220001,tic-net-long-term-transactions,USD,US,TIC Langfristige Nettotransaktionen,Medium,currency,2026-10-16 20:00,2026-08-01,,118.6,-27.9,,
 317179,554010010,trade-balance-12-months,NZD,NZ,12-monatige Handelsbilanz,Medium,currency,2026-10-18 21:45,2026-09-01,,-5.83,-5.442,,
 293280,392020005,tertiary-industry-activity-index-mm,JPY,JP,Index der Aktivitäten im Dienstleistungssektor m/m,Medium,percent,2026-10-19 04:30,2026-08-01,,-0.1,0.4,,
+277984,124010003,cpi-mm,CAD,CA,CPI m/m,Medium,percent,2026-10-19 12:30,2026-09-01,,-0.1,-0.1,,
+277996,124010004,cpi-yy,CAD,CA,CPI y/y,Low,percent,2026-10-19 12:30,2026-09-01,,2.7,3.0,,
+278008,124010005,core-cpi-mm,CAD,CA,Kern-CPI m/m,Medium,percent,2026-10-19 12:30,2026-09-01,,0.3,0.1,,
+278020,124010006,core-cpi-yy,CAD,CA,Kern CPI y/y,Medium,percent,2026-10-19 12:30,2026-09-01,,2.1,2.4,,
+293813,124040001,boc-business-outlook-survey,CAD,CA,BoC Umfrage zu den Geschäftsaussichten,Medium,none,2026-10-19 15:30,1970-01-01,,,,,
