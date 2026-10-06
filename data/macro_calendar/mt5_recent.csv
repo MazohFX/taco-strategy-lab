@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-308218,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-08-07 17:00,2026-08-07,454.0,,451.0,,
-308219,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-08-07 17:00,2026-08-07,588.0,,588.0,,
 280491,840050013,consumer-credit-mm,USD,US,Fed Verbraucherkredite,Medium,currency,2026-08-07 19:00,2026-06-01,14.17,11.44,-0.18,-1.08,positive
 287360,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-33.2,,-40.0,,
 287501,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-45.5,,-163.4,,
