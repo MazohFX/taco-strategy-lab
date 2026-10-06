@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-280491,840050013,consumer-credit-mm,USD,US,Fed Verbraucherkredite,Medium,currency,2026-08-07 19:00,2026-06-01,14.17,11.44,-0.18,-1.08,positive
 287360,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-33.2,,-40.0,,
 287501,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-45.5,,-163.4,,
 287736,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-57.8,,-64.8,,
