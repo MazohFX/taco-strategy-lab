@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-300595,250010014,unemployment-rate,EUR,FR,Arbeitslosenrate,Low,percent,2026-08-07 05:30,2026-04-01,8.3,8.3,8.1,,
-319775,276010007,trade-balance,EUR,DE,Handelsbilanz,Medium,currency,2026-08-07 06:00,2026-06-01,15.4,,19.1,19.3,
-319783,276010010,industrial-production-mm,EUR,DE,Industrieproduktion m/m,Medium,percent,2026-08-07 06:00,2026-06-01,0.2,,0.9,0.7,
 277610,840030015,unemployment-rate,USD,US,Arbeitslosenrate,High,percent,2026-08-07 12:30,2026-07-01,4.1,4.2,4.2,,positive
 277622,840030016,nonfarm-payrolls,USD,US,Beschäftigung außerhalb der Landwirtschaft,High,job,2026-08-07 12:30,2026-07-01,-23.0,41.0,57.0,20.0,negative
 277634,840030017,labor-force-participation-rate,USD,US,Erwerbsquote,Medium,percent,2026-08-07 12:30,2026-07-01,61.4,61.7,61.5,,negative
