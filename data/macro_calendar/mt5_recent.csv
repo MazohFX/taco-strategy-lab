@@ -1,12 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-287360,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-33.2,,-40.0,,
-287501,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-45.5,,-163.4,,
-287736,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-57.8,,-64.8,,
-287877,840520003,cftc-gold-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,197.6,,182.1,,
-287924,840520004,cftc-crude-oil-non-commercial-net-positions,USD,US,CFTC Rohöl nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,112.4,,120.1,,
-287971,840520005,cftc-sp-500-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-27.3,,-17.2,,
-288253,840520011,cftc-nasdaq-100-non-commercial-net-positions,USD,US,CFTC Nasdaq 100 Nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-14.6,,4.9,,
-288300,999520001,cftc-eur-non-commercial-net-positions,EUR,EU,CFTC EUR nichtkommerzielle Nettopositionen,Medium,position,2026-08-07 19:30,2026-08-04,-58.1,,-72.4,,
 313349,840050025,fed-governor-bowman-speech,USD,US,Fed Governor Bowman spricht,Medium,none,2026-08-08 16:45,1970-01-01,,,,,
 264455,392060021,boj-summary-of-opinions,JPY,JP,BoJ Zusammenfassung der Meinungen,Medium,none,2026-08-09 23:50,1970-01-01,,,,,
 292071,392070005,current-account-nsa,JPY,JP,Leistungsbilanz n.s.a.,Medium,currency,2026-08-09 23:50,2026-06-01,-92.3,2290.8,3968.3,,negative
