@@ -906,3 +906,4 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 270200,840020004,housing-starts,USD,US,Baubeginne,Medium,none,2026-10-20 12:30,2026-09-01,,1.468,1.275,,
 270212,840020005,building-permits,USD,US,Baugenehmigungen,Medium,none,2026-10-20 12:30,2026-09-01,,1.441,1.394,,
 270344,840020015,housing-starts-mm,USD,US,Baubeginne m/m,Medium,percent,2026-10-20 12:30,2026-09-01,,-14.0,-2.6,,
+287309,840120003,pending-home-sales-mm,USD,US,Schwebende Hausverkäufe m/m,Medium,percent,2026-10-20 14:00,2026-09-01,,-0.9,0.3,,
