@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-286747,392030008,household-spending-yy,JPY,JP,Ausgaben der Privathaushalte y/y,Medium,percent,2026-08-06 23:30,2026-06-01,-3.3,-1.8,-0.4,,negative
-286759,392030009,household-spending-mm,JPY,JP,Haushalte Ausgaben m/m,Medium,percent,2026-08-06 23:30,2026-06-01,-6.4,0.9,3.7,,negative
 300595,250010014,unemployment-rate,EUR,FR,Arbeitslosenrate,Low,percent,2026-08-07 05:30,2026-04-01,8.3,8.3,8.1,,
 319775,276010007,trade-balance,EUR,DE,Handelsbilanz,Medium,currency,2026-08-07 06:00,2026-06-01,15.4,,19.1,19.3,
 319783,276010010,industrial-production-mm,EUR,DE,Industrieproduktion m/m,Medium,percent,2026-08-07 06:00,2026-06-01,0.2,,0.9,0.7,
