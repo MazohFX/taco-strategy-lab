@@ -911,3 +911,6 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 278020,124010006,core-cpi-yy,CAD,CA,Kern CPI y/y,Medium,percent,2026-10-19 12:30,2026-09-01,,2.1,2.4,,
 293813,124040001,boc-business-outlook-survey,CAD,CA,BoC Umfrage zu den Geschäftsaussichten,Medium,none,2026-10-19 15:30,1970-01-01,,,,,
 319665,276010014,ppi-mm,EUR,DE,PPI m/m,Medium,percent,2026-10-20 06:00,2026-09-01,,1.6,1.6,,
+316474,276070001,zew-economic-sentiment-indicator,EUR,DE,ZEW Konjunkturerwartungen,Medium,none,2026-10-20 09:05,2026-10-01,,25.8,34.7,,
+316478,276070002,zew-economic-situation,EUR,DE,ZEW Konjunktursituation,Medium,none,2026-10-20 09:05,2026-10-01,,-41.0,-47.1,,
+316482,999050001,zew-indicator-of-economic-sentiment,EUR,EU,ZEW Konjunkturerwartungen,Medium,none,2026-10-20 09:05,2026-10-01,,,,,
