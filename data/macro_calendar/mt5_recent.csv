@@ -906,3 +906,5 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 315807,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-10-21 14:30,2026-10-16,,,,,
 315808,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-10-21 14:30,2026-10-16,,,,,
 301609,840220019,20-year-bond-auction,USD,US,Auktion für 20-Jahres-Anleihen,Medium,percent,2026-10-21 17:00,1970-01-01,,,5.42,,
+317174,554010005,cpi-qq,NZD,NZ,CPI q/q,Medium,percent,2026-10-21 21:45,2026-07-01,,1.4,1.5,,
+317175,554010006,cpi-yy,NZD,NZ,CPI y/y,Medium,percent,2026-10-21 21:45,2026-07-01,,5.1,4.1,,
