@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-313349,840050025,fed-governor-bowman-speech,USD,US,Fed Governor Bowman spricht,Medium,none,2026-08-08 16:45,1970-01-01,,,,,
 264455,392060021,boj-summary-of-opinions,JPY,JP,BoJ Zusammenfassung der Meinungen,Medium,none,2026-08-09 23:50,1970-01-01,,,,,
 292071,392070005,current-account-nsa,JPY,JP,Leistungsbilanz n.s.a.,Medium,currency,2026-08-09 23:50,2026-06-01,-92.3,2290.8,3968.3,,negative
 292073,392070008,adjusted-current-account,JPY,JP,Bereinigte Leistungsbilanz,Medium,currency,2026-08-09 23:50,2026-06-01,1396.9,3421.0,3064.5,,negative
