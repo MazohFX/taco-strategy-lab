@@ -904,3 +904,5 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 321541,826010012,cpi-yy,GBP,GB,CPI y/y,High,percent,2026-10-21 06:00,2026-09-01,,2.7,3.1,,
 321588,826010041,cpih-yy,GBP,GB,CPIH y/y,Medium,percent,2026-10-21 06:00,2026-09-01,,3.1,3.3,,
 321590,826010042,cpih-mm,GBP,GB,CPIH m/m,Medium,percent,2026-10-21 06:00,2026-09-01,,0.4,0.5,,
+315807,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-10-21 14:30,2026-10-16,,,,,
+315808,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-10-21 14:30,2026-10-16,,,,,
