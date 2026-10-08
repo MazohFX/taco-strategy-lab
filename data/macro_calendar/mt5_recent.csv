@@ -912,3 +912,4 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 317677,840140001,initial-jobless-claims,USD,US,Erstanträge auf Arbeitslosenhilfe,High,none,2026-10-22 12:30,2026-10-17,,,,,
 317682,840140002,continuing-jobless-claims,USD,US,Folgeanträge auf Arbeitslosenhilfe,Medium,none,2026-10-22 12:30,2026-10-10,,,,,
 320095,124010030,new-housing-price-index-mm,CAD,CA,Neuer Immobilienpreisindex m/m,Medium,percent,2026-10-22 12:30,2026-09-01,,-0.1,-0.1,,
+284696,840180001,leading-economic-index,USD,US,CB wirtschaftlicher Frühindikator m/m,Medium,percent,2026-10-22 14:00,2026-09-01,,0.0,-0.1,,
