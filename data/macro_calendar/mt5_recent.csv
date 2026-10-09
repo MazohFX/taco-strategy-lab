@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-264455,392060021,boj-summary-of-opinions,JPY,JP,BoJ Zusammenfassung der Meinungen,Medium,none,2026-08-09 23:50,1970-01-01,,,,,
-292071,392070005,current-account-nsa,JPY,JP,Leistungsbilanz n.s.a.,Medium,currency,2026-08-09 23:50,2026-06-01,-92.3,2290.8,3968.3,,negative
-292073,392070008,adjusted-current-account,JPY,JP,Bereinigte Leistungsbilanz,Medium,currency,2026-08-09 23:50,2026-06-01,1396.9,3421.0,3064.5,,negative
 258537,36030008,rba-interest-rate-decision,AUD,AU,RBA Zinsentscheid,High,percent,2026-08-11 01:30,1970-01-01,4.35,,4.35,,
 258510,36030003,rba-monetary-policy-statement,AUD,AU,RBA geldpolitischen Erklärung,Medium,none,2026-08-11 04:30,1970-01-01,,,,,
 258523,36030005,rba-rate-statement,AUD,AU,RBA Zinserklärung,Medium,none,2026-08-11 04:30,1970-01-01,,,,,
@@ -914,3 +911,6 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 320095,124010030,new-housing-price-index-mm,CAD,CA,Neuer Immobilienpreisindex m/m,Medium,percent,2026-10-22 12:30,2026-09-01,,-0.1,-0.1,,
 284696,840180001,leading-economic-index,USD,US,CB wirtschaftlicher Frühindikator m/m,Medium,percent,2026-10-22 14:00,2026-09-01,,0.0,-0.1,,
 301604,840220016,5-year-tips-auction,USD,US,5-jährige TIPS-Auktion,Medium,percent,2026-10-22 17:00,1970-01-01,,,1.955,,
+284979,392030001,national-consumer-price-index-yy,JPY,JP,VPI y/y,Low,percent,2026-10-22 23:30,2026-09-01,,1.9,1.9,,
+284991,392030002,national-consumer-price-index-ex-food-energy-yy,JPY,JP,VPI ex Nahrungsmittel und Energie y/y,Medium,percent,2026-10-22 23:30,2026-09-01,,1.8,1.9,,
+285003,392030003,national-consumer-price-index-ex-fresh-food-yy,JPY,JP,Kern VPI y/y,Medium,percent,2026-10-22 23:30,2026-09-01,,1.4,1.7,,
