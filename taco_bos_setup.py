@@ -216,7 +216,7 @@ Alle Konfluenz- und Key-Level-Werte nutzen nur Daten, die zum jeweiligen Zeitpun
     if t.empty:
         st.info("Keine BOS-Ereignisse gefunden."); return
     if not open_holdout:
-        t = t[t.dt < bp.HOLDOUT_START]
+        t = t[(t.dt < bp.HOLDOUT_START) & ~(t.get("fill_dt", t.dt) >= bp.HOLDOUT_START)]
     f = t[t.filled == 1].copy()
     if f.empty:
         st.info("Keine gefüllten Trades."); return

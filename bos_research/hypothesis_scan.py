@@ -75,7 +75,7 @@ def load_trades(tf, root, pairs=None, ks=K_GRID, entries=ENTRY_GRID, progress=No
             for s, df in data.items():
                 rows += fs.run(s, df, evs[s], e)
             t = pd.DataFrame(rows)
-            out[(k, e)] = t[(t.filled == 1) & (t.dt < bp.HOLDOUT_START)].reset_index(drop=True) if len(t) else t
+            out[(k, e)] = t[(t.filled == 1) & (t.fill_dt < bp.HOLDOUT_START)].reset_index(drop=True) if len(t) else t
             i += 1
             if progress: progress(i / len(combos), f"Swing {k} × ATR, Einstieg {e}")
     return out
