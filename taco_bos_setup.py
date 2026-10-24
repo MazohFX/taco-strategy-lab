@@ -405,11 +405,13 @@ benutzt wurden?** Eine „100 %-Edge" gibt es nicht – nur Kandidaten, die alle
         st.warning("Keine Kombination mit genügend Trades."); return
 
     m = st.columns(5)
-    m[0].metric("Getestete Kombinationen", f"{info['n_tested']:,}".replace(",", "."))
-    m[1].metric("Roh p < 0,05", info["n_raw_p05"])
-    m[2].metric("Davon per Zufall erwartet", f"≈ {info['expected_false_at_05']}")
-    m[3].metric("Nach Korrektur (Entdeckung)", info["n_bh_disc"])
-    m[4].metric("Bestätigt auf neuen Daten", info["n_bh_val"])
+    m[0].metric("Kombinationen", f"{info['n_tested']:,}".replace(",", "."), help="Anzahl getesteter Filterkombinationen")
+    m[1].metric("Roh p < 0,05", info["n_raw_p05"], help="Treffer OHNE Korrektur für viele Tests")
+    m[2].metric("Zufall erwartet", f"≈ {info['expected_false_at_05']}",
+                help="So viele Roh-Treffer liefert reiner Zufall bei dieser Anzahl Tests (5 %)")
+    m[3].metric("Nach Korrektur", info["n_bh_disc"],
+                help="Überleben die Benjamini-Hochberg-Korrektur im Entdeckungszeitraum")
+    m[4].metric("Bestätigt", info["n_bh_val"], help="Halten zusätzlich auf den neueren, ungesehenen Jahren")
     if info["n_bh_val"] == 0:
         st.error("**Keine Kombination besteht Entdeckung + Bestätigung.** Die Treffer mit kleinen p-Werten sind mit "
                  "hoher Wahrscheinlichkeit Zufall (Data Mining). Die Liste unten zeigt die besten Rohwerte zur Einordnung.")
@@ -431,6 +433,13 @@ benutzt wurden?** Eine „100 %-Edge" gibt es nicht – nur Kandidaten, die alle
             "n Entd.", "E[R] Entd.", "p Entd.", "n Best.", "E[R] Best.", "p Best.", "Paare +", "Jahre +", "Nachbarn +"]
     st.subheader("Top 30 Hypothesen")
     disp = show[cols].reset_index(drop=True).copy()
+    disp["Tol ATR"] = disp["Tol ATR"].map(lambda x: "–" if x is None or pd.isna(x) else f"{x:.2f}")
+    disp["Swing×ATR"] = disp["Swing×ATR"].map(lambda x: f"{x:.1f}")
+    disp["Einstieg"] = disp["Einstieg"].map(lambda x: f"{x:.3f}")
+    disp["Impuls ≥"] = disp["Impuls ≥"].map(lambda x: "–" if x == 0 else f"{x:.0f} ATR")
+    disp["Urteil"] = disp["Urteil"].replace({"⚪ Nicht signifikant nach Korrektur": "⚪ Zufall möglich",
+                                             "🔴 In Bestätigung durchgefallen": "🔴 Bestätigung ✗",
+                                             "🟡 Bestätigung schwach": "🟡 Bestätigung schwach"})
     for c_ in ("E[R] Entd.", "E[R] Best."):
         disp[c_] = disp[c_].round(3)
     disp["p Entd."] = disp["p Entd."].round(5); disp["p Best."] = disp["p Best."].round(3)
