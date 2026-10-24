@@ -46,7 +46,9 @@ def load(sym, tf, root):
         df["dt"] = pd.to_datetime(df["date"], format="%Y.%m.%d")
     else:
         p = f"{root}/data/dukascopy_intraday/{sym}_{tf}.csv"
-        if not os.path.exists(p): return None
+        if not os.path.exists(p):
+            p += ".gz"                      # komprimierte Version (Online-Repo)
+            if not os.path.exists(p): return None
         df = pd.read_csv(p); df["dt"] = pd.to_datetime(df["datetime"])
     df = df[df["dt"].dt.weekday < 5] if tf == "D1" else df
     df = df[(df.high > df.low)].sort_values("dt").drop_duplicates("dt").reset_index(drop=True)

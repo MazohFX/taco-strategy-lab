@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "bos_research"))
 import bos_pipeline as bp  # noqa: E402
 import full_setup as fs  # noqa: E402
+import hypothesis_scan as hs  # noqa: E402
 
 TF_OPTIONS = ["D1", "H4", "H1", "M15"]
 KL_SOURCES = {"Jahr-1 Profil (POC/VAH/VAL)": "kl_prof_Y", "Quartal-1 Profil": "kl_prof_Q",
@@ -61,7 +62,7 @@ def compute_trades(tf: str, k: float, entry: float, pairs: tuple, stamp: float) 
 
 def _data_stamp(tf: str) -> float:
     folder = ROOT / "data" / ("mt5" if tf == "D1" else "dukascopy_intraday")
-    return max((f.stat().st_mtime for f in folder.glob("*.csv")), default=0.0)
+    return max((f.stat().st_mtime for f in list(folder.glob("*.csv")) + list(folder.glob("*.csv.gz"))), default=0.0)
 
 
 def _stats(r: pd.Series, dates: pd.Series) -> dict:
@@ -151,6 +152,11 @@ def _equity(sel, base):
 
 
 def render_bos_setup() -> None:
+    mode = st.radio("Ansicht", ["🔬 Hypothesen-Scanner (automatisch)", "🔎 Einzelanalyse (manuell)"],
+                    horizontal=True, key="bos_mode")
+    if mode.startswith("🔬"):
+        render_scanner()
+        return
     st.header("🧭 Key Level → BOS → Fib-Zone → Konfluenzen")
     for k_, v_ in DEFAULTS.items():
         st.session_state.setdefault(k_, v_)
@@ -342,3 +348,109 @@ Alle Konfluenz- und Key-Level-Werte nutzen nur Daten, die zum jeweiligen Zeitpun
         st.dataframe(sel[[c for c in cols if c in sel]], width="stretch", hide_index=True)
         st.download_button("📥 Trades als CSV", sel.to_csv(index=False).encode("utf-8"),
                            file_name=f"bos_setup_{tf}_k{k}_e{entry}.csv", mime="text/csv", key="bos_dl")
+
+
+
+@st.cache_data(show_spinner=False)
+def _scan_trades(tf: str, stamp: float):
+    bar = st.progress(0.0, text="Berechne Trades für alle Swing-Schwellen und Einstiege …")
+    tr = hs.load_trades(tf, str(ROOT), progress=lambda x, t: bar.progress(x, text=t))
+    bar.empty()
+    return tr
+
+
+@st.cache_data(show_spinner=False)
+def _scan_run(tf: str, stamp: float, split: str, min_n: int, q: float):
+    tr = _scan_trades(tf, stamp)
+    return hs.scan(tr, split, min_n_disc=min_n, q=q)
+
+
+def render_scanner() -> None:
+    st.header("🔬 Hypothesen-Scanner")
+    with st.expander("ℹ️ Wie funktioniert das – und was bedeutet der p-Wert?", expanded=False):
+        st.markdown("""
+**p-Wert:** Wie wahrscheinlich wäre ein mindestens so gutes Ergebnis, wenn die Kombination in Wahrheit *keinen*
+Vorteil hätte (E[R] = 0)? p = 0,01 heißt: nur 1 % Zufallswahrscheinlichkeit – **aber nur für EINEN vorher
+festgelegten Test.**
+
+**Das Problem beim Durchprobieren:** Testest du 10.000 Kombinationen, liefern ~500 davon *rein zufällig* p < 0,05.
+Deshalb gilt hier:
+1. **Entdeckung** (ältere Daten): Alle Kombinationen werden getestet, dann **Benjamini-Hochberg-Korrektur** über
+   alle Tests (FDR q: höchstens q-Anteil der „Treffer" darf Zufall sein).
+2. **Bestätigung** (neuere, ungesehene Daten): Nur die Überlebenden werden erneut getestet und wieder korrigiert.
+3. **Robustheit:** ≥ 60 % der Paare und Jahre positiv, Nachbar-Swing-Schwellen nicht negativ.
+4. **Holdout ab 2024** bleibt versiegelt – erst öffnen, wenn du *eine* Kandidaten-Regel endgültig festlegst.
+
+**Faustregeln:** Einzelner, vorher festgelegter Test: p < 0,05. Ergebnis aus vielen Tests: korrigiert (BH) bestehen
+oder t-Wert ≥ 3 (Harvey, Liu & Zhu 2016). Wichtiger als jeder p-Wert: **hält es auf Daten, die beim Suchen nicht
+benutzt wurden?** Eine „100 %-Edge" gibt es nicht – nur Kandidaten, die alle Hürden überstehen.
+""")
+    c1, c2, c3, c4 = st.columns(4)
+    tf = c1.selectbox("Timeframe", TF_OPTIONS, key="scan_tf")
+    default_split = {"D1": 2017}.get(tf, 2020)
+    split_year = c2.number_input("Bestätigung ab Jahr", 2010, 2023, default_split, key=f"scan_split_{tf}")
+    min_n = c3.number_input("Min. Trades in Entdeckung", 30, 1000, 100, step=10, key="scan_minn")
+    q = c4.select_slider("FDR q", [0.05, 0.10, 0.20], value=0.10, key="scan_q")
+    st.caption(f"Entdeckung: alles vor {split_year} · Bestätigung: {split_year}–2023 · Holdout ab {bp.HOLDOUT_START[:4]} versiegelt. "
+               f"Getestet werden {len(hs.K_GRID)} Swing-Schwellen × {len(hs.ENTRY_GRID)} Einstiege × Key Level × Toleranz × "
+               f"Struktur × Mindest-Impuls × Konfluenz (Zone 0.618–0.786 und 0.618–1).")
+    if not st.button("▶️ Scan starten", key="scan_go", type="primary") and not st.session_state.get(f"scan_done_{tf}"):
+        st.info("Klick auf „Scan starten“. D1 dauert ca. 30 Sekunden, M15 mehrere Minuten (danach zwischengespeichert).")
+        return
+    st.session_state[f"scan_done_{tf}"] = True
+    stamp = _data_stamp(tf)
+    with st.spinner("Teste alle Kombinationen …"):
+        res, info = _scan_run(tf, stamp, f"{int(split_year)}-01-01", int(min_n), float(q))
+    if res is None or len(res) == 0:
+        st.warning("Keine Kombination mit genügend Trades."); return
+
+    m = st.columns(5)
+    m[0].metric("Getestete Kombinationen", f"{info['n_tested']:,}".replace(",", "."))
+    m[1].metric("Roh p < 0,05", info["n_raw_p05"])
+    m[2].metric("Davon per Zufall erwartet", f"≈ {info['expected_false_at_05']}")
+    m[3].metric("Nach Korrektur (Entdeckung)", info["n_bh_disc"])
+    m[4].metric("Bestätigt auf neuen Daten", info["n_bh_val"])
+    if info["n_bh_val"] == 0:
+        st.error("**Keine Kombination besteht Entdeckung + Bestätigung.** Die Treffer mit kleinen p-Werten sind mit "
+                 "hoher Wahrscheinlichkeit Zufall (Data Mining). Die Liste unten zeigt die besten Rohwerte zur Einordnung.")
+    else:
+        st.success(f"{info['n_bh_val']} Kombination(en) bestehen beide Stufen – jetzt Robustheit prüfen (Spalte Urteil).")
+
+    trades = _scan_trades(tf, stamp)
+    top = res.sort_values(["bh_val", "bh_disc", "p_disc"], ascending=[False, False, True]).head(30).copy()
+    rob = [hs.robustness(trades, r) for _, r in top.iterrows()]
+    for key in ("pairs_pos", "years_pos", "neighbours_pos"):
+        top[key] = [x[key] for x in rob]
+    top["Urteil"] = [hs.verdict(r) for _, r in top.iterrows()]
+    show = top.rename(columns={"k": "Swing×ATR", "entry": "Einstieg", "key_level": "Key Level", "tol": "Tol ATR",
+                               "struktur": "Struktur", "impuls_min": "Impuls ≥", "konfluenz": "Konfluenz",
+                               "zone": "Zone", "n_disc": "n Entd.", "er_disc": "E[R] Entd.", "p_disc": "p Entd.",
+                               "n_val": "n Best.", "er_val": "E[R] Best.", "p_val": "p Best.",
+                               "pairs_pos": "Paare +", "years_pos": "Jahre +", "neighbours_pos": "Nachbarn +"})
+    cols = ["Urteil", "Swing×ATR", "Einstieg", "Key Level", "Tol ATR", "Struktur", "Impuls ≥", "Konfluenz", "Zone",
+            "n Entd.", "E[R] Entd.", "p Entd.", "n Best.", "E[R] Best.", "p Best.", "Paare +", "Jahre +", "Nachbarn +"]
+    st.subheader("Top 30 Hypothesen")
+    disp = show[cols].reset_index(drop=True).copy()
+    for c_ in ("E[R] Entd.", "E[R] Best."):
+        disp[c_] = disp[c_].round(3)
+    disp["p Entd."] = disp["p Entd."].round(5); disp["p Best."] = disp["p Best."].round(3)
+    for c_ in ("Paare +", "Jahre +", "Nachbarn +"):
+        disp[c_] = (disp[c_] * 100).round(0)
+    disp.index = disp.index + 1
+    st.dataframe(disp, width="stretch", column_config={
+        c_: st.column_config.NumberColumn(c_, format="%d %%") for c_ in ("Paare +", "Jahre +", "Nachbarn +")})
+
+    st.subheader("Detail einer Hypothese")
+    idx = st.selectbox("Rang", list(range(1, len(top) + 1)), key="scan_pick")
+    r = top.iloc[idx - 1]; sel = rob[idx - 1]["sel"].sort_values("fill_dt")
+    split_ts = pd.Timestamp(f"{int(split_year)}-01-01")
+    fig = go.Figure()
+    fig.add_scatter(x=sel.fill_dt, y=sel.R.cumsum(), mode="lines", name="Equity (R)")
+    fig.add_vline(x=split_ts, line_dash="dash")
+    fig.add_annotation(x=split_ts, y=1, yref="paper", text="Beginn Bestätigung", showarrow=False, xanchor="left")
+    fig.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="kumuliert (R)")
+    st.plotly_chart(fig, width="stretch")
+    d1, d2 = st.columns(2)
+    d1.dataframe(_stats_table({p_: sel[sel.sym == p_] for p_ in sorted(sel.sym.unique())}), width="stretch", hide_index=True)
+    yrs = sel.fill_dt.dt.year
+    d2.dataframe(_stats_table({str(y): sel[yrs == y] for y in sorted(yrs.unique())}), width="stretch", hide_index=True)
