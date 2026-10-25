@@ -387,8 +387,15 @@ benutzt wurden?** Eine „100 %-Edge" gibt es nicht – nur Kandidaten, die alle
 """)
     c1, c2, c3, c4 = st.columns(4)
     tf = c1.selectbox("Timeframe", TF_OPTIONS, key="scan_tf")
+    data_start = 2006 if tf == "D1" else 2015           # erstes volles Datenjahr
+    min_split = data_start + 3                          # mind. 3 Jahre Entdeckung
     default_split = {"D1": 2017}.get(tf, 2020)
-    split_year = c2.number_input("Bestätigung ab Jahr", 2010, 2023, default_split, key=f"scan_split_{tf}")
+    key_split = f"scan_split_{tf}"
+    if key_split in st.session_state and not (min_split <= st.session_state[key_split] <= 2022):
+        st.session_state[key_split] = default_split
+    split_year = c2.number_input("Bestätigung ab Jahr", min_split, 2022, default_split, key=key_split,
+                                 help=f"{tf}-Daten beginnen {data_start}. Die Entdeckung braucht mindestens 3 Jahre davor, "
+                                      f"die Bestätigung mindestens 2 Jahre bis Ende 2023.")
     min_n = c3.number_input("Min. Trades in Entdeckung", 30, 1000, 100, step=10, key="scan_minn")
     q = c4.select_slider("FDR q", [0.05, 0.10, 0.20], value=0.10, key="scan_q")
     st.caption(f"Entdeckung: alles vor {split_year} · Bestätigung: {split_year}–2023 · Holdout ab {bp.HOLDOUT_START[:4]} versiegelt. "
@@ -402,7 +409,9 @@ benutzt wurden?** Eine „100 %-Edge" gibt es nicht – nur Kandidaten, die alle
     with st.spinner("Teste alle Kombinationen …"):
         res, info = _scan_run(tf, stamp, f"{int(split_year)}-01-01", int(min_n), float(q))
     if res is None or len(res) == 0:
-        st.warning("Keine Kombination mit genügend Trades."); return
+        st.warning(f"Keine Kombination erreicht {int(min_n)} Trades im Entdeckungszeitraum ({data_start}–{int(split_year) - 1}). "
+                   f"Senke „Min. Trades in Entdeckung“ (z. B. auf 100) oder lege den Bestätigungsbeginn später.")
+        return
 
     m = st.columns(5)
     m[0].metric("Kombinationen", f"{info['n_tested']:,}".replace(",", "."), help="Anzahl getesteter Filterkombinationen")
