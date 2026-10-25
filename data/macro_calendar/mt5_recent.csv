@@ -1,192 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-258537,36030008,rba-interest-rate-decision,AUD,AU,RBA Zinsentscheid,High,percent,2026-08-11 01:30,1970-01-01,4.35,,4.35,,
-258510,36030003,rba-monetary-policy-statement,AUD,AU,RBA geldpolitischen Erklärung,Medium,none,2026-08-11 04:30,1970-01-01,,,,,
-258523,36030005,rba-rate-statement,AUD,AU,RBA Zinserklärung,Medium,none,2026-08-11 04:30,1970-01-01,,,,,
-287285,840120001,existing-home-sales,USD,US,Tatsächliche Hausverkäufe,High,none,2026-08-11 14:00,2026-07-01,4.06,4.0,4.09,4.13,positive
-287296,840120002,existing-home-sales-mm,USD,US,Tatsächliche Hausverkäufe m/m,Medium,percent,2026-08-11 14:00,2026-07-01,-1.7,-0.6,-2.4,-1.4,negative
-248267,840200012,eia-short-term-energy-outlook,USD,US,EIA Kurzfristiger Energie-Ausblick,Medium,none,2026-08-11 16:00,2026-08-01,,,,,
-301589,840220011,3-year-note-auction,USD,US,3-jährige Schatzanweisung Auktion,Medium,percent,2026-08-11 17:00,1970-01-01,,,4.179,,
-281030,392060040,boj-l-money-stock-yy,JPY,JP,BoJ L Geldmenge y/y,High,percent,2026-08-11 23:50,2026-07-01,4.4,5.1,4.5,,negative
-319757,276010020,cpi-mm,EUR,DE,CPI m/m,Medium,percent,2026-08-12 06:00,2026-07-01,0.8,,0.8,,
-319761,276010021,cpi-yy,EUR,DE,CPI y/y,Medium,percent,2026-08-12 06:00,2026-07-01,2.8,,2.8,,
-281403,380010002,cpi-yy,EUR,IT,CPI y/y,Low,percent,2026-08-12 08:00,2026-07-01,2.9,2.8,2.8,,positive
-314340,276020003,10-year-bond-auction,EUR,DE,Auktion 10-jähriger Schuldverschreibungen,Medium,percent,2026-08-12 09:51,1970-01-01,3.29,,3.01,,
-277490,840030005,consumer-price-index-mm,USD,US,CPI m/m,High,percent,2026-08-12 12:30,2026-07-01,0.1,0.2,-0.4,,negative
-277502,840030006,consumer-price-index-ex-food-energy-mm,USD,US,Kern-CPI m/m,High,percent,2026-08-12 12:30,2026-07-01,0.2,0.2,0.0,,
-277514,840030007,consumer-price-index-yy,USD,US,CPI y/y,High,percent,2026-08-12 12:30,2026-07-01,3.4,2.7,3.5,,positive
-277526,840030008,consumer-price-index-ex-food-energy-yy,USD,US,Kern CPI y/y,Medium,percent,2026-08-12 12:30,2026-07-01,2.5,2.6,2.6,,negative
-277794,840030034,consumer-price-index-ex-food-energy-nsa-mm,USD,US,Kern-VPI n.s.b. m/m,High,percent,2026-08-12 12:30,2026-07-01,0.1,,0.0,,
-277806,840030035,consumer-price-index,USD,US,CPI,High,none,2026-08-12 12:30,2026-07-01,332.813,332.398,332.568,,positive
-277966,124010001,building-permits-mm,CAD,CA,Baugenehmigungen m/m,Medium,percent,2026-08-12 12:30,2026-06-01,18.5,4.0,-1.7,-3.0,positive
-306448,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-08-12 14:30,2026-08-07,17.423,6.059,2.479,,negative
-306449,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-08-12 14:30,2026-08-07,1.611,0.744,2.356,,negative
-293058,840320001,wasde-report,USD,US,WASDE Bericht,Medium,none,2026-08-12 16:00,1970-01-01,,,,,
-301598,840220014,10-year-note-auction,USD,US,10-jährige Schatzanweisung Auktion,High,percent,2026-08-12 17:00,1970-01-01,,,4.58,,
-272952,840150001,federal-budget-balance,USD,US,Staatshaushalt,Medium,currency,2026-08-12 18:00,2026-07-01,432.3,-310.4,-120.3,,positive
-302833,554020010,rbnz-2-year-inflation-expectations,NZD,NZ,RBNZ 2-Jahres Inflationserwartungen,Medium,percent,2026-08-13 03:00,2026-07-01,,,2.53,,
-315015,826010025,industrial-production-mm,GBP,GB,Industrieproduktion m/m,Medium,percent,2026-08-13 06:00,2026-06-01,-0.2,-1.7,0.0,-0.7,positive
-315021,826010027,manufacturing-production-mm,GBP,GB,Industrieproduktion m/m,Medium,percent,2026-08-13 06:00,2026-06-01,-0.5,-0.2,0.4,-0.2,negative
-315027,826010029,trade-balance,GBP,GB,Handelsbilanz,Medium,currency,2026-08-13 06:00,2026-06-01,-23.007,-28.734,-26.046,-21.083,positive
-315030,826010030,trade-balance-non-eu,GBP,GB,Handelsbilanz Non-EU,Medium,currency,2026-08-13 06:00,2026-06-01,-10.448,-8.781,-13.05,-9.583,negative
-315038,826010034,business-investment-qq,GBP,GB,Investitionen der gewerblichen Wirtschaft q/q,Medium,percent,2026-08-13 06:00,2026-04-01,1.7,2.6,0.7,0.9,negative
-315045,826010037,gdp-qq,GBP,GB,Bruttoinlandsprodukt q/q,High,percent,2026-08-13 06:00,2026-04-01,0.4,0.3,0.6,,positive
-315048,826010038,gdp-yy,GBP,GB,Bruttoinlandsprodukt y/y,High,percent,2026-08-13 06:00,2026-04-01,1.2,1.1,1.1,0.9,positive
-315051,826010039,gdp-mm,GBP,GB,BIP m/m,High,percent,2026-08-13 06:00,2026-06-01,0.3,0.0,-0.1,0.0,positive
-315054,826010040,gdp-3m3m,GBP,GB,BIP 3m/3m,Medium,percent,2026-08-13 06:00,2026-06-01,0.4,,0.7,0.6,
-282174,724010002,cpi-yy,EUR,ES,CPI y/y,Medium,percent,2026-08-13 07:00,2026-07-01,,3.5,3.5,,
-282220,724010004,hicp-yy,EUR,ES,HVPI y/y,Medium,percent,2026-08-13 07:00,2026-07-01,,3.8,3.8,,
-310712,999030007,industrial-production-mm,EUR,EU,Industrieproduktion m/m,Medium,percent,2026-08-13 09:00,2026-06-01,0.0,-0.1,-0.2,0.3,positive
-277442,840030001,producer-price-index-mm,USD,US,PPI m/m,High,percent,2026-08-13 12:30,2026-07-01,0.0,0.5,-0.3,-0.1,negative
-277454,840030002,producer-price-index-ex-food-energy-mm,USD,US,Kern PPI m/m,Medium,percent,2026-08-13 12:30,2026-07-01,0.2,0.2,0.2,0.4,
-309702,840140001,initial-jobless-claims,USD,US,Erstanträge auf Arbeitslosenhilfe,High,none,2026-08-13 12:30,2026-08-08,209.0,213.0,199.0,200.0,positive
-309706,840140002,continuing-jobless-claims,USD,US,Folgeanträge auf Arbeitslosenhilfe,Medium,none,2026-08-13 12:30,2026-08-01,1.777,1.777,1.801,1.799,
-301601,840220015,30-year-bond-auction,USD,US,30-jährige Schuldverschreibung Auktion,High,percent,2026-08-13 17:00,1970-01-01,5.216,,5.058,,
-305430,554060001,businessnz-manufacturing-index,NZD,NZ,BusinessNZ Herstellerindex,Medium,none,2026-08-13 22:30,2026-07-01,54.3,56.5,59.7,60.1,negative
-300579,250010001,cpi-mm,EUR,FR,CPI m/m,Medium,percent,2026-08-14 06:45,2026-07-01,0.6,0.6,0.6,,
-300581,250010002,cpi-yy,EUR,FR,CPI y/y,Low,percent,2026-08-14 06:45,2026-07-01,2.1,2.1,2.1,,
-300583,250010003,hicp-mm,EUR,FR,HVPI m/m,Medium,percent,2026-08-14 06:45,2026-07-01,0.6,0.6,0.6,,
-310714,999030016,gross-domestic-product-qq,EUR,EU,Bruttoinlandsprodukt q/q,Medium,percent,2026-08-14 09:00,2026-04-01,0.4,0.4,0.4,0.0,
-310715,999030017,gross-domestic-product-yy,EUR,EU,Bruttoinlandsprodukt y/y,Medium,percent,2026-08-14 09:00,2026-04-01,1.0,1.0,1.0,0.5,
-310716,999030018,trade-balance,EUR,EU,Handelsbilanz,Medium,currency,2026-08-14 09:00,2026-06-01,1.8,6.9,-5.0,-6.1,negative
-310717,999030019,trade-balance-nsa,EUR,EU,Handelsbilanz n.s.a.,Medium,currency,2026-08-14 09:00,2026-06-01,8.6,3.9,-7.8,-9.0,positive
-310718,999030028,employment-level,EUR,EU,Beschäftigungsniveau,Medium,people,2026-08-14 09:00,2026-04-01,176.577,,176.308,176.382,
-270282,840020010,retail-sales-mm,USD,US,Einzelhandelsumsatz m/m,High,percent,2026-08-14 12:30,2026-07-01,-0.6,0.0,0.2,,negative
-270294,840020011,retail-sales-ex-autos-mm,USD,US,Kern Verbraucherpreise m/m,High,percent,2026-08-14 12:30,2026-07-01,-0.3,0.1,-0.2,,negative
-270306,840020012,retail-control-mm,USD,US,Einzelhandelsumsätze m/m,Medium,percent,2026-08-14 12:30,2026-07-01,-0.4,-0.1,0.5,0.4,negative
-270474,840020025,retail-sales-yy,USD,US,Einzelhandelsumsatz y/y,Low,percent,2026-08-14 12:30,2026-07-01,5.0,6.5,6.7,6.8,negative
-278261,124010031,wholesale-trade-mm,CAD,CA,Großhandel m/m,Medium,percent,2026-08-14 12:30,2026-06-01,2.8,0.3,0.0,-0.3,positive
-268711,840210001,michigan-consumer-sentiment,USD,US,Michigan Konsumklima,Medium,none,2026-08-14 14:00,2026-08-01,51.0,56.4,55.2,,negative
-268735,840210002,michigan-consumer-expectations,USD,US,Michigan Konsumentenerwartungen,Medium,none,2026-08-14 14:00,2026-08-01,50.6,56.5,55.4,,negative
-268783,840210004,michigan-inflation-expectations,USD,US,Michigan Inflationserwartungen,Medium,percent,2026-08-14 14:00,2026-08-01,4.3,3.7,4.2,,positive
-268807,840210005,michigan-5-year-inflation-expectations,USD,US,Michigan 5-jährige Inflationserwartungen,Medium,percent,2026-08-14 14:00,2026-08-01,3.3,3.4,3.3,,negative
-270246,840020007,business-inventories-mm,USD,US,Lagerbestände der Hersteller Einzel- und Großhändler m/m,Medium,percent,2026-08-14 14:00,2026-06-01,0.0,0.4,0.3,0.4,positive
-270505,840020027,retail-inventories-mm,USD,US,Lagerbestände der Einzelhändler m/m,Medium,percent,2026-08-14 14:00,2026-06-01,-0.2,0.0,0.0,,positive
-270529,840020028,retail-inventories-ex-autos-mm,USD,US,Lagerbestände der Einzelhändler exkl. Autos m/m,Medium,percent,2026-08-14 14:00,2026-06-01,-0.4,,-0.2,,
-308976,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-08-14 17:00,2026-08-14,455.0,,454.0,,
-308977,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-08-14 17:00,2026-08-14,593.0,,588.0,,
-287361,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-08-14 19:30,2026-08-11,-39.2,,-33.2,,
-287502,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-08-14 19:30,2026-08-11,-42.1,,-45.5,,
-287737,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-08-14 19:30,2026-08-11,-56.2,,-57.8,,
-287878,840520003,cftc-gold-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-08-14 19:30,2026-08-11,217.9,,197.6,,
-287925,840520004,cftc-crude-oil-non-commercial-net-positions,USD,US,CFTC Rohöl nichtkommerzielle Nettopositionen,Medium,position,2026-08-14 19:30,2026-08-11,99.2,,112.4,,
-287972,840520005,cftc-sp-500-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-08-14 19:30,2026-08-11,11.3,,-27.3,,
-288254,840520011,cftc-nasdaq-100-non-commercial-net-positions,USD,US,CFTC Nasdaq 100 Nichtkommerzielle Nettopositionen,Medium,position,2026-08-14 19:30,2026-08-11,-39.3,,-14.6,,
-288301,999520001,cftc-eur-non-commercial-net-positions,EUR,EU,CFTC EUR nichtkommerzielle Nettopositionen,Medium,position,2026-08-14 19:30,2026-08-11,-60.0,,-58.1,,
-309547,554010001,electronic-card-retail-sales-mm,NZD,NZ,Electronic Card Einzelhandelsumsatz m/m,Medium,percent,2026-08-16 22:45,2026-07-01,1.3,-0.3,-1.4,-1.3,positive
-288951,392010001,gross-domestic-product-qq,JPY,JP,Bruttoinlandsprodukt q/q,High,percent,2026-08-16 23:50,2026-04-01,0.3,0.1,0.5,,positive
-288959,392010002,gross-domestic-product-price-index-yy,JPY,JP,BIP Preisindex y/y,Medium,percent,2026-08-16 23:50,2026-04-01,2.6,3.2,3.2,,negative
-288967,392010003,gross-domestic-product-yy,JPY,JP,Bruttoinlandsprodukt y/y,Medium,percent,2026-08-16 23:50,2026-04-01,1.1,0.5,1.8,1.9,positive
-288991,392010015,net-exports-contribution-to-gdp-qq,JPY,JP,Nettoexportbeitrag zum BIP q/q,Medium,percent,2026-08-16 23:50,2026-04-01,0.5,0.4,0.3,,positive
-289145,392020006,industrial-production-mm,JPY,JP,Industrieproduktion m/m,Medium,percent,2026-08-17 04:30,2026-06-01,1.9,1.3,1.3,,positive
-293278,392020005,tertiary-industry-activity-index-mm,JPY,JP,Index der Aktivitäten im Dienstleistungssektor m/m,Medium,percent,2026-08-17 04:30,2026-06-01,-0.2,0.6,1.1,,negative
-315320,999010020,ecb-executive-board-member-lane-speech,EUR,EU,ECB Vorstandsmitglied Lane spricht,Medium,none,2026-08-17 09:30,1970-01-01,,,,,
-277982,124010003,cpi-mm,CAD,CA,CPI m/m,Medium,percent,2026-08-17 12:30,2026-07-01,0.5,0.0,-0.4,,positive
-277994,124010004,cpi-yy,CAD,CA,CPI y/y,Low,percent,2026-08-17 12:30,2026-07-01,3.0,2.7,2.8,,positive
-278006,124010005,core-cpi-mm,CAD,CA,Kern-CPI m/m,Medium,percent,2026-08-17 12:30,2026-07-01,0.2,0.0,0.1,,positive
-278018,124010006,core-cpi-yy,CAD,CA,Kern CPI y/y,Medium,percent,2026-08-17 12:30,2026-07-01,2.3,2.1,2.1,,positive
-278164,124010019,foreign-securities-purchases,CAD,CA,Ausländische Wertpapierkäufe,Medium,currency,2026-08-17 12:30,2026-06-01,40.828,,7.897,8.799,
-312898,840230001,ny-empire-state-manufacturing-index,USD,US,NY Empire-State-Index des verarbeitenden Gewerbes,Medium,none,2026-08-17 12:30,2026-08-01,20.6,8.4,15.6,,positive
-276708,840220001,tic-net-long-term-transactions,USD,US,TIC Langfristige Nettotransaktionen,Medium,currency,2026-08-17 20:00,2026-06-01,172.7,90.5,232.7,231.2,positive
-315674,826010047,labour-productivity-qq,GBP,GB,Arbeitsproduktivität q/q,Medium,percent,2026-08-18 08:30,2026-02-01,1.1,,0.9,-0.3,
-315675,826010048,labour-productivity-yy,GBP,GB,Arbeitsproduktivität y/y,Medium,percent,2026-08-18 08:30,2026-02-01,0.5,,0.4,-0.7,
-319002,999050001,zew-indicator-of-economic-sentiment,EUR,EU,ZEW Konjunkturerwartungen,Medium,none,2026-08-18 09:00,2026-08-01,31.4,,23.4,,
-319746,276070001,zew-economic-sentiment-indicator,EUR,DE,ZEW Konjunkturerwartungen,Medium,none,2026-08-18 09:05,2026-08-01,34.2,,26.3,,
-319753,276070002,zew-economic-situation,EUR,DE,ZEW Konjunktursituation,Medium,none,2026-08-18 09:05,2026-08-01,-61.1,,-77.6,,
-315321,999010020,ecb-executive-board-member-lane-speech,EUR,EU,ECB Vorstandsmitglied Lane spricht,Medium,none,2026-08-18 11:45,1970-01-01,,,,,
-280253,124030001,cmhc-housing-starts,CAD,CA,CMHC Baubeginne,Medium,building,2026-08-18 12:15,2026-07-01,229.074,259.535,238.971,240.773,negative
-270198,840020004,housing-starts,USD,US,Baubeginne,Medium,none,2026-08-18 12:30,2026-07-01,1.239,1.365,1.427,1.415,negative
-270210,840020005,building-permits,USD,US,Baugenehmigungen,Medium,none,2026-08-18 12:30,2026-07-01,1.443,1.352,1.367,1.374,positive
-270342,840020015,housing-starts-mm,USD,US,Baubeginne m/m,Medium,percent,2026-08-18 12:30,2026-07-01,-12.4,8.8,19.0,19.7,negative
-277562,840030011,import-price-index-mm,USD,US,Import Preisindex m/m,Medium,percent,2026-08-18 12:30,2026-07-01,-0.4,-0.1,0.3,-0.3,positive
-277586,840030013,export-price-index-mm,USD,US,Export Preisindex m/m,Medium,percent,2026-08-18 12:30,2026-07-01,-1.3,-1.4,-0.6,-0.7,positive
-280467,840050011,industrial-production-mm,USD,US,Fed Industrieproduktion m/m,Medium,percent,2026-08-18 13:15,2026-07-01,0.2,0.1,0.1,0.3,positive
-280515,840050026,industrial-production-yy,USD,US,Fed Industrieproduktion y/y,Medium,percent,2026-08-18 13:15,2026-07-01,1.1,0.7,1.1,,positive
-287307,840120003,pending-home-sales-mm,USD,US,Schwebende Hausverkäufe m/m,Medium,percent,2026-08-18 14:00,2026-07-01,-2.3,-1.1,-5.4,-4.8,negative
-309566,554010022,ppi-input-qq,NZD,NZ,EPI Input q/q,Medium,percent,2026-08-18 22:45,2026-04-01,2.9,1.1,1.4,,positive
-302084,36010031,wage-price-index-qq,AUD,AU,Lohn-Preis-Index q/q,Medium,percent,2026-08-19 01:30,2026-04-01,0.8,0.8,0.8,,
-315322,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-08-19 07:10,1970-01-01,,,,,
-311606,999030011,consumer-price-index-mm,EUR,EU,CPI m/m,Medium,percent,2026-08-19 09:00,2026-07-01,0.2,2.8,2.8,,negative
-311607,999030012,consumer-price-index-ex-food-energy-yy,EUR,EU,Kern CPI y/y,Medium,percent,2026-08-19 09:00,2026-07-01,2.5,2.5,2.5,,
-311608,999030013,consumer-price-index-yy,EUR,EU,CPI y/y,High,percent,2026-08-19 09:00,2026-07-01,2.9,3.2,3.2,,negative
-311616,999030027,core-consumer-price-index,EUR,EU,Kern VPI,Medium,none,2026-08-19 09:00,2026-07-01,102.84,,102.84,,
-280406,276020003,10-year-bond-auction,EUR,DE,Auktion 10-jähriger Schuldverschreibungen,Medium,percent,2026-08-19 09:41,1970-01-01,3.26,,3.29,,
-315705,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-08-19 10:15,1970-01-01,,,,,
-307859,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-08-19 14:30,2026-08-14,4.405,6.913,17.423,,positive
-307860,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-08-19 14:30,2026-08-14,-1.314,0.919,1.611,,positive
-301607,840220019,20-year-bond-auction,USD,US,Auktion für 20-Jahres-Anleihen,Medium,percent,2026-08-19 17:00,1970-01-01,5.204,,5.163,,
-237376,840050004,fomc-minutes,USD,US,FOMC Protokoll,Medium,none,2026-08-19 18:00,1970-01-01,,,,,
-284588,392040001,adjusted-trade-balance,JPY,JP,Bereinigte Handelsbilanz,Medium,currency,2026-08-19 23:50,2026-07-01,-686.0,-361.6,-881.9,-927.1,negative
-284600,392040002,trade-balance,JPY,JP,Handelsbilanz,Medium,currency,2026-08-19 23:50,2026-07-01,-634.5,287.1,-406.9,-409.9,negative
-284624,392040004,exports-yy,JPY,JP,Exporte y/y,Medium,percent,2026-08-19 23:50,2026-07-01,23.2,22.3,19.3,,positive
-302072,36010003,employment-change,AUD,AU,Beschäftigungsentwicklung,Medium,job,2026-08-20 01:30,2026-07-01,-15.8,31.6,76.3,80.2,negative
-302073,36010004,full-employment-change,AUD,AU,Beschäftigungsentwicklung Vollzeit,Medium,job,2026-08-20 01:30,2026-07-01,16.3,,29.3,48.9,
-302075,36010006,unemployment-rate,AUD,AU,Arbeitslosenrate,Medium,percent,2026-08-20 01:30,2026-07-01,4.5,4.3,4.4,,negative
-319436,276010014,ppi-mm,EUR,DE,PPI m/m,Medium,percent,2026-08-20 06:00,2026-07-01,1.1,,-0.3,,
-278221,124010026,rmpi-mm,CAD,CA,RMPI m/m,Medium,percent,2026-08-20 12:30,2026-07-01,-2.2,-2.4,-6.9,-6.7,positive
-287214,840070001,philadelphia-fed-manufacturing-index,USD,US,Philadelphia Fed Index der Unternehmer,High,none,2026-08-20 12:30,2026-08-01,47.4,13.7,41.4,,positive
-287226,840070002,philadelphia-fed-employment,USD,US,Philadelphia Fed Beschäftigung,Medium,none,2026-08-20 12:30,2026-08-01,27.9,1.2,10.0,,positive
-309703,840140001,initial-jobless-claims,USD,US,Erstanträge auf Arbeitslosenhilfe,High,none,2026-08-20 12:30,2026-08-15,206.0,206.0,209.0,212.0,
-309707,840140002,continuing-jobless-claims,USD,US,Folgeanträge auf Arbeitslosenhilfe,Medium,none,2026-08-20 12:30,2026-08-08,1.799,1.777,1.777,1.781,negative
-314852,124010030,new-housing-price-index-mm,CAD,CA,Neuer Immobilienpreisindex m/m,Medium,percent,2026-08-20 12:30,2026-07-01,-0.1,-0.2,-0.1,,positive
-284694,840180001,leading-economic-index,USD,US,CB wirtschaftlicher Frühindikator m/m,Medium,percent,2026-08-20 14:00,2026-07-01,0.2,-0.1,-0.2,,positive
-301606,840220018,30-year-tips-auction,USD,US,30-jährige TIPS-Auktion,Medium,percent,2026-08-20 17:00,1970-01-01,2.973,,2.473,,
-309554,554010010,trade-balance-12-months,NZD,NZ,12-monatige Handelsbilanz,Medium,currency,2026-08-20 22:45,2026-07-01,-5.236,-2.979,-3.746,-4.049,negative
-284977,392030001,national-consumer-price-index-yy,JPY,JP,VPI y/y,Low,percent,2026-08-20 23:30,2026-07-01,1.9,1.7,1.6,1.6,positive
-284989,392030002,national-consumer-price-index-ex-food-energy-yy,JPY,JP,VPI ex Nahrungsmittel und Energie y/y,Medium,percent,2026-08-20 23:30,2026-07-01,1.9,1.6,1.7,1.7,positive
-285001,392030003,national-consumer-price-index-ex-fresh-food-yy,JPY,JP,Kern VPI y/y,Medium,percent,2026-08-20 23:30,2026-07-01,1.8,2.1,1.6,,negative
-321028,392500002,nikkei-services-pmi,JPY,JP,au Jibun Bank Japan Einkaufsmanagerindex (PMI) Dienstleistungen,Medium,none,2026-08-21 00:30,2026-08-01,52.3,,51.2,51.2,
-312008,250500001,markit-manufacturing-pmi,EUR,FR,S&P Global PMI der Hersteller,Medium,none,2026-08-21 07:15,2026-08-01,51.5,50.1,49.8,,positive
-312009,250500002,markit-services-pmi,EUR,FR,S&P Global PMI der Dienstleister,Medium,none,2026-08-21 07:15,2026-08-01,48.4,49.6,49.6,,negative
-312011,276500001,markit-manufacturing-pmi,EUR,DE,S&P Global PMI der Hersteller,Medium,none,2026-08-21 07:30,2026-08-01,54.1,53.6,52.2,,positive
-312012,276500002,markit-services-pmi,EUR,DE,S&P Global PMI der Dienstleister,Medium,none,2026-08-21 07:30,2026-08-01,48.5,51.2,49.8,,negative
-312017,999500001,markit-manufacturing-pmi,EUR,EU,S&P Global PMI der Hersteller,Medium,none,2026-08-21 08:00,2026-08-01,52.8,52.4,51.9,,positive
-312018,999500002,markit-services-pmi,EUR,EU,S&P Global PMI der Dienstleister,Medium,none,2026-08-21 08:00,2026-08-01,51.7,53.7,51.7,,negative
-312019,999500003,markit-composite-pmi,EUR,EU,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-08-21 08:00,2026-08-01,52.1,52.0,52.0,,positive
-312014,826500001,markit-manufacturing-pmi,GBP,GB,S&P Global/CIPS PMI der Hersteller,Medium,none,2026-08-21 08:30,2026-08-01,51.5,50.9,51.9,,positive
-312015,826500002,markit-services-pmi,GBP,GB,S&P Global/CIPS PMI der Dienstleister,Medium,none,2026-08-21 08:30,2026-08-01,52.8,51.8,52.1,,positive
-312016,826500005,markit-composite-pmi,GBP,GB,S&P Global/CIPS Zusammengesetzter PMI,Medium,none,2026-08-21 08:30,2026-08-01,52.5,,52.2,,
-278030,124010007,retail-sales-mm,CAD,CA,Einzelhandelsumsatz m/m,Medium,percent,2026-08-21 12:30,2026-06-01,0.6,-0.1,1.0,1.1,positive
-278042,124010008,core-retail-sales-mm,CAD,CA,Kern Verbraucherpreise m/m,Medium,percent,2026-08-21 12:30,2026-06-01,0.5,-0.3,1.2,,positive
-309972,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-08-21 17:00,2026-08-21,452.0,,455.0,,
-309973,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-08-21 17:00,2026-08-21,588.0,,593.0,,
-287362,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-08-21 19:30,2026-08-18,-44.2,,-39.2,,
-287503,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-08-21 19:30,2026-08-18,-52.9,,-42.1,,
-287738,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-08-21 19:30,2026-08-18,-54.6,,-56.2,,
-287879,840520003,cftc-gold-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-08-21 19:30,2026-08-18,222.2,,217.9,,
-287926,840520004,cftc-crude-oil-non-commercial-net-positions,USD,US,CFTC Rohöl nichtkommerzielle Nettopositionen,Medium,position,2026-08-21 19:30,2026-08-18,122.1,,99.2,,
-287973,840520005,cftc-sp-500-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-08-21 19:30,2026-08-18,-10.6,,11.3,,
-288255,840520011,cftc-nasdaq-100-non-commercial-net-positions,USD,US,CFTC Nasdaq 100 Nichtkommerzielle Nettopositionen,Medium,position,2026-08-21 19:30,2026-08-18,-10.4,,-39.3,,
-288302,999520001,cftc-eur-non-commercial-net-positions,EUR,EU,CFTC EUR nichtkommerzielle Nettopositionen,Medium,position,2026-08-21 19:30,2026-08-18,-59.1,,-60.0,,
-309563,554010019,retail-sales-qq,NZD,NZ,Einzelhandelsumsätze q/q,Medium,percent,2026-08-23 22:45,2026-04-01,-0.5,0.3,0.9,1.0,negative
-309564,554010020,core-retail-sales-qq,NZD,NZ,Kern-Einzelhandelsumsätze q/q,Medium,percent,2026-08-23 22:45,2026-04-01,0.7,0.3,1.0,1.1,positive
-309565,554010021,retail-sales-yy,NZD,NZ,Einzelhandelsumsatz y/y,Medium,percent,2026-08-23 22:45,2026-04-01,3.3,4.5,4.5,,negative
-291144,392060037,boj-trimmed-mean-core-cpi-yy,JPY,JP,BoJ Getrimmter mittlerer Kern-VPI y/y,Medium,percent,2026-08-25 05:00,2026-07-01,2.0,3.1,1.8,1.8,negative
-291145,392060038,boj-weighted-median-core-cpi-yy,JPY,JP,BoJ Gewichteter Median des Kern-VPI y/y,Medium,percent,2026-08-25 05:00,2026-07-01,1.1,1.3,1.1,1.1,negative
-319414,276010008,gdp-qq,EUR,DE,Bruttoinlandsprodukt q/q,High,percent,2026-08-25 06:00,2026-04-01,0.3,,0.2,0.4,
-319416,276010009,gdp-yy,EUR,DE,Bruttoinlandsprodukt y/y,Medium,percent,2026-08-25 06:00,2026-04-01,1.0,,0.9,0.8,
-312992,276030001,ifo-business-expectations,EUR,DE,Ifo Konjunkturperspektiven,Medium,none,2026-08-25 08:30,2026-08-01,89.1,83.6,86.7,86.8,positive
-312997,276030002,ifo-current-business-situation,EUR,DE,Ifo aktuelles Geschäftsklima,Medium,none,2026-08-25 08:30,2026-08-01,88.5,86.0,86.5,86.5,positive
-313002,276030003,ifo-business-climate-indicator,EUR,DE,Ifo Geschäftsklima,Medium,none,2026-08-25 08:30,2026-08-01,88.8,84.7,86.6,86.7,positive
-309602,840170001,sp-case-shiller-home-price-index-composite-20-yy,USD,US,S&P/CS Home Preisindex Composite-20 y/y,Medium,percent,2026-08-25 13:00,2026-06-01,2.1,1.7,1.6,,positive
-309603,840170002,sp-case-shiller-home-price-index-composite-20-nsa-mm,USD,US,S&P/CS Hauspreis-Index Composite-20 n.s.a. m/m,Medium,percent,2026-08-25 13:00,2026-06-01,0.43,0.6,0.9,0.89,negative
-270258,840020008,new-home-sales,USD,US,Verkäufe von Neubauten,High,none,2026-08-25 14:00,2026-07-01,0.607,0.64,0.628,0.678,negative
-270270,840020009,new-home-sales-mm,USD,US,Verkäufe von Neubauten m/m,Medium,percent,2026-08-25 14:00,2026-07-01,-10.5,5.6,1.6,7.6,negative
-279669,840180002,consumer-confidence-index,USD,US,CB Verbrauchervertrauensindex,High,none,2026-08-25 14:00,2026-08-01,89.4,91.8,90.8,90.2,negative
-301586,840220010,2-year-note-auction,USD,US,2-jährige Schatzanweisung Auktion,Medium,percent,2026-08-25 17:00,1970-01-01,,,4.315,,
-302089,36010039,construction-work-done-qq,AUD,AU,Bautätigkeiten fertiggestellt q/q,Medium,percent,2026-08-26 01:30,2026-04-01,-2.1,0.2,3.4,4.3,negative
-270318,840020013,durable-goods-orders,USD,US,Auftragseingänge für langlebige Güter m/m,High,percent,2026-08-26 12:30,2026-07-01,1.1,0.8,0.3,0.5,positive
-270330,840020014,durable-goods-orders-ex-transportation,USD,US,Kern Auftragseingänge langlebiger Güter m/m,Medium,percent,2026-08-26 12:30,2026-07-01,0.4,1.0,0.6,1.1,negative
-282559,840010001,core-pce-price-index-mm,USD,US,Kern PCE Preisindex m/m,High,percent,2026-08-26 12:30,2026-07-01,0.2,0.2,0.1,,
-282571,840010002,core-pce-price-index-yy,USD,US,Kern PCE Preisindex y/y,High,percent,2026-08-26 12:30,2026-07-01,3.3,3.3,3.3,,
-282583,840010003,pce-price-index-mm,USD,US,PCE Preisindex m/m,Medium,percent,2026-08-26 12:30,2026-07-01,0.2,0.0,-0.1,,positive
-282595,840010004,pce-price-index-yy,USD,US,PCE Preisindex y/y,Medium,percent,2026-08-26 12:30,2026-07-01,3.7,3.0,3.7,,positive
-282607,840010005,personal-spending-mm,USD,US,Privater Konsum m/m,Medium,percent,2026-08-26 12:30,2026-07-01,0.2,0.5,0.3,,negative
-287131,840010007,gross-domestic-product-qq,USD,US,Bruttoinlandsprodukt q/q,High,percent,2026-08-26 12:30,2026-04-01,1.5,1.5,1.5,,
-287183,840010016,real-pce-qq,USD,US,Reale PCE q/q,Medium,percent,2026-08-26 12:30,2026-04-01,3.4,3.2,3.2,,positive
-287202,840010018,gdp-sales-qq,USD,US,BIP Umsatz q/q,High,percent,2026-08-26 12:30,2026-04-01,2.2,2.2,2.2,,
-308722,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-08-26 14:30,2026-08-21,0.095,5.39,4.405,,positive
-308723,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-08-26 14:30,2026-08-21,1.176,-1.447,-1.314,,negative
-316001,276050006,bbk-vice-president-balz-speech,EUR,DE,Vorstandsmitglied Balz der BBk spricht,Medium,none,2026-08-26 14:30,1970-01-01,,,,,
 301592,840220012,5-year-note-auction,USD,US,5-jährige Schatzanweisung Auktion,Medium,percent,2026-08-26 17:00,1970-01-01,,,4.408,,
 291472,250040001,jobseekers-total,EUR,FR,Arbeitssuchende Insgesamt,Medium,job,2026-08-26 22:00,2026-07-27,3143.0,3177.0,3121.5,,positive
 265854,36030001,rba-bulletin,AUD,AU,RBA Bulletin,Medium,none,2026-08-27 01:30,1970-01-01,,,,,
@@ -918,3 +730,92 @@ value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,per
 321556,826010020,retail-sales-yy,GBP,GB,Einzelhandelsumsatz y/y,Medium,percent,2026-10-23 06:00,2026-09-01,,1.5,4.2,,
 321559,826010021,core-retail-sales-mm,GBP,GB,Kern Verbraucherpreise m/m,Medium,percent,2026-10-23 06:00,2026-09-01,,1.1,1.1,,
 321562,826010022,core-retail-sales-yy,GBP,GB,Kern Verbraucherpreise y/y,Medium,percent,2026-10-23 06:00,2026-09-01,,2.2,5.4,,
+278032,124010007,retail-sales-mm,CAD,CA,Einzelhandelsumsatz m/m,Medium,percent,2026-10-23 12:30,2026-08-01,,0.2,-0.7,,
+278044,124010008,core-retail-sales-mm,CAD,CA,Kern Verbraucherpreise m/m,Medium,percent,2026-10-23 12:30,2026-08-01,,0.3,-0.7,,
+268716,840210001,michigan-consumer-sentiment,USD,US,Michigan Konsumklima,Medium,none,2026-10-23 14:00,2026-10-01,,,,,
+268740,840210002,michigan-consumer-expectations,USD,US,Michigan Konsumentenerwartungen,Medium,none,2026-10-23 14:00,2026-10-01,,,,,
+268788,840210004,michigan-inflation-expectations,USD,US,Michigan Inflationserwartungen,Medium,percent,2026-10-23 14:00,2026-10-01,,,,,
+268812,840210005,michigan-5-year-inflation-expectations,USD,US,Michigan 5-jährige Inflationserwartungen,Medium,percent,2026-10-23 14:00,2026-10-01,,,,,
+318157,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-10-23 17:00,2026-10-23,,,,,
+318158,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-10-23 17:00,2026-10-23,,,,,
+287371,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-10-23 19:30,2026-10-20,,,,,
+287512,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-10-23 19:30,2026-10-20,,,,,
+287747,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-10-23 19:30,2026-10-20,,,,,
+287888,840520003,cftc-gold-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-10-23 19:30,2026-10-20,,,,,
+287935,840520004,cftc-crude-oil-non-commercial-net-positions,USD,US,CFTC Rohöl nichtkommerzielle Nettopositionen,Medium,position,2026-10-23 19:30,2026-10-20,,,,,
+287982,840520005,cftc-sp-500-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-10-23 19:30,2026-10-20,,,,,
+288264,840520011,cftc-nasdaq-100-non-commercial-net-positions,USD,US,CFTC Nasdaq 100 Nichtkommerzielle Nettopositionen,Medium,position,2026-10-23 19:30,2026-10-20,,,,,
+288311,999520001,cftc-eur-non-commercial-net-positions,EUR,EU,CFTC EUR nichtkommerzielle Nettopositionen,Medium,position,2026-10-23 19:30,2026-10-20,,,,,
+312994,276030001,ifo-business-expectations,EUR,DE,Ifo Konjunkturperspektiven,Medium,none,2026-10-26 09:30,2026-10-01,,90.4,90.4,,
+312999,276030002,ifo-current-business-situation,EUR,DE,Ifo aktuelles Geschäftsklima,Medium,none,2026-10-26 09:30,2026-10-01,,89.7,89.5,,
+313004,276030003,ifo-business-climate-indicator,EUR,DE,Ifo Geschäftsklima,Medium,none,2026-10-26 09:30,2026-10-01,,87.5,89.9,,
+301588,840220010,2-year-note-auction,USD,US,2-jährige Schatzanweisung Auktion,Medium,percent,2026-10-26 17:00,1970-01-01,,,4.787,,
+300915,392060037,boj-trimmed-mean-core-cpi-yy,JPY,JP,BoJ Getrimmter mittlerer Kern-VPI y/y,Medium,percent,2026-10-27 05:00,2026-09-01,,2.1,2.2,,
+300916,392060038,boj-weighted-median-core-cpi-yy,JPY,JP,BoJ Gewichteter Median des Kern-VPI y/y,Medium,percent,2026-10-27 05:00,2026-09-01,,1.5,1.5,,
+282277,724010010,unemployment-rate,EUR,ES,Arbeitslosenrate,Low,percent,2026-10-27 08:00,2026-07-01,,9.78,9.87,,
+278383,999010019,ecb-households-loans-yy,EUR,EU,EZB Kredite an private Haushalte y/y,Medium,percent,2026-10-27 09:00,2026-09-01,,3.0,3.1,,
+270320,840020013,durable-goods-orders,USD,US,Auftragseingänge für langlebige Güter m/m,High,percent,2026-10-27 12:30,2026-09-01,,0.7,0.0,,
+270332,840020014,durable-goods-orders-ex-transportation,USD,US,Kern Auftragseingänge langlebiger Güter m/m,Medium,percent,2026-10-27 12:30,2026-09-01,,1.0,0.3,,
+316534,840170001,sp-case-shiller-home-price-index-composite-20-yy,USD,US,S&P/CS Home Preisindex Composite-20 y/y,Medium,percent,2026-10-27 13:00,2026-08-01,,,,,
+316535,840170002,sp-case-shiller-home-price-index-composite-20-nsa-mm,USD,US,S&P/CS Hauspreis-Index Composite-20 n.s.a. m/m,Medium,percent,2026-10-27 13:00,2026-08-01,,,,,
+270260,840020008,new-home-sales,USD,US,Verkäufe von Neubauten,High,none,2026-10-27 14:00,2026-09-01,,0.708,0.684,,
+270272,840020009,new-home-sales-mm,USD,US,Verkäufe von Neubauten m/m,Medium,percent,2026-10-27 14:00,2026-09-01,,-1.4,6.4,,
+279671,840180002,consumer-confidence-index,USD,US,CB Verbrauchervertrauensindex,High,none,2026-10-27 14:00,2026-10-01,,81.5,81.9,,
+301594,840220012,5-year-note-auction,USD,US,5-jährige Schatzanweisung Auktion,Medium,percent,2026-10-27 17:00,1970-01-01,,,5.033,,
+299659,250040001,jobseekers-total,EUR,FR,Arbeitssuchende Insgesamt,Medium,job,2026-10-27 23:00,2026-09-28,,3104.4,3081.7,,
+302115,36010014,cpi-qq,AUD,AU,CPI q/q,Medium,percent,2026-10-28 00:30,2026-07-01,,1.1,0.6,,
+302116,36010015,cpi-yy,AUD,AU,CPI y/y,Medium,percent,2026-10-28 00:30,2026-07-01,,4.7,3.9,,
+302117,36010018,cpi-index-number,AUD,AU,CPI,Medium,none,2026-10-28 00:30,2026-07-01,,138.2,102.31,,
+302121,36030010,rba-weighted-median-cpi-yy,AUD,AU,RBA gewichteter Median CPI y/y,Medium,percent,2026-10-28 00:30,2026-07-01,,3.6,3.7,,
+302122,36030014,rba-trimmed-mean-cpi-qq,AUD,AU,RBA getrimmter Mittelwert CPI q/q,Medium,percent,2026-10-28 00:30,2026-07-01,,0.9,1.0,,
+317793,554020005,rbnz-rate-statement,NZD,NZ,RBNZ Erklärung zum Zinssatz,Medium,none,2026-10-28 01:00,1970-01-01,,,,,
+317794,554020009,rbnz-interest-rate-decision,NZD,NZ,RBNZ Zinsentscheid,High,percent,2026-10-28 01:00,1970-01-01,,,2.75,,
+308953,276040001,gfk-consumer-climate,EUR,DE,GfK Konsumentenklima,Medium,none,2026-10-28 07:00,2026-11-01,,-29.0,-30.6,,
+317602,826110001,nationwide-hpi-mm,GBP,GB,Landesweiter HPI m/m,Medium,percent,2026-10-28 07:00,2026-10-01,,0.1,,,
+317603,826110002,nationwide-hpi-yy,GBP,GB,Landesweiter HPI y/y,Medium,percent,2026-10-28 07:00,2026-10-01,,2.1,,,
+314248,826100002,autumn-forecast-statement,GBP,GB,Herbstprognose,High,none,2026-10-28 10:00,1970-01-01,,,,,
+280409,276020003,10-year-bond-auction,EUR,DE,Auktion 10-jähriger Schuldverschreibungen,Medium,percent,2026-10-28 10:30,1970-01-01,,,,,
+270392,840020019,goods-trade-balance,USD,US,Warenhandelsbilanz,Medium,currency,2026-10-28 12:30,2026-09-01,,,,,
+270510,840020027,retail-inventories-mm,USD,US,Lagerbestände der Einzelhändler m/m,Medium,percent,2026-10-28 12:30,2026-09-01,,,,,
+270534,840020028,retail-inventories-ex-autos-mm,USD,US,Lagerbestände der Einzelhändler exkl. Autos m/m,Medium,percent,2026-10-28 12:30,2026-09-01,,,,,
+265233,124040004,boc-monetary-policy-report,CAD,CA,BoC Geldpolitischer Bericht,Medium,none,2026-10-28 13:45,1970-01-01,,,,,
+265240,124040006,boc-interest-rate-decision,CAD,CA,BoC Zinsentscheid,High,percent,2026-10-28 13:45,1970-01-01,,,2.25,,
+265248,124040007,boc-rate-statement,CAD,CA,Bericht über den Zinssatz der BoC,Medium,none,2026-10-28 13:45,1970-01-01,,,,,
+316565,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-10-28 14:30,2026-10-23,,,,,
+316566,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-10-28 14:30,2026-10-23,,,,,
+237366,840050002,fomc-meeting-statement,USD,US,FOMC-Kommuniqué,Medium,none,2026-10-28 18:00,1970-01-01,,,,,
+237386,840050014,fed-interest-rate-decision,USD,US,Fed Zinsentscheid,High,percent,2026-10-28 18:00,1970-01-01,,,4.0,,
+237394,840050018,fomc-press-conference,USD,US,FOMC Pressekonferenz,High,none,2026-10-28 18:30,1970-01-01,,,,,
+282271,724010009,retail-sales-yy,EUR,ES,Einzelhandelsumsatz y/y,Low,percent,2026-10-29 08:00,2026-09-01,,0.1,-0.4,,
+281630,380010022,unemployment-rate,EUR,IT,Arbeitslosenrate,Low,percent,2026-10-29 09:00,2026-09-01,,,,,
+283324,999040005,economic-sentiment-indicator,EUR,EU,Indikator der wirtschaftlichen Einschätzung,Medium,none,2026-10-29 10:00,2026-10-01,,96.3,97.9,,
+283360,999040007,consumer-price-expectations,EUR,EU,Verbraucherpreiserwartung,High,none,2026-10-29 10:00,2026-10-01,,41.1,35.2,,
+282561,840010001,core-pce-price-index-mm,USD,US,Kern PCE Preisindex m/m,High,percent,2026-10-29 12:30,2026-09-01,,,,,
+282573,840010002,core-pce-price-index-yy,USD,US,Kern PCE Preisindex y/y,High,percent,2026-10-29 12:30,2026-09-01,,,,,
+282585,840010003,pce-price-index-mm,USD,US,PCE Preisindex m/m,Medium,percent,2026-10-29 12:30,2026-09-01,,,,,
+282597,840010004,pce-price-index-yy,USD,US,PCE Preisindex y/y,Medium,percent,2026-10-29 12:30,2026-09-01,,,,,
+282609,840010005,personal-spending-mm,USD,US,Privater Konsum m/m,Medium,percent,2026-10-29 12:30,2026-09-01,,,,,
+287133,840010007,gross-domestic-product-qq,USD,US,Bruttoinlandsprodukt q/q,High,percent,2026-10-29 12:30,2026-07-01,,,,,
+287185,840010016,real-pce-qq,USD,US,Reale PCE q/q,Medium,percent,2026-10-29 12:30,2026-07-01,,,,,
+287204,840010018,gdp-sales-qq,USD,US,BIP Umsatz q/q,High,percent,2026-10-29 12:30,2026-07-01,,,,,
+317678,840140001,initial-jobless-claims,USD,US,Erstanträge auf Arbeitslosenhilfe,High,none,2026-10-29 12:30,2026-10-24,,,,,
+317683,840140002,continuing-jobless-claims,USD,US,Folgeanträge auf Arbeitslosenhilfe,Medium,none,2026-10-29 12:30,2026-10-17,,,,,
+204753,999010006,ecb-deposit-rate-decision,EUR,EU,ECB Einlagenzinsentscheid,High,percent,2026-10-29 13:15,1970-01-01,,,2.5,,
+204769,999010007,ecb-interest-rate-decision,EUR,EU,ECB Zinsentscheid,High,percent,2026-10-29 13:15,1970-01-01,,,2.65,,
+204785,999010015,ecb-marginal-lending-facility-rate-decision,EUR,EU,EZB Entscheid zur Spitzenrefinanzierungsfazilität,Medium,percent,2026-10-29 13:15,1970-01-01,,,2.9,,
+204801,999010024,ecb-monetary-policy-statement,EUR,EU,EZB Geldpolitische Stellungnahme,Medium,none,2026-10-29 13:15,1970-01-01,,,,,
+204737,999010003,ecb-monetary-policy-press-conference,EUR,EU,ECB Geldpolitische Pressekonferenz,High,none,2026-10-29 13:45,1970-01-01,,,,,
+301597,840220013,7-year-note-auction,USD,US,7-jährige Schatzanweisung Auktion,Medium,percent,2026-10-29 17:00,1970-01-01,,,5.085,,
+285027,392030005,tokyo-consumer-price-index-ex-food-energy-yy,JPY,JP,Tokyo VPI ex Nahrungsmittel und Energie y/y,High,percent,2026-10-29 23:30,2026-10-01,,,,,
+285039,392030006,tokyo-consumer-price-index-ex-fresh-food-yy,JPY,JP,Tokyo Kern VPI y/y,Medium,percent,2026-10-29 23:30,2026-10-01,,,,,
+285740,392030007,unemployment-rate,JPY,JP,Arbeitslosenrate,Low,percent,2026-10-29 23:30,2026-09-01,,,,,
+285755,392050002,jobs-to-applicants-ratio,JPY,JP,Verhältnis von offenen Stellen zu Bewerbern,Low,none,2026-10-29 23:30,2026-09-01,,,,,
+289107,392020002,retail-sales-mm,JPY,JP,Einzelhandelsumsatz m/m,High,percent,2026-10-29 23:50,2026-09-01,,,,,
+289119,392020003,retail-sales-yy,JPY,JP,Einzelhandelsumsatz y/y,Low,percent,2026-10-29 23:50,2026-09-01,,,,,
+289131,392020004,large-retailers-sales-yy,JPY,JP,Umsatz großer Einzelhändler y/y,Medium,percent,2026-10-29 23:50,2026-09-01,,,,,
+289150,392020006,industrial-production-mm,JPY,JP,Industrieproduktion m/m,Medium,percent,2026-10-29 23:50,2026-09-01,,,,,
+302118,36010029,ppi-qq,AUD,AU,PPI q/q,Medium,percent,2026-10-30 00:30,2026-07-01,,1.0,1.3,,
+302119,36010030,ppi-yy,AUD,AU,PPI y/y,Medium,percent,2026-10-30 00:30,2026-07-01,,3.2,3.6,,
+264429,392060018,boj-monetary-policy-statement,JPY,JP,BoJ geldpolitischen Erklärung,Medium,none,2026-10-30 02:30,1970-01-01,,,,,
+264434,392060020,boj-outlook-report,JPY,JP,BoJ Ausblick,Medium,none,2026-10-30 02:30,1970-01-01,,,,,
+264441,392060022,boj-interest-rate-decision,JPY,JP,BoJ Zinsentscheid,High,percent,2026-10-30 02:30,1970-01-01,,,1.25,,

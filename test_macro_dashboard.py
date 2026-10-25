@@ -130,3 +130,30 @@ def test_overall_skips_risk_for_non_haven_pair_and_missing():
 def test_overall_none():
     pills = {k: _pil(k, None) for k in md.SCORED_PILLARS}
     assert md.overall(pills, "GBPJPY")["label"] == "n/a"
+
+
+def test_futures_signs():
+    cal = _calendar()
+    # Fed fehlt im Test-Kalender -> n/a
+    assert not md.score_rates_future("Gold", cal, NOW).available
+    idx = pd.date_range("2025-10-01", periods=260, freq="B")
+    vix = pd.Series(np.linspace(30, 12, 260), index=idx)
+    app = md.risk_appetite(vix, None, None)
+    assert md.score_risk_future("S&P 500", app, app).score > 0
+    assert md.score_risk_future("Gold", app, app).score < 0
+    assert not md.score_risk_future("DXY", app, app).available
+    s = lambda c: (0.8, 10)
+    assert md.score_surprise_future("DXY", s).score > 0
+    assert md.score_surprise_future("Gold", s).score < 0
+    assert md.relevant_pillars("DXY") == ["zinsen", "surprise", "cot"]
+
+
+def test_futures_rates_relative_to_others():
+    rows = []
+    for i, (cur, a, b) in enumerate([("USD", 3.5, 4.0), ("EUR", 2.0, 2.0), ("JPY", 1.0, 1.0)]):
+        for t, v in (("2026-03-01", a), ("2026-09-17", b)):
+            rows.append({"event_code": md.RATE_DECISION_CODES[cur], "currency": cur, "event": "x",
+                         "importance": "High", "time_utc": pd.Timestamp(t), "actual": v})
+    cal = pd.DataFrame(rows)
+    assert md.score_rates_future("DXY", cal, NOW).score > 0.3
+    assert md.score_rates_future("Gold", cal, NOW).score < -0.3

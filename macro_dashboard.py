@@ -75,6 +75,26 @@ RATE_DECISION_CODES = {
 CENTRAL_BANK_NAMES = {"USD": "Fed", "EUR": "EZB", "GBP": "BoE", "AUD": "RBA",
                       "NZD": "RBNZ", "CAD": "BoC", "CHF": "SNB", "JPY": "BoJ"}
 
+# Futures/Indizes (wie auf der alten Seite). Vorzeichen = wie der jeweilige
+# Treiber auf das Instrument wirkt (unvalidierte Faustregeln):
+#   rates:    hawkishere Fed relativ zu den anderen Notenbanken
+#   surprise: US-Daten besser als erwartet
+#   risk:     Risk-on (0 = kein klarer Zusammenhang -> Saeule entfaellt)
+FUTURES = {
+    "Gold":       {"cot": "Gold",           "rates": -1, "surprise": -1, "risk": -1},
+    "DXY":        {"cot": "DXY",            "rates": +1, "surprise": +1, "risk": 0},
+    "Nasdaq 100": {"cot": "NQ Futures",     "rates": -1, "surprise": +1, "risk": +1},
+    "S&P 500":    {"cot": "S&P500 Futures", "rates": -1, "surprise": +1, "risk": +1},
+}
+# Fuer Aktienindizes nur den VIX als Risiko-Input nehmen (S&P-/Nikkei-Returns
+# waeren sonst der eigene Kurs).
+EQUITY_INDICES = {"Nasdaq 100", "S&P 500"}
+FUTURE_SYMBOLS = {"Gold": "GC=F", "DXY": "DX-Y.NYB", "Nasdaq 100": "^NDX", "S&P 500": "^GSPC"}
+CURRENCY_COT_LABELS = {
+    "USD": "DXY", "EUR": "EURO Futures", "GBP": "Pfund Futures", "JPY": "YEN Futures",
+    "AUD": "AUD Futures", "NZD": "NZD Futures", "CAD": "CANADA Futures", "CHF": "CHF Futures",
+}
+
 PILLAR_LABELS = {
     "zinsen": "Zinsen & Notenbanken", "risiko": "Risikostimmung",
     "surprise": "Daten-Überraschungen", "cot": "Positionierung (COT)",
@@ -343,13 +363,105 @@ def score_event(pair: str, calendar: pd.DataFrame, now: pd.Timestamp,
                   {"level": level, "events": ev, "intervention": interv, "covered_until": covered_until})
 
 
+# ── Futures / Indizes ────────────────────────────────────────────────────────
+def score_rates_future(name: str, calendar: pd.DataFrame, now: pd.Timestamp,
+                       expected_change: Callable[[str], float | None] | None = None) -> Pillar:
+    spec = FUTURES[name]
+    infos = {c: policy_rate_info(calendar, c, now) for c in CURRENCIES}
+    usd = infos.get("USD")
+    if usd is None:
+        return _na("zinsen", "Keine MT5-Zinsentscheide für die Fed.")
+
+    def cyc(c):
+        e = expected_change(c) if expected_change else None
+        return infos[c]["change"] + (e or 0.0)
+
+    others = [cyc(c) for c in CURRENCIES if c != "USD" and infos.get(c) is not None]
+    if not others:
+        return _na("zinsen", "Zu wenige Zinsentscheide anderer Notenbanken.")
+    rel = cyc("USD") - float(np.mean(others))
+    score = spec["rates"] * _tanh(rel, CONFIG["rates_cycle_scale"])
+    if abs(rel) < 0.05:
+        txt = "Fed im Gleichschritt mit den anderen Notenbanken"
+    elif rel > 0:
+        txt = "Fed zuletzt hawkisher als die anderen Notenbanken"
+    else:
+        txt = "Fed zuletzt dovisher als die anderen Notenbanken"
+    effect = "Rückenwind" if score > 0.15 else "Gegenwind" if score < -0.15 else "neutral"
+    reason = f"{txt} ({rel:+.2f} %-Pkt.) – für {name} {effect}"
+    return Pillar("zinsen", float(np.clip(score, -1, 1)), reason, True, "USD", "",
+                  {"usd": usd, "rel": rel, "others_mean": float(np.mean(others))})
+
+
+def score_risk_future(name: str, appetite: dict | None, appetite_vix: dict | None) -> Pillar:
+    sign = FUTURES[name]["risk"]
+    if sign == 0:
+        return _na("risiko", "Kein klarer Risk-on/Risk-off-Zusammenhang.")
+    app = appetite_vix if name in EQUITY_INDICES else appetite
+    if app is None:
+        return _na("risiko", "VIX/Aktienkurse gerade nicht abrufbar.")
+    raw = app["score"]
+    mood = "Risk-on" if raw > 0.15 else "Risk-off" if raw < -0.15 else "gemischte Stimmung"
+    parts = []
+    if "vix" in app:
+        parts.append(f"VIX {app['vix']:.1f} ({app['vix_pct'] * 100:.0f}. Perzentil 1J)")
+    if "spx_ret" in app:
+        parts.append(f"S&P 500 {app['spx_ret']:+.1f}% / 20T")
+    return Pillar("risiko", float(sign * raw), f"{mood}: " + ", ".join(parts), True, extra=dict(app))
+
+
+def score_surprise_future(name: str, surprise: Callable[[str], tuple[float | None, int]]) -> Pillar:
+    s, n = surprise("USD")
+    if s is None:
+        return _na("surprise", "Keine auswertbaren US-Releases.")
+    score = FUTURES[name]["surprise"] * _tanh(s, CONFIG["surprise_scale"])
+    how = "besser" if s > 0.1 else "schlechter" if s < -0.1 else "etwa wie"
+    reason = f"US-Daten {how} als erwartet (USD {s:+.2f}, {n} Releases)"
+    return Pillar("surprise", float(score), reason, True, "USD", "", {"usd": s, "n": n})
+
+
+def score_cot_future(name: str, stats: dict | None) -> Pillar:
+    if stats is None:
+        return _na("cot", "Keine COT-Historie verfügbar.")
+    score = stats["score"]
+    flags = []
+    if stats["percentile"] >= CONFIG["cot_extreme_high"]:
+        flags.append(f"Longs überfüllt ({stats['percentile'] * 100:.0f}. Perz.)")
+        if score > 0:
+            score *= CONFIG["cot_extreme_damping"]
+    elif stats["percentile"] <= CONFIG["cot_extreme_low"]:
+        flags.append(f"Shorts überfüllt ({stats['percentile'] * 100:.0f}. Perz.)")
+        if score < 0:
+            score *= CONFIG["cot_extreme_damping"]
+    if abs(score) < 0.1:
+        reason = "Spekulanten verändern ihre Positionen kaum"
+    else:
+        reason = f"Spekulanten bauen in den letzten 4 Wochen {'Longs' if score > 0 else 'Shorts'} auf"
+    if flags:
+        reason += "; ⚠️ " + ", ".join(flags) + " – Squeeze-Risiko"
+    return Pillar("cot", float(np.clip(score, -1, 1)), reason, True, extra={"single": stats, "flags": flags})
+
+
+def score_event_future(name: str, calendar: pd.DataFrame, now: pd.Timestamp) -> Pillar:
+    # USD-Termine wie bei einem USD-Paar (USDUSD -> beide Seiten USD).
+    p = score_event("USDUSD", calendar, now)
+    p.base, p.quote = "USD", ""
+    return p
+
+
+def relevant_pillars(name: str) -> list[str]:
+    if name in FUTURES:
+        return [k for k in SCORED_PILLARS if k != "risiko" or FUTURES[name]["risk"] != 0]
+    base, quote = split_pair(name)
+    return [k for k in SCORED_PILLARS if k != "risiko" or ((base in SAFE_HAVENS) != (quote in SAFE_HAVENS))]
+
+
 # ── Gesamtfazit ──────────────────────────────────────────────────────────────
 SCORED_PILLARS = ["zinsen", "risiko", "surprise", "cot"]
 
 
 def overall(pillars: dict[str, Pillar], pair: str) -> dict:
-    base, quote = split_pair(pair)
-    relevant = [k for k in SCORED_PILLARS if k != "risiko" or ((base in SAFE_HAVENS) != (quote in SAFE_HAVENS))]
+    relevant = relevant_pillars(pair)
     avail = {k: pillars[k].score for k in relevant if pillars.get(k) and pillars[k].score is not None}
     quality = f"{len(avail)}/{len(relevant)}"
     if not avail:
@@ -370,11 +482,14 @@ def overall(pillars: dict[str, Pillar], pair: str) -> dict:
 
 
 def summary_sentence(pair: str, pillars: dict[str, Pillar], verdict: dict) -> str:
-    base, quote = split_pair(pair)
     lbl = verdict["label"]
     names = lambda ks: ", ".join(PILLAR_LABELS[k] for k in ks)
     if lbl in ("LONG", "SHORT"):
-        side = base if lbl == "LONG" else quote
+        if pair in FUTURES:
+            side = f"{pair} {'steigend' if lbl == 'LONG' else 'fallend'}"
+        else:
+            base, quote = split_pair(pair)
+            side = base if lbl == "LONG" else quote
         return f"{names(verdict['supporters'])} sprechen für {side}; keine Säule stark dagegen."
     if lbl == "GEMISCHT":
         txt = "Die Säulen widersprechen sich"
@@ -457,17 +572,26 @@ def compute_all(deps: dict) -> dict:
     closes = {k: fetch_daily_close(sym) for k, sym in
               (("vix", "^VIX"), ("spx", "^GSPC"), ("nikkei", "^N225"), ("usdjpy", "JPY=X"))}
     appetite = risk_appetite(closes["vix"], closes["spx"], closes["nikkei"])
+    appetite_vix = risk_appetite(closes["vix"], None, None)
 
     cot_cache: dict[str, dict | None] = {}
 
-    def cot_stats(cur: str) -> dict | None:
-        if cur not in cot_cache:
-            hist = fetch_cot_net_pct(deps["cot_market"](cur), CONFIG["cot_years"])
+    def cot_by_label(label: str) -> dict | None:
+        if label not in cot_cache:
+            if "cot_market_label" in deps:
+                market = deps["cot_market_label"](label)
+            else:  # aeltere Einbindung: nur Waehrungen
+                cur = next((c for c, l in CURRENCY_COT_LABELS.items() if l == label), None)
+                market = deps["cot_market"](cur) if cur else None
+            hist = fetch_cot_net_pct(market, CONFIG["cot_years"])
             stats = cot_currency_stats(hist)
             if stats is not None:
                 stats["history"] = hist
-            cot_cache[cur] = stats
-        return cot_cache[cur]
+            cot_cache[label] = stats
+        return cot_cache[label]
+
+    def cot_stats(cur: str) -> dict | None:
+        return cot_by_label(CURRENCY_COT_LABELS[cur])
 
     results = {}
     for pair in PAIRS:
@@ -479,6 +603,15 @@ def compute_all(deps: dict) -> dict:
             "event": score_event(pair, calendar, now, closes["usdjpy"]),
         }
         results[pair] = {"pillars": pillars, "verdict": overall(pillars, pair)}
+    for name, spec in FUTURES.items():
+        pillars = {
+            "zinsen": score_rates_future(name, calendar, now, expected),
+            "risiko": score_risk_future(name, appetite, appetite_vix),
+            "surprise": score_surprise_future(name, deps["surprise_index"]),
+            "cot": score_cot_future(name, cot_by_label(spec["cot"])),
+            "event": score_event_future(name, calendar, now),
+        }
+        results[name] = {"pillars": pillars, "verdict": overall(pillars, name)}
     return {"now": now, "calendar": calendar, "history": history, "closes": closes,
             "appetite": appetite, "results": results}
 
@@ -531,12 +664,13 @@ def _card(title: str, value: str, color: str, body: str, bar: str = "") -> str:
             f'{bar}<div style="font-size:.8rem;color:#cbd5e1;line-height:1.35">{body}</div></div>')
 
 
-def _render_overview(data: dict) -> None:
+def _render_overview(data: dict, names: list[str], index_label: str = "Paar") -> None:
     rows = []
-    for pair, r in data["results"].items():
+    for pair in names:
+        r = data["results"][pair]
         p, v = r["pillars"], r["verdict"]
         rows.append({
-            "Paar": pair,
+            index_label: pair,
             "Fazit": f"{v['label']} ({v['score']:+.2f})" if v["score"] is not None else v["label"],
             "Zinsen": _score_cell(p["zinsen"].score),
             "Risiko": _score_cell(p["risiko"].score),
@@ -545,7 +679,7 @@ def _render_overview(data: dict) -> None:
             "Event-Risiko": p["event"].extra.get("level", "–"),
             "Daten": v["quality"],
         })
-    df = pd.DataFrame(rows).set_index("Paar")
+    df = pd.DataFrame(rows).set_index(index_label)
     st.dataframe(df.style.map(_cell_style), use_container_width=True, height=(len(df) + 1) * 35 + 3)
 
 
@@ -590,6 +724,16 @@ def _tab_rates(pair: str, r: dict) -> None:
     if not pil.available:
         st.info(pil.reason)
         return
+    if pair in FUTURES:
+        st.write(pil.reason)
+        u = pil.extra["usd"]
+        st.dataframe(pd.DataFrame([{
+            "Fed-Leitzins": f"{u['rate']:.2f} %", "Änderung 6 Mon.": f"{u['change']:+.2f}",
+            "Ø Änderung andere Notenbanken": f"{pil.extra['others_mean']:+.2f}",
+            "Letzter Entscheid": f"{u['last_date']:%d.%m.%Y}",
+            "Nächster Termin": f"{u['next_date']:%d.%m.%Y}" if u["next_date"] is not None else "nicht im Kalender",
+        }]), use_container_width=True, hide_index=True)
+        return
     rows = []
     for side in ("base", "quote"):
         cur = pil.base if side == "base" else pil.quote
@@ -627,6 +771,12 @@ def _tab_surprise(data: dict, pair: str, r: dict) -> None:
     pil = r["pillars"]["surprise"]
     st.write(pil.reason)
     hist = data["history"]
+    if pair in FUTURES:
+        if hist is not None and not hist.empty and "USD" in hist:
+            fig = go.Figure(go.Scatter(x=hist.index, y=hist["USD"], name="USD", line=dict(color="#3b82f6")))
+            fig.add_hline(y=0, line_color="#475569")
+            st.plotly_chart(_plotly_layout(fig, title="US-Surprise-Index (1 Jahr)"), use_container_width=True)
+        return
     base, quote = split_pair(pair)
     if hist is None or hist.empty or base not in hist or quote not in hist:
         return
@@ -644,6 +794,21 @@ def _tab_cot(pair: str, r: dict) -> None:
     pil = r["pillars"]["cot"]
     st.write(pil.reason)
     if not pil.available:
+        return
+    if pair in FUTURES:
+        s = pil.extra["single"]
+        h = s.get("history")
+        if h is not None and not h.empty:
+            fig = go.Figure(go.Scatter(x=h["report_date"], y=h["net_pct"] * 100, name=f"{pair} netto % OI",
+                                       line=dict(color="#3b82f6")))
+            fig.add_hline(y=0, line_color="#475569")
+            st.plotly_chart(_plotly_layout(fig, title="Netto-Positionierung Spekulanten (% Open Interest, 3 Jahre)"),
+                            use_container_width=True)
+        st.dataframe(pd.DataFrame([{"Netto % OI": f"{s['net_pct'] * 100:+.1f}",
+                                    "Perzentil 3J": f"{s['percentile'] * 100:.0f}",
+                                    "Änderung 4 Wo.": f"{s['change'] * 100:+.1f}",
+                                    "Stand": f"{s['date']:%d.%m.%Y}"}]),
+                     use_container_width=True, hide_index=True)
         return
     fig = go.Figure()
     for side, color in (("base", "#3b82f6"), ("quote", "#a855f7")):
@@ -705,6 +870,12 @@ Basis minus Quote.
 **Positionierung (COT)** – Netto-Position der Non-Commercials in % des Open Interest. Score = Veränderung über
 4 Wochen im Verhältnis zur üblichen Schwankung. Über 90. bzw. unter 10. Perzentil (3 Jahre) = überfüllt, Score wird halbiert.
 
+**Futures & Indizes** (Gold, DXY, Nasdaq 100, S&P 500) – Zinsen: Fed-Zinszyklus relativ zum Durchschnitt der
+anderen Notenbanken (hawkishe Fed = gut für DXY, schlecht für Gold und Aktien). Überraschungen: US-Surprise-Index
+(gute US-Daten = gut für DXY und Aktien, schlecht für Gold). Risiko: Risk-on gut für Aktien, schlecht für Gold
+(Aktienindizes nur über den VIX, sonst bewertet der Index sich selbst); für den DXY entfällt die Säule.
+COT: eigener Future-Markt.
+
 **Event-Risiko** – fließt nicht in den Score. Hoch = Notenbank-Sitzung in ≤ 7 Tagen oder hohes Interventionsrisiko.
 JPY-Interventionsrisiko ist eine Faustregel (USDJPY ≥ {CONFIG['intervention_level_mid']:.0f} oder ≥ {CONFIG['intervention_move_mid_pct']:.0f}% Anstieg in 20 Tagen).
 
@@ -747,11 +918,13 @@ def render_macro_dashboard(deps: dict) -> None:
     if stale_msg:
         st.warning(stale_msg)
 
-    st.markdown("#### Übersicht")
-    _render_overview(data)
+    st.markdown("#### Übersicht Währungspaare")
+    _render_overview(data, PAIRS, "Paar")
+    st.markdown("#### Übersicht Futures & Indizes")
+    _render_overview(data, list(FUTURES), "Markt")
 
-    default = PAIRS.index("GBPJPY")
-    pair = st.selectbox("Paar im Detail", PAIRS, index=default, key="macro_dash_pair")
+    choices = PAIRS + list(FUTURES)
+    pair = st.selectbox("Markt im Detail", choices, index=choices.index("GBPJPY"), key="macro_dash_pair")
     r = data["results"][pair]
     _render_verdict(pair, r)
 
@@ -773,6 +946,6 @@ def render_macro_dashboard(deps: dict) -> None:
             st.caption("KI-Analyse nicht verfügbar.")
         else:
             st.caption("Qualitative Einschätzung inkl. Geopolitik über Gemini + Google-Suche. Fließt nicht in den Score.")
-            render_ki(pair, f"{pair}=X")
+            render_ki(pair, FUTURE_SYMBOLS.get(pair, f"{pair}=X"))
     with tabs[6]:
         _tab_method()

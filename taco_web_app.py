@@ -12569,6 +12569,7 @@ def _macro_dashboard_deps() -> dict:
         "surprise_history": mt5_surprise_history,
         "exported_at": mt5_macro_exported_at,
         "cot_market": lambda cur: resolve_cot_market_name(cot_labels.get(cur, "")),
+        "cot_market_label": resolve_cot_market_name,
         "expected_rate_change": _expected_rate_change,
         "render_ki": render_ki_analyse,
         "tz": FF_DISPLAY_TZ,

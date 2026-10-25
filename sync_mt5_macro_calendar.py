@@ -104,19 +104,57 @@ def main() -> int:
     if not data_changed:
         print("Keine Aenderung an den Daten -> kein Commit.")
         return 0
-    git("add", "data/macro_calendar")
-    msg = f"MT5 Makro-Kalender Sync {exported_at:%Y-%m-%d %H:%M} UTC"
-    commit = git("commit", "-m", msg, "--", "data/macro_calendar")
-    if commit.returncode != 0:
-        print(commit.stdout, commit.stderr)
+    return push_data_to_main(f"MT5 Makro-Kalender Sync {exported_at:%Y-%m-%d %H:%M} UTC")
+
+
+def push_data_to_main(msg: str) -> int:
+    """Committet NUR data/macro_calendar direkt auf origin/main -- in einem
+    temporaeren Arbeitsordner (git worktree). So landen die Daten auf der Website,
+    egal auf welchem Branch das Projekt lokal gerade steht, und lokale
+    Aenderungen/Branches bleiben unberuehrt. (Frueher: Commit auf den aktuellen
+    Branch + 'git push origin main' -> bei einem Feature-Branch kamen die Daten
+    nie online an.)"""
+    import shutil
+    import tempfile
+
+    fetch = git("fetch", "origin", "main")
+    if fetch.returncode != 0:
+        print("Fetch fehlgeschlagen:", fetch.stderr.strip())
         return 1
-    push = git("push", "origin", "main")
-    if push.returncode != 0:
-        # z.B. Remote hat neue Commits -> einmal rebasen und nochmal
-        git("pull", "--rebase", "--autostash", "origin", "main")
-        push = git("push", "origin", "main")
-    print(push.stdout, push.stderr)
-    return push.returncode
+    wt = Path(tempfile.mkdtemp()) / "taco_main"
+    add = git("worktree", "add", "--detach", str(wt), "origin/main")
+    if add.returncode != 0:
+        print("Worktree fehlgeschlagen:", add.stderr.strip())
+        return 1
+    try:
+        target = wt / "data" / "macro_calendar"
+        target.mkdir(parents=True, exist_ok=True)
+        for name in ("mt5_recent.csv", "mt5_history.csv.gz", "meta.json"):
+            if (OUT_DIR / name).exists():
+                shutil.copy2(OUT_DIR / name, target / name)
+
+        def wgit(*a):
+            return subprocess.run(["git", *a], cwd=wt, capture_output=True, text=True)
+
+        wgit("add", "data/macro_calendar")
+        if not wgit("status", "--porcelain", "--", "data/macro_calendar").stdout.strip():
+            print("Daten auf main schon aktuell -> kein Commit.")
+            return 0
+        commit = wgit("commit", "-m", msg, "--", "data/macro_calendar")
+        if commit.returncode != 0:
+            print(commit.stdout, commit.stderr)
+            return 1
+        push = wgit("push", "origin", "HEAD:main")
+        if push.returncode != 0:
+            # Remote hat zwischendurch neue Commits -> einmal rebasen und nochmal
+            wgit("pull", "--rebase", "origin", "main")
+            push = wgit("push", "origin", "HEAD:main")
+        print(push.stdout, push.stderr)
+        if push.returncode == 0:
+            print("Makro-Daten auf GitHub main -> Website aktualisiert sich in 1-3 Minuten.")
+        return push.returncode
+    finally:
+        git("worktree", "remove", "--force", str(wt))
 
 
 if __name__ == "__main__":
