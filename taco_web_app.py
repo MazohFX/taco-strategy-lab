@@ -12498,7 +12498,7 @@ def render_extra_fib618_bos() -> None:
     )
 
 
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "DAX Freitag Short", "Extra: Makro & Sentiment", "Extra: COT Commercials vs. Spekulanten", "Extra: Fib 0.618 + BOS Backtest", "BOS + Fib + Opens Setup"], horizontal=False, label_visibility="collapsed")
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "DAX Freitag Short", "Extra: Makro & Sentiment", "Extra: Makro & Sentiment (alt)", "Extra: COT Commercials vs. Spekulanten", "Extra: Fib 0.618 + BOS Backtest", "BOS + Fib + Opens Setup"], horizontal=False, label_visibility="collapsed")
 
 # Fear&Greed + COT sind separate Marktstimmungs-Panels weiter unten. Ihre externen Requests
 # hier schon anstossen (fire-and-forget, kein wait), damit sie waehrend der restlichen
@@ -12547,7 +12547,40 @@ if test_mode == "DAX Freitag Short":
     render_dax_friday_short(save_fn=_save_wfa_result, load_fn=_load_wfa_result, evaluate_edge_fn=evaluate_edge)
     st.stop()
 
+def _macro_dashboard_deps() -> dict:
+    """Verbindet das neue Makro-Dashboard (macro_dashboard.py) mit den
+    bestehenden Datenfunktionen dieser Datei."""
+    def _expected_rate_change(cur: str) -> float | None:
+        # Forex-Factory-Konsensus nur fuer einen noch anstehenden Entscheid diese Woche.
+        try:
+            row, _ = ff_rate_decision_row(cur)
+            fc, prev = row.get("Letzter Wert"), row.get("Wert vor Fenster")
+            when = pd.to_datetime(row.get("Stand"), errors="coerce")
+            if fc is None or prev is None or pd.isna(when) or when.date() < date.today():
+                return None
+            return float(fc) - float(prev)
+        except Exception:
+            return None
+
+    cot_labels = {**CURRENCY_TO_COT_LABEL, "USD": "DXY"}
+    return {
+        "load_calendar": load_mt5_macro_calendar,
+        "surprise_index": mt5_surprise_index,
+        "surprise_history": mt5_surprise_history,
+        "exported_at": mt5_macro_exported_at,
+        "cot_market": lambda cur: resolve_cot_market_name(cot_labels.get(cur, "")),
+        "expected_rate_change": _expected_rate_change,
+        "render_ki": render_ki_analyse,
+        "tz": FF_DISPLAY_TZ,
+    }
+
+
 if test_mode == "Extra: Makro & Sentiment":
+    from macro_dashboard import render_macro_dashboard
+    render_macro_dashboard(_macro_dashboard_deps())
+    st.stop()
+
+if test_mode == "Extra: Makro & Sentiment (alt)":
     render_extra_makro_sentiment()
     st.stop()
 
