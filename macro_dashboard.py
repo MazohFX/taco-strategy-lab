@@ -98,6 +98,19 @@ FUTURES = {
 EQUITY_INDICES = {"Nasdaq 100", "S&P 500"}
 FUTURE_SYMBOLS = {"Gold": "GC=F", "DXY": "DX-Y.NYB", "Nasdaq 100": "^NDX", "S&P 500": "^GSPC",
                   "EUR": "6E=F", "GBP": "6B=F", "AUD": "6A=F", "NZD": "6N=F", "CAD": "6C=F", "CHF": "6S=F"}
+# Exakte, aktuell gepflegte CFTC-Marktnamen (geprueft Okt. 2026). Die Volltextsuche
+# ueber COT_WATCHLIST trifft fuer NZD und DXY die alten, 2022 eingestellten Namen
+# ("NEW ZEALAND DOLLAR", "U.S. DOLLAR INDEX") -> dort gab es keine aktuellen Daten.
+COT_EXACT_MARKETS = {
+    "EURO Futures": "EURO FX - CHICAGO MERCANTILE EXCHANGE",
+    "Pfund Futures": "BRITISH POUND - CHICAGO MERCANTILE EXCHANGE",
+    "YEN Futures": "JAPANESE YEN - CHICAGO MERCANTILE EXCHANGE",
+    "AUD Futures": "AUSTRALIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE",
+    "NZD Futures": "NZ DOLLAR - CHICAGO MERCANTILE EXCHANGE",
+    "CANADA Futures": "CANADIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE",
+    "CHF Futures": "SWISS FRANC - CHICAGO MERCANTILE EXCHANGE",
+    "DXY": "USD INDEX - ICE FUTURES U.S.",
+}
 CURRENCY_COT_LABELS = {
     "USD": "DXY", "EUR": "EURO Futures", "GBP": "Pfund Futures", "JPY": "YEN Futures",
     "AUD": "AUD Futures", "NZD": "NZD Futures", "CAD": "CANADA Futures", "CHF": "CHF Futures",
@@ -586,7 +599,9 @@ def compute_all(deps: dict) -> dict:
 
     def cot_by_label(label: str) -> dict | None:
         if label not in cot_cache:
-            if "cot_market_label" in deps:
+            if label in COT_EXACT_MARKETS:
+                market = COT_EXACT_MARKETS[label]
+            elif "cot_market_label" in deps:
                 market = deps["cot_market_label"](label)
             else:  # aeltere Einbindung: nur Waehrungen
                 cur = next((c for c, l in CURRENCY_COT_LABELS.items() if l == label), None)
