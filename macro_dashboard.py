@@ -712,6 +712,9 @@ def fetch_daily_close(symbol: str, period: str = "1y") -> pd.Series:
     """Tagesschlusskurse. Mit explizitem Startdatum statt period=..., weil Yahoo bei
     period='5y' teils nur gut ein Jahr liefert; bei zu kurzer Antwort zweiter Versuch
     ueber Ticker.history."""
+    # Cache-Version: bei Aenderungen an _fx_trading_dates/_trading_dates hochzaehlen,
+    # sonst liefert st.cache_data bis zu 1 h alte, anders ausgerichtete Kurse.
+    _cache_version = 4  # noqa: F841
     years = int(period.rstrip("y")) if period.endswith("y") else 1
     start = (pd.Timestamp.today() - pd.DateOffset(years=years, days=7)).strftime("%Y-%m-%d")
 
