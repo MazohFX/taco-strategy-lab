@@ -170,3 +170,18 @@ def test_universe():
     for p in ("AUDNZD", "CADCHF", "GBPJPY", "EURUSD", "USDJPY", "CHFJPY"):
         assert p in md.PAIRS
     assert set(md.FUTURE_LIST) == {"CHF", "EUR", "DXY", "AUD", "NZD", "CAD", "GBP", "JPY"}
+
+
+def test_vix_link_and_symbols():
+    idx = pd.date_range("2025-10-01", periods=250, freq="B")
+    rng = np.random.default_rng(1)
+    vret = rng.normal(0, 0.05, 250)
+    vix = pd.Series(20 * np.cumprod(1 + vret), index=idx)
+    price = pd.Series(100 * np.cumprod(1 - 0.1 * vret + rng.normal(0, 0.002, 250)), index=idx)
+    link = md.vix_link(price, vix)
+    assert link["corr"] < -0.8 and link["move_per_10pct_vix"] < 0
+    assert md.price_symbol("JPYUSD") == ("JPY=X", True)
+    assert md.price_symbol("AUDUSD") == ("AUDUSD=X", False)
+    assert md.price_symbol("USDJPY") == ("JPY=X", False)
+    assert md.price_symbol("DXY") == ("DX-Y.NYB", False)
+    assert md.price_symbol("GBPJPY") == ("GBPJPY=X", False)

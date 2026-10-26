@@ -256,9 +256,50 @@ def score_risk(pair: str, appetite: dict | None, force: bool = False) -> Pillar:
         parts.append(f"VIX {appetite['vix']:.1f} ({appetite['vix_pct'] * 100:.0f}. Perzentil 1J)")
     if "spx_ret" in appetite:
         parts.append(f"S&P 500 {appetite['spx_ret']:+.1f}% / 20T")
-    reason = f"{mood}: " + ", ".join(parts)
-    return Pillar("risiko", float(np.clip(sign * raw, -1, 1)), reason, True, base, quote,
-                  {**appetite, "beta_diff": sign})
+    score = float(np.clip(sign * raw, -1, 1))
+    reason = f"{mood}: " + ", ".join(parts) + ". " + _risk_effect_text(base, quote, sign, score)
+    return Pillar("risiko", score, reason, True, base, quote, {**appetite, "beta_diff": sign})
+
+
+def _risk_effect_text(base: str, quote: str, diff: float, score: float) -> str:
+    strength = "stark" if abs(diff) >= 1.5 else "deutlich" if abs(diff) >= 1.0 else "mäßig" if abs(diff) >= 0.5 else "kaum"
+    if abs(score) < 0.15:
+        effect = "kaum Einfluss"
+    else:
+        effect = f"{'stützt' if score > 0 else 'belastet'} {base} gegenüber {quote}"
+    return (f"Für {base}{quote}: {effect} – das Paar reagiert {strength} auf die Stimmung "
+            f"(Empfindlichkeit {diff:+.1f} = {base} {RISK_BETA.get(base, 0):+.1f} minus {quote} {RISK_BETA.get(quote, 0):+.1f}).")
+
+
+def price_symbol(code: str) -> tuple[str, bool]:
+    """Yahoo-Symbol fuer den Kurs eines Paars/Futures und ob er invertiert werden muss
+    (Yahoo fuehrt z.B. nur USDJPY als 'JPY=X', der JPY-Future ist JPY/USD)."""
+    if code in FUTURE_SYMBOLS and code in FUTURES:
+        return FUTURE_SYMBOLS[code], False
+    base, quote = split_pair(code)
+    if quote == "USD" and base in ("JPY", "CHF", "CAD"):
+        return f"{base}=X", True
+    if base == "USD":
+        return f"{quote}=X", False
+    return f"{code}=X", False
+
+
+def vix_link(price: pd.Series, vix: pd.Series) -> dict | None:
+    """Gemessener Zusammenhang der letzten 12 Monate: Korrelation der Tagesrenditen
+    des Paars mit den Tagesveraenderungen des VIX und typische Paarbewegung (in %)
+    an Tagen, an denen der VIX um 10% steigt."""
+    if price is None or vix is None or price.empty or vix.empty:
+        return None
+    df = pd.concat([price.rename("p"), vix.rename("v")], axis=1).dropna()
+    if len(df) < 60:
+        return None
+    r = df.pct_change().dropna()
+    r = r[np.isfinite(r).all(axis=1)]
+    if len(r) < 50 or r["v"].std() == 0:
+        return None
+    corr = float(r["p"].corr(r["v"]))
+    beta = float(np.cov(r["p"], r["v"])[0, 1] / r["v"].var())
+    return {"corr": corr, "move_per_10pct_vix": beta * 10, "n": int(len(r))}
 
 
 # ── Saeule 3: Daten-Ueberraschungen ──────────────────────────────────────────
@@ -443,7 +484,13 @@ def score_risk_future(name: str, appetite: dict | None, appetite_vix: dict | Non
         parts.append(f"VIX {app['vix']:.1f} ({app['vix_pct'] * 100:.0f}. Perzentil 1J)")
     if "spx_ret" in app:
         parts.append(f"S&P 500 {app['spx_ret']:+.1f}% / 20T")
-    return Pillar("risiko", float(sign * raw), f"{mood}: " + ", ".join(parts), True, extra=dict(app))
+    score = float(sign * raw)
+    if abs(score) < 0.15:
+        eff = f"Für {name}: kaum Einfluss."
+    else:
+        eff = f"Für {name}: {'stützend' if score > 0 else 'belastend'} (Empfindlichkeit {sign:+.1f})."
+    return Pillar("risiko", score, f"{mood}: " + ", ".join(parts) + ". " + eff, True,
+                  extra={**app, "beta_diff": sign})
 
 
 def score_surprise_future(name: str, surprise: Callable[[str], tuple[float | None, int]]) -> Pillar:
@@ -801,18 +848,50 @@ def _tab_rates(pair: str, r: dict) -> None:
                "Konsensus nur, wenn der Entscheid diese Woche im Forex-Factory-Kalender steht.")
 
 
-def _tab_risk(data: dict, pair: str, r: dict) -> None:
+def _tab_risk(data: dict, pair: str, r: dict, title: str | None = None) -> None:
     import plotly.graph_objects as go
+    title = title or pair
     pil = r["pillars"]["risiko"]
     st.write(pil.reason)
+    st.caption("Der VIX selbst ist für alle Märkte gleich – je Paar unterscheidet sich nur, wie stark und in "
+               "welche Richtung es darauf reagiert. Unten der gemessene Zusammenhang für genau dieses Paar.")
     vix = data["closes"]["vix"]
     if vix.empty:
         st.caption("VIX gerade nicht abrufbar.")
         return
-    fig = go.Figure(go.Scatter(x=vix.index, y=vix.values, name="VIX", line=dict(color="#f59e0b")))
+    sym, invert = price_symbol(pair)
+    price = fetch_daily_close(sym)
+    if invert and not price.empty:
+        price = 1 / price
+    link = vix_link(price, vix)
+    assumed = pil.extra.get("beta_diff") if pil.available else None
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Angenommene Empfindlichkeit", f"{assumed:+.1f}" if assumed is not None else "–",
+              help="Faustregel aus der Methodik (+ = Risk-on-Paar: steigt, wenn der VIX fällt)")
+    if link:
+        c2.metric("Gemessene Korrelation mit VIX (1J)", f"{link['corr']:+.2f}",
+                  help="Tagesrenditen des Paars vs. Tagesveränderung des VIX. Negativ = Paar fällt, wenn der VIX steigt.")
+        c3.metric(f"{title} bei VIX +10 %", f"{link['move_per_10pct_vix']:+.2f} %",
+                  help="Typische Tagesbewegung des Paars an einem Tag mit +10 % VIX (Regression, 12 Monate)")
+        if assumed is not None and abs(link["corr"]) >= 0.1:
+            fits = np.sign(assumed) == -np.sign(link["corr"])
+            st.caption("✅ Die angenommene Richtung passt zum gemessenen Verhalten." if fits else
+                       "⚠️ Gemessen verhält sich das Paar zuletzt anders als angenommen – Säule mit Vorsicht lesen.")
+        elif abs(link["corr"]) < 0.1:
+            st.caption("Gemessen hängt das Paar im letzten Jahr kaum am VIX (|Korrelation| < 0,1).")
+    else:
+        c2.metric("Gemessene Korrelation mit VIX (1J)", "–")
+        c3.metric(f"{title} bei VIX +10 %", "–")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=vix.index, y=vix.values, name="VIX", line=dict(color="#f59e0b")))
+    if not price.empty:
+        fig.add_trace(go.Scatter(x=price.index, y=price.values, name=title, yaxis="y2",
+                                 line=dict(color="#3b82f6")))
     fig.add_hline(y=float(vix.median()), line_dash="dot", line_color="#64748b",
-                  annotation_text="Median 1J", annotation_position="top left")
-    st.plotly_chart(_plotly_layout(fig, title="VIX (1 Jahr)"), use_container_width=True)
+                  annotation_text="VIX-Median 1J", annotation_position="top left")
+    _plotly_layout(fig, height=360, title=f"VIX vs. {title} (1 Jahr)")
+    fig.update_layout(yaxis=dict(title="VIX"), yaxis2=dict(title=title, overlaying="y", side="right", showgrid=False))
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _tab_surprise(data: dict, pair: str, r: dict) -> None:
@@ -988,7 +1067,7 @@ def render_macro_dashboard(deps: dict) -> None:
     with tabs[0]:
         _tab_rates(pair, r)
     with tabs[1]:
-        _tab_risk(data, pair, r)
+        _tab_risk(data, pair, r, name)
     with tabs[2]:
         _tab_surprise(data, pair, r)
     with tabs[3]:
