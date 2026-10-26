@@ -1054,7 +1054,11 @@ Schreibe einen kompakten deutschen Fließtext in 6-8 Sätzen mit konkreten Zahle
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=api_key)
+    # Harte Zeitgrenze je Anfrage (ms), damit ein haengender Gemini-Call die App nicht blockiert.
+    try:
+        client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=45_000))
+    except Exception:
+        client = genai.Client(api_key=api_key)
 
     def _grounding_tool_config():
         try:
@@ -1092,7 +1096,7 @@ Schreibe einen kompakten deutschen Fließtext in 6-8 Sätzen mit konkreten Zahle
     for name in preferred + discovered:
         if not any(a["model"] == name and a["config"] is None for a in attempts):
             attempts.append({"model": name, "config": None})
-    attempts = attempts[:8]
+    attempts = attempts[:4]
 
     errors: list[tuple[str, Exception]] = []
     for attempt in attempts:
@@ -1166,11 +1170,19 @@ def render_ki_analyse(asset_label: str, symbol: str) -> None:
         _fetch_ki_analyse.clear()
         st.session_state.pop(cache_key, None)
 
+    block_key = "ki_quota_blocked_until"
+    blocked_until = st.session_state.get(block_key)
+    if blocked_until and pd.Timestamp.now() < blocked_until and not force_refresh:
+        st.info(f"⏳ Gemini-Kontingent war gerade aufgebraucht – neuer Versuch ab "
+                f"{blocked_until:%H:%M} Uhr oder mit „Jetzt aktualisieren“.")
+        return
     try:
-        with st.spinner(f"Claude durchsucht das Web nach aktuellen Daten zu {asset_name}..."):
+        with st.spinner(f"Gemini durchsucht das Web nach aktuellen Daten zu {asset_name}..."):
             result = _fetch_ki_analyse(symbol, asset_name, api_key)
     except Exception as exc:
         msg = str(exc)
+        if "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
+            st.session_state[block_key] = pd.Timestamp.now() + pd.Timedelta(minutes=10)
         if "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower() or "rate limit" in msg.lower():
             tried = msg[msg.find("[versuchte Modelle:"):] if "[versuchte Modelle:" in msg else ""
             st.warning(

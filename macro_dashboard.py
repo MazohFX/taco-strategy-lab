@@ -1088,6 +1088,12 @@ def render_macro_dashboard(deps: dict) -> None:
             st.caption("KI-Analyse nicht verfügbar.")
         else:
             st.caption("Qualitative Einschätzung inkl. Geopolitik über Gemini + Google-Suche. Fließt nicht in den Score.")
-            render_ki(name, FUTURE_SYMBOLS.get(name, f"{name}=X"))
+            # Nur auf Klick: Streamlit fuehrt alle Tabs bei jedem Seitenaufruf aus -- ohne
+            # Button wuerde Gemini bei jedem Klick auf der Seite angefragt (Quota, Haenger).
+            flag = f"macro_ki_on_{name}"
+            if st.button(f"🤖 KI-Analyse für {name} laden", key=f"macro_ki_btn_{name}"):
+                st.session_state[flag] = True
+            if st.session_state.get(flag):
+                render_ki(name, FUTURE_SYMBOLS.get(name, f"{name}=X"))
     with tabs[6]:
         _tab_method()
