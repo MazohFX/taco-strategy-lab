@@ -72,6 +72,11 @@ CURRENCY_FUTURES = {"CHF": "CHFUSD", "EUR": "EURUSD", "AUD": "AUDUSD",
 FUTURE_LIST = ["CHF", "EUR", "DXY", "AUD", "NZD", "CAD", "GBP"]
 CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF"]
 SAFE_HAVENS = {"JPY", "CHF"}
+# Risiko-Empfindlichkeit je Waehrung (+ = Risk-on-Waehrung, - = sicherer Hafen).
+# Unvalidierte Faustregel; fuer ein Paar zaehlt Basis minus Quote.
+RISK_BETA = {"AUD": 1.0, "NZD": 1.0, "CAD": 0.5, "GBP": 0.3, "EUR": 0.0,
+             "USD": -0.5, "CHF": -0.7, "JPY": -1.0}
+RISK_MIN_DIFF = 0.5   # darunter (z.B. AUDNZD, EURGBP) entfaellt die Saeule bei Forex-Paaren
 
 RATE_DECISION_CODES = {
     "USD": "fed-interest-rate-decision", "EUR": "ecb-deposit-rate-decision",
@@ -89,7 +94,7 @@ CENTRAL_BANK_NAMES = {"USD": "Fed", "EUR": "EZB", "GBP": "BoE", "AUD": "RBA",
 #   risk:     Risk-on (0 = kein klarer Zusammenhang -> Saeule entfaellt)
 FUTURES = {
     "Gold":       {"cot": "Gold",           "rates": -1, "surprise": -1, "risk": -1},
-    "DXY":        {"cot": "DXY",            "rates": +1, "surprise": +1, "risk": 0},
+    "DXY":        {"cot": "DXY",            "rates": +1, "surprise": +1, "risk": -0.5},
     "Nasdaq 100": {"cot": "NQ Futures",     "rates": -1, "surprise": +1, "risk": +1},
     "S&P 500":    {"cot": "S&P500 Futures", "rates": -1, "surprise": +1, "risk": +1},
 }
@@ -227,14 +232,22 @@ def risk_appetite(vix: pd.Series, spx: pd.Series, nikkei: pd.Series) -> dict | N
     return info
 
 
-def score_risk(pair: str, appetite: dict | None) -> Pillar:
+def risk_diff(pair: str) -> float:
     base, quote = split_pair(pair)
-    hb, hq = base in SAFE_HAVENS, quote in SAFE_HAVENS
-    if hb == hq:
-        return _na("risiko", "Für dieses Paar kein klarer Risk-on/Risk-off-Treiber.")
+    return RISK_BETA.get(base, 0.0) - RISK_BETA.get(quote, 0.0)
+
+
+def risk_relevant(pair: str, force: bool = False) -> bool:
+    return force or abs(risk_diff(pair)) >= RISK_MIN_DIFF
+
+
+def score_risk(pair: str, appetite: dict | None, force: bool = False) -> Pillar:
+    base, quote = split_pair(pair)
+    if not risk_relevant(pair, force):
+        return _na("risiko", f"{base} und {quote} reagieren ähnlich auf die Risikostimmung – Säule entfällt.")
     if appetite is None:
         return _na("risiko", "VIX/Aktienkurse gerade nicht abrufbar.")
-    sign = 1.0 if hq else -1.0
+    sign = risk_diff(pair)
     raw = appetite["score"]
     mood = "Risk-on" if raw > 0.15 else "Risk-off" if raw < -0.15 else "gemischte Stimmung"
     parts = []
@@ -243,7 +256,8 @@ def score_risk(pair: str, appetite: dict | None) -> Pillar:
     if "spx_ret" in appetite:
         parts.append(f"S&P 500 {appetite['spx_ret']:+.1f}% / 20T")
     reason = f"{mood}: " + ", ".join(parts)
-    return Pillar("risiko", float(sign * raw), reason, True, base, quote, dict(appetite))
+    return Pillar("risiko", float(np.clip(sign * raw, -1, 1)), reason, True, base, quote,
+                  {**appetite, "beta_diff": sign})
 
 
 # ── Saeule 3: Daten-Ueberraschungen ──────────────────────────────────────────
@@ -470,19 +484,18 @@ def score_event_future(name: str, calendar: pd.DataFrame, now: pd.Timestamp) -> 
     return p
 
 
-def relevant_pillars(name: str) -> list[str]:
+def relevant_pillars(name: str, force_risk: bool = False) -> list[str]:
     if name in FUTURES:
         return [k for k in SCORED_PILLARS if k != "risiko" or FUTURES[name]["risk"] != 0]
-    base, quote = split_pair(name)
-    return [k for k in SCORED_PILLARS if k != "risiko" or ((base in SAFE_HAVENS) != (quote in SAFE_HAVENS))]
+    return [k for k in SCORED_PILLARS if k != "risiko" or risk_relevant(name, force_risk)]
 
 
 # ── Gesamtfazit ──────────────────────────────────────────────────────────────
 SCORED_PILLARS = ["zinsen", "risiko", "surprise", "cot"]
 
 
-def overall(pillars: dict[str, Pillar], pair: str) -> dict:
-    relevant = relevant_pillars(pair)
+def overall(pillars: dict[str, Pillar], pair: str, force_risk: bool = False) -> dict:
+    relevant = relevant_pillars(pair, force_risk)
     avail = {k: pillars[k].score for k in relevant if pillars.get(k) and pillars[k].score is not None}
     quality = f"{len(avail)}/{len(relevant)}"
     if not avail:
@@ -629,13 +642,13 @@ def compute_all(deps: dict) -> dict:
     for cur, code in CURRENCY_FUTURES.items():
         pillars = {
             "zinsen": score_rates(code, calendar, now, expected),
-            "risiko": score_risk(code, appetite),
+            "risiko": score_risk(code, appetite, force=True),
             "surprise": score_surprise(code, deps["surprise_index"], history),
             # COT des Futures selbst (nicht Waehrung minus USD-Index)
             "cot": score_cot_future(cur, cot_stats(cur)),
             "event": score_event(code, calendar, now, closes["usdjpy"]),
         }
-        results[cur] = {"pillars": pillars, "verdict": overall(pillars, code), "code": code}
+        results[cur] = {"pillars": pillars, "verdict": overall(pillars, code, force_risk=True), "code": code}
     for name in [n for n in FUTURE_LIST if n in FUTURES]:
         spec = FUTURES[name]
         pillars = {
@@ -896,8 +909,10 @@ def _tab_method() -> None:
 {1 - CONFIG['rates_cycle_weight']:.0%} Zinsniveau-Differenz (Carry). Markterwartungen für Sitzungen weiter in der Zukunft
 (OIS-Pricing) und tägliche 2-jährige Renditen aller Länder gibt es nicht kostenlos – daher nicht enthalten.
 
-**Risikostimmung** – nur für Paare mit genau einer sicheren Währung (JPY/CHF). VIX-Perzentil (1 Jahr) und
-10-Tage-Veränderung, S&P 500 und Nikkei 20-Tage-Return. Risk-on = gut für JPY-Crosses.
+**Risikostimmung** – VIX-Perzentil (1 Jahr) und 10-Tage-Veränderung, S&P 500 und Nikkei 20-Tage-Return.
+Wirkung je Währung (Faustregel): AUD/NZD +1, CAD +0,5, GBP +0,3, EUR 0, USD −0,5, CHF −0,7, JPY −1. Für ein Paar zählt
+Basis minus Quote (AUDJPY 2,0 = sehr risikoabhängig). Bei Forex-Paaren entfällt die Säule unter 0,5 (z. B. AUDNZD,
+EURGBP, EURCHF); bei Futures und beim DXY (−0,5) ist sie immer aktiv.
 
 **Daten-Überraschungen** – MT5-Surprise-Index (Actual vs. Forecast als z-Score, 90 Tage, Halbwertszeit 30 Tage),
 Basis minus Quote.

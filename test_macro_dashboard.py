@@ -61,7 +61,11 @@ def test_risk_sign_flips_with_jpy_side():
     assert md.score_risk("GBPJPY", app).score > 0
     assert md.score_risk("USDJPY", app).score > 0
     assert md.score_risk("JPYGBP", app).score < 0
-    assert not md.score_risk("EURUSD", app).available
+    assert not md.score_risk("AUDNZD", app).available      # gleiche Empfindlichkeit
+    assert not md.score_risk("EURGBP", app).available
+    assert md.score_risk("AUDUSD", app).score > 0              # Risk-on hilft AUD gegen USD
+    assert md.score_risk("AUDJPY", app).score > md.score_risk("GBPJPY", app).score
+    assert md.score_risk("CHFUSD", app, force=True).available  # Futures immer
 
 
 def test_surprise_diff():
@@ -123,7 +127,7 @@ def test_overall_long_short_mixed():
 def test_overall_skips_risk_for_non_haven_pair_and_missing():
     pills = {"zinsen": _pil("zinsen", 0.5), "risiko": _pil("risiko", -1.0),
              "surprise": _pil("surprise", None), "cot": _pil("cot", 0.3)}
-    v = md.overall(pills, "EURUSD")
+    v = md.overall(pills, "EURGBP")
     assert v["quality"] == "2/3" and v["label"] == "LONG"
 
 
@@ -141,11 +145,13 @@ def test_futures_signs():
     app = md.risk_appetite(vix, None, None)
     assert md.score_risk_future("S&P 500", app, app).score > 0
     assert md.score_risk_future("Gold", app, app).score < 0
-    assert not md.score_risk_future("DXY", app, app).available
+    assert md.score_risk_future("DXY", app, app).score < 0    # Risk-on schwaecht den Dollar
     s = lambda c: (0.8, 10)
     assert md.score_surprise_future("DXY", s).score > 0
     assert md.score_surprise_future("Gold", s).score < 0
-    assert md.relevant_pillars("DXY") == ["zinsen", "surprise", "cot"]
+    assert md.relevant_pillars("DXY") == ["zinsen", "risiko", "surprise", "cot"]
+    assert "risiko" not in md.relevant_pillars("AUDNZD")
+    assert "risiko" in md.relevant_pillars("CHFUSD", force_risk=True)
 
 
 def test_futures_rates_relative_to_others():
