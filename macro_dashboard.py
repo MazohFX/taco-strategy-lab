@@ -211,10 +211,10 @@ def score_rates(pair: str, calendar: pd.DataFrame, now: pd.Timestamp,
 # ── Saeule 2: Risikostimmung ─────────────────────────────────────────────────
 VIX_ZONES = [
     # (von, bis, Name, Farbe Band, Farbe Linie/Text, Kurzhinweis)
-    (0, 15, "Ruhig", "rgba(34,197,94,.16)", "#4ade80", "Risk-on · Carry läuft"),
-    (15, 20, "Normal", "rgba(148,163,184,.10)", "#cbd5e1", "Normaler Markt"),
-    (20, 30, "Stress", "rgba(234,179,8,.18)", "#facc15", "Vorsicht · Risiko reduzieren"),
-    (30, 200, "Panik", "rgba(239,68,68,.22)", "#f87171", "Höchste Vorsicht · Carry-Unwind"),
+    (0, 15, "Ruhig", "rgba(34,197,94,.08)", "#4ade80", "Risk-on · Carry läuft"),
+    (15, 20, "Normal", "rgba(148,163,184,.04)", "#cbd5e1", "Normaler Markt"),
+    (20, 30, "Stress", "rgba(234,179,8,.08)", "#facc15", "Vorsicht · Risiko reduzieren"),
+    (30, 200, "Panik", "rgba(239,68,68,.10)", "#f87171", "Höchste Vorsicht · Carry-Unwind"),
 ]
 VIX_SPIKE_DAYS = 5
 VIX_SPIKE_PCT = 30.0   # VIX-Anstieg in 5 Handelstagen, ab dem eine Warnphase markiert wird
@@ -997,31 +997,32 @@ def _tab_risk(data: dict, pair: str, r: dict, title: str | None = None) -> None:
         fig.add_annotation(x=0.005, xref="paper", y=(lo + top) / 2 if hi < 200 else min(lo + 4, top - 1),
                            text=f"<b>{name.upper()}</b> · {short}", showarrow=False, xanchor="left",
                            font=dict(size=11, color=line), bgcolor="rgba(15,23,36,.65)")
-        if lo > 0:
-            fig.add_hline(y=lo, line_dash="dash", line_width=1, line_color=line, opacity=0.6)
     # Warnphasen: schnelle VIX-Spruenge
     spikes = vix_spike_periods(v)
-    for t0, t1, jump in spikes:
-        fig.add_vrect(x0=t0, x1=t1 + pd.Timedelta(days=1), fillcolor="rgba(239,68,68,.28)", line_width=0,
-                      layer="below")
-        fig.add_annotation(x=t1, y=y_top - 1, text=f"⚠ +{jump:.0f}%", showarrow=False,
-                           font=dict(size=10, color="#fca5a5"))
     fig.add_trace(go.Scatter(x=v.index, y=v.values, name="VIX", line=dict(color="#f59e0b", width=2)))
+    if spikes:
+        # Dezent: nur ein roter Punkt am Hoch jedes VIX-Sprungs (keine Streifen)
+        xs = [t1 for _, t1, _ in spikes]
+        fig.add_trace(go.Scatter(
+            x=xs, y=[float(v.loc[t]) for t in xs], mode="markers", name="VIX-Sprung",
+            marker=dict(color="#ef4444", size=8, line=dict(color="#0f1724", width=1)),
+            hovertext=[f"VIX +{j:.0f}% in {VIX_SPIKE_DAYS} Tagen" for _, _, j in spikes], hoverinfo="text+x"))
     if not pr.empty:
         fig.add_trace(go.Scatter(x=pr.index, y=pr.values, name=title, yaxis="y2",
                                  line=dict(color="#3b82f6", width=1.5)))
-    fig.add_hline(y=now_level, line_color=cur_zone[4], line_width=2,
-                  annotation_text=f"Heute {now_level:.1f} ({cur_zone[2]})", annotation_position="top right",
-                  annotation_font=dict(color=cur_zone[4], size=12))
+    fig.add_annotation(x=v.index[-1], y=now_level, text=f"Heute {now_level:.1f} ({cur_zone[2]})",
+                       showarrow=True, arrowhead=2, ax=-60, ay=-30, arrowcolor=cur_zone[4],
+                       font=dict(color=cur_zone[4], size=12), bgcolor="rgba(15,23,36,.75)")
     _plotly_layout(fig, height=420, title=f"VIX vs. {title} ({span})")
-    fig.update_layout(yaxis=dict(title="VIX", range=[max(0, float(v.min()) - 2), y_top]),
+    fig.update_layout(yaxis=dict(title="VIX", range=[max(0, float(v.min()) - 2), y_top], showgrid=False),
+                      xaxis=dict(showgrid=False),
                       yaxis2=dict(title=title, overlaying="y", side="right", showgrid=False))
     st.plotly_chart(fig, use_container_width=True)
 
     have_years = (v.index[-1] - v.index[0]).days / 365.25 if len(v) > 1 else 0
     if have_years < years * 0.8:
         st.caption(f"Hinweis: Yahoo hat nur Daten ab {v.index[0]:%d.%m.%Y} geliefert.")
-    st.caption(f"Rot hinterlegt = Warnphase: VIX stieg innerhalb von {VIX_SPIKE_DAYS} Handelstagen um "
+    st.caption(f"Rote Punkte = Warnphase: VIX stieg innerhalb von {VIX_SPIKE_DAYS} Handelstagen um "
                f"mindestens {VIX_SPIKE_PCT:.0f} % ({len(spikes)}× im Zeitraum). In solchen Phasen werden "
                "Risk-on- und Carry-Positionen (z. B. AUDJPY, GBPJPY) oft schnell aufgelöst.")
 
