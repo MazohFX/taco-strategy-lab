@@ -38,6 +38,9 @@ CONFIG = {
     "equity_ret_scale_pct": 4.0,
     "equity_lookback_days": 20,
     "vix_change_lookback_days": 10,
+    "vix_history_years": 5,        # Vergleichszeitraum fuer das VIX-Niveau (Perzentil)
+    "vix_neutral_level": 19.0,     # langfristiger Durchschnitt ~19-20
+    "vix_level_scale": 6.0,
     # Surprise
     "surprise_scale": 0.5,
     "surprise_trend_days": 20,
@@ -206,15 +209,32 @@ def score_rates(pair: str, calendar: pd.DataFrame, now: pd.Timestamp,
 
 
 # ── Saeule 2: Risikostimmung ─────────────────────────────────────────────────
+def vix_regime(level: float) -> str:
+    if level < 15:
+        return "ruhig"
+    if level < 20:
+        return "normal"
+    if level < 30:
+        return "Stress"
+    return "Panik"
+
+
 def risk_appetite(vix: pd.Series, spx: pd.Series, nikkei: pd.Series) -> dict | None:
-    """Risk-on-Score in [-1, 1] (+ = Risk-on). Serien = Tagesschlusskurse."""
+    """Risk-on-Score in [-1, 1] (+ = Risk-on). Serien = Tagesschlusskurse.
+    VIX-Niveau: Perzentil ueber die letzten CONFIG['vix_history_years'] Jahre plus
+    absolute Einordnung (feste Schwellen), damit nach einem ruhigen Jahr ein normaler
+    VIX nicht schon als 'hoch' gilt."""
     parts, info = [], {}
     vix = vix.dropna() if vix is not None else pd.Series(dtype=float)
     if len(vix) >= 30:
         last = float(vix.iloc[-1])
-        pct = float((vix <= last).mean())
-        info["vix"], info["vix_pct"] = last, pct
-        parts.append(-(pct - 0.5) * 2)
+        window = vix[vix.index >= vix.index[-1] - pd.DateOffset(years=CONFIG["vix_history_years"])]
+        pct = float((window <= last).mean())
+        years = (window.index[-1] - window.index[0]).days / 365.25
+        info["vix"], info["vix_pct"], info["vix_pct_years"] = last, pct, max(1, round(years))
+        info["vix_regime"] = vix_regime(last)
+        level = -_tanh(last - CONFIG["vix_neutral_level"], CONFIG["vix_level_scale"])
+        parts.append(0.5 * (-(pct - 0.5) * 2) + 0.5 * level)
         n = CONFIG["vix_change_lookback_days"]
         if len(vix) > n:
             chg = (last / float(vix.iloc[-1 - n]) - 1) * 100
@@ -253,7 +273,7 @@ def score_risk(pair: str, appetite: dict | None, force: bool = False) -> Pillar:
     mood = "Risk-on" if raw > 0.15 else "Risk-off" if raw < -0.15 else "gemischte Stimmung"
     parts = []
     if "vix" in appetite:
-        parts.append(f"VIX {appetite['vix']:.1f} ({appetite['vix_pct'] * 100:.0f}. Perzentil 1J)")
+        parts.append(f"VIX {appetite['vix']:.1f} = {appetite['vix_regime']} ({appetite['vix_pct'] * 100:.0f}. Perzentil {appetite['vix_pct_years']}J)")
     if "spx_ret" in appetite:
         parts.append(f"S&P 500 {appetite['spx_ret']:+.1f}% / 20T")
     score = float(np.clip(sign * raw, -1, 1))
@@ -284,13 +304,15 @@ def price_symbol(code: str) -> tuple[str, bool]:
     return f"{code}=X", False
 
 
-def vix_link(price: pd.Series, vix: pd.Series) -> dict | None:
+def vix_link(price: pd.Series, vix: pd.Series, years: float | None = None) -> dict | None:
     """Gemessener Zusammenhang der letzten 12 Monate: Korrelation der Tagesrenditen
     des Paars mit den Tagesveraenderungen des VIX und typische Paarbewegung (in %)
     an Tagen, an denen der VIX um 10% steigt."""
     if price is None or vix is None or price.empty or vix.empty:
         return None
     df = pd.concat([price.rename("p"), vix.rename("v")], axis=1).dropna()
+    if years is not None and not df.empty:
+        df = df[df.index >= df.index[-1] - pd.DateOffset(years=years)]
     if len(df) < 60:
         return None
     r = df.pct_change().dropna()
@@ -481,7 +503,7 @@ def score_risk_future(name: str, appetite: dict | None, appetite_vix: dict | Non
     mood = "Risk-on" if raw > 0.15 else "Risk-off" if raw < -0.15 else "gemischte Stimmung"
     parts = []
     if "vix" in app:
-        parts.append(f"VIX {app['vix']:.1f} ({app['vix_pct'] * 100:.0f}. Perzentil 1J)")
+        parts.append(f"VIX {app['vix']:.1f} = {app['vix_regime']} ({app['vix_pct'] * 100:.0f}. Perzentil {app['vix_pct_years']}J)")
     if "spx_ret" in app:
         parts.append(f"S&P 500 {app['spx_ret']:+.1f}% / 20T")
     score = float(sign * raw)
@@ -651,8 +673,8 @@ def compute_all(deps: dict) -> dict:
     history = deps["surprise_history"](365)
     expected = deps.get("expected_rate_change")
 
-    closes = {k: fetch_daily_close(sym) for k, sym in
-              (("vix", "^VIX"), ("spx", "^GSPC"), ("nikkei", "^N225"), ("usdjpy", "JPY=X"))}
+    closes = {k: fetch_daily_close(sym, period) for k, sym, period in
+              (("vix", "^VIX", "5y"), ("spx", "^GSPC", "1y"), ("nikkei", "^N225", "1y"), ("usdjpy", "JPY=X", "1y"))}
     appetite = risk_appetite(closes["vix"], closes["spx"], closes["nikkei"])
     appetite_vix = risk_appetite(closes["vix"], None, None)
 
@@ -868,38 +890,51 @@ def _tab_risk(data: dict, pair: str, r: dict, title: str | None = None) -> None:
         st.caption("VIX gerade nicht abrufbar.")
         return
     sym, invert = price_symbol(pair)
-    price = fetch_daily_close(sym)
+    price = fetch_daily_close(sym, "5y")
     if invert and not price.empty:
         price = 1 / price
-    link = vix_link(price, vix)
+    link = vix_link(price, vix, 1)
+    link3 = vix_link(price, vix, 3)
     assumed = pil.extra.get("beta_diff") if pil.available else None
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Angenommene Empfindlichkeit", f"{assumed:+.1f}" if assumed is not None else "–",
               help="Faustregel aus der Methodik (+ = Risk-on-Paar: steigt, wenn der VIX fällt)")
+    corr_help = "Tagesrenditen des Paars vs. Tagesveränderung des VIX. Negativ = Paar fällt, wenn der VIX steigt."
+    c2.metric("Korrelation mit VIX (1J)", f"{link['corr']:+.2f}" if link else "–", help=corr_help)
+    c3.metric("Korrelation mit VIX (3J)", f"{link3['corr']:+.2f}" if link3 else "–",
+              help=corr_help + " Liegen 1J und 3J nah beieinander, ist der Zusammenhang stabil.")
+    c4.metric(f"{title} bei VIX +10 %", f"{link['move_per_10pct_vix']:+.2f} %" if link else "–",
+              help="Typische Tagesbewegung des Paars an einem Tag mit +10 % VIX (Regression, 12 Monate)")
     if link:
-        c2.metric("Gemessene Korrelation mit VIX (1J)", f"{link['corr']:+.2f}",
-                  help="Tagesrenditen des Paars vs. Tagesveränderung des VIX. Negativ = Paar fällt, wenn der VIX steigt.")
-        c3.metric(f"{title} bei VIX +10 %", f"{link['move_per_10pct_vix']:+.2f} %",
-                  help="Typische Tagesbewegung des Paars an einem Tag mit +10 % VIX (Regression, 12 Monate)")
         if assumed is not None and abs(link["corr"]) >= 0.1:
             fits = np.sign(assumed) == -np.sign(link["corr"])
             st.caption("✅ Die angenommene Richtung passt zum gemessenen Verhalten." if fits else
                        "⚠️ Gemessen verhält sich das Paar zuletzt anders als angenommen – Säule mit Vorsicht lesen.")
         elif abs(link["corr"]) < 0.1:
             st.caption("Gemessen hängt das Paar im letzten Jahr kaum am VIX (|Korrelation| < 0,1).")
-    else:
-        c2.metric("Gemessene Korrelation mit VIX (1J)", "–")
-        c3.metric(f"{title} bei VIX +10 %", "–")
+        if link3 and np.sign(link["corr"]) != np.sign(link3["corr"]) and max(abs(link["corr"]), abs(link3["corr"])) >= 0.1:
+            st.caption("↔️ Der Zusammenhang hat sich gedreht (1J und 3J mit unterschiedlichem Vorzeichen) – instabil.")
+
+    span = st.radio("Zeitraum Chart", ["1 Jahr", "3 Jahre", "5 Jahre"], horizontal=True,
+                    key=f"macro_vix_span_{pair}")
+    years = int(span.split()[0])
+    start = vix.index[-1] - pd.DateOffset(years=years)
+    v = vix[vix.index >= start]
+    pr = price[price.index >= start] if not price.empty else price
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=vix.index, y=vix.values, name="VIX", line=dict(color="#f59e0b")))
-    if not price.empty:
-        fig.add_trace(go.Scatter(x=price.index, y=price.values, name=title, yaxis="y2",
+    # Farbige Baender fuer die VIX-Zonen
+    for y0, y1, col in ((0, 15, "rgba(34,197,94,.07)"), (15, 20, "rgba(148,163,184,.05)"),
+                        (20, 30, "rgba(234,179,8,.08)"), (30, max(31, float(v.max()) + 2), "rgba(239,68,68,.09)")):
+        fig.add_hrect(y0=y0, y1=y1, fillcolor=col, line_width=0, layer="below")
+    fig.add_trace(go.Scatter(x=v.index, y=v.values, name="VIX", line=dict(color="#f59e0b")))
+    if not pr.empty:
+        fig.add_trace(go.Scatter(x=pr.index, y=pr.values, name=title, yaxis="y2",
                                  line=dict(color="#3b82f6")))
-    fig.add_hline(y=float(vix.median()), line_dash="dot", line_color="#64748b",
-                  annotation_text="VIX-Median 1J", annotation_position="top left")
-    _plotly_layout(fig, height=360, title=f"VIX vs. {title} (1 Jahr)")
-    fig.update_layout(yaxis=dict(title="VIX"), yaxis2=dict(title=title, overlaying="y", side="right", showgrid=False))
+    _plotly_layout(fig, height=360, title=f"VIX vs. {title} ({span})")
+    fig.update_layout(yaxis=dict(title="VIX", range=[max(0, float(v.min()) - 2), float(v.max()) + 2]),
+                      yaxis2=dict(title=title, overlaying="y", side="right", showgrid=False))
     st.plotly_chart(fig, use_container_width=True)
+    st.caption("Hintergrund: grün < 15 ruhig · grau 15–20 normal · gelb 20–30 Stress · rot > 30 Panik.")
 
 
 def _tab_surprise(data: dict, pair: str, r: dict) -> None:
@@ -997,7 +1032,8 @@ def _tab_method() -> None:
 {1 - CONFIG['rates_cycle_weight']:.0%} Zinsniveau-Differenz (Carry). Markterwartungen für Sitzungen weiter in der Zukunft
 (OIS-Pricing) und tägliche 2-jährige Renditen aller Länder gibt es nicht kostenlos – daher nicht enthalten.
 
-**Risikostimmung** – VIX-Perzentil (1 Jahr) und 10-Tage-Veränderung, S&P 500 und Nikkei 20-Tage-Return.
+**Risikostimmung** – VIX-Niveau (halb Perzentil über 5 Jahre, halb feste Schwellen: < 15 ruhig, 15–20 normal,
+20–30 Stress, > 30 Panik), 10-Tage-Veränderung des VIX, S&P 500 und Nikkei 20-Tage-Return.
 Wirkung je Währung (Faustregel): AUD/NZD +1, CAD +0,5, GBP +0,3, EUR 0, USD −0,5, CHF −0,7, JPY −1. Für ein Paar zählt
 Basis minus Quote (AUDJPY 2,0 = sehr risikoabhängig). Bei Forex-Paaren entfällt die Säule unter 0,5 (z. B. AUDNZD,
 EURGBP, EURCHF); bei Futures und beim DXY (−0,5) ist sie immer aktiv.

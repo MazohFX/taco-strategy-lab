@@ -185,3 +185,15 @@ def test_vix_link_and_symbols():
     assert md.price_symbol("USDJPY") == ("JPY=X", False)
     assert md.price_symbol("DXY") == ("DX-Y.NYB", False)
     assert md.price_symbol("GBPJPY") == ("GBPJPY=X", False)
+
+
+def test_vix_level_uses_long_history_and_absolute_zones():
+    # 4 Jahre mit VIX ~22, dann 1 ruhiges Jahr ~14, heute 19.7
+    idx = pd.date_range("2021-10-01", periods=5 * 252, freq="B")
+    v = np.r_[np.full(4 * 252, 22.0), np.full(252 - 1, 14.0), [19.7]]
+    vix = pd.Series(v, index=idx)
+    long = md.risk_appetite(vix, None, None)
+    short = md.risk_appetite(vix.iloc[-252:], None, None)
+    assert long["vix_regime"] == "normal"
+    assert long["vix_pct"] < 0.5 < short["vix_pct"]       # 5J: unterdurchschnittlich, 1J: "hoch"
+    assert md.vix_regime(13) == "ruhig" and md.vix_regime(25) == "Stress" and md.vix_regime(35) == "Panik"
