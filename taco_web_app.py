@@ -1068,24 +1068,49 @@ Schreibe einen kompakten deutschen Fließtext in 6-8 Sätzen mit konkreten Zahle
     # (hilft, wenn genau das primaere Modell gerade ueberlastet ist -- "503 UNAVAILABLE /
     # high demand" ist ein Kapazitaetsproblem bei Google, kein Konto-/Quota-Problem und
     # betrifft typischerweise nur ein einzelnes Modell zu einem bestimmten Zeitpunkt).
-    attempts = [
-        {"model": "gemini-3.6-flash", "config": _grounding_tool_config()},
-        {"model": "gemini-3.6-flash", "config": None},
-        {"model": "gemini-3.5-flash", "config": None},
-    ]
-    last_exc: Exception | None = None
-    for i, attempt in enumerate(attempts):
+    # Reihenfolge: 1) primaeres Modell mit Live-Suche, 2) dasselbe Modell ohne Grounding
+    # (Grounding hat oft ein eigenes, strengeres Kontingent), 3) weitere Flash-Modelle,
+    # die der Key laut API tatsaechlich anbietet (inkl. "lite" -- die haben im Free Tier
+    # meist das groesste Tageskontingent). So bricht die Analyse nicht ab, nur weil das
+    # Kontingent eines einzelnen Modells verbraucht ist.
+    preferred = ["gemini-3.6-flash", "gemini-3.5-flash"]
+    discovered: list[str] = []
+    try:
+        for m in client.models.list():
+            name = (m.name or "").removeprefix("models/")
+            actions = [a.lower() for a in (m.supported_actions or [])]
+            if "flash" in name and "generatecontent" in actions and not any(
+                x in name for x in ("tts", "image", "audio", "live", "embedding", "exp")
+            ):
+                discovered.append(name)
+    except Exception:
+        pass
+    # Neueste zuerst (Versionsnummer im Namen), "lite" ans Ende
+    discovered.sort(key=lambda n: ("lite" in n, [-int(x) for x in re.findall(r"\d+", n)[:2]]))
+    grounding = _grounding_tool_config()
+    attempts = [{"model": preferred[0], "config": grounding}]
+    for name in preferred + discovered:
+        if not any(a["model"] == name and a["config"] is None for a in attempts):
+            attempts.append({"model": name, "config": None})
+    attempts = attempts[:8]
+
+    errors: list[tuple[str, Exception]] = []
+    for attempt in attempts:
         kwargs = {"model": attempt["model"], "contents": prompt}
         if attempt["config"] is not None:
             kwargs["config"] = attempt["config"]
         try:
             response = client.models.generate_content(**kwargs)
-            return response.text.strip()
+            text = (response.text or "").strip()
+            if text:
+                return text
         except Exception as exc:
-            last_exc = exc
-            if i == len(attempts) - 1:
-                raise
-    raise last_exc
+            errors.append((attempt["model"], exc))
+    # Aussagekraeftigsten Fehler weiterreichen: Quota (429) vor "Modell nicht gefunden" (404)
+    tried = ", ".join(sorted({m for m, _ in errors}))
+    quota = [e for _, e in errors if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e)]
+    exc = quota[-1] if quota else (errors[-1][1] if errors else RuntimeError("Leere Antwort von Gemini"))
+    raise RuntimeError(f"{exc} [versuchte Modelle: {tried}]") from exc
 
 
 def render_ki_analyse(asset_label: str, symbol: str) -> None:
@@ -1147,7 +1172,17 @@ def render_ki_analyse(asset_label: str, symbol: str) -> None:
     except Exception as exc:
         msg = str(exc)
         if "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower() or "rate limit" in msg.lower():
-            st.warning(f"⏳ Gemini Rate-Limit/Quota erreicht — bitte kurz warten und erneut versuchen. Rohfehler: {msg[:300]}")
+            tried = msg[msg.find("[versuchte Modelle:"):] if "[versuchte Modelle:" in msg else ""
+            st.warning(
+                "⏳ **Gemini-Kontingent deines API-Keys ist aufgebraucht** – bei allen verfügbaren Modellen. "
+                "Das ist ein Limit von Google, kein Fehler der Seite. Im kostenlosen Tarif setzt sich das Tageskontingent "
+                "um 09:00 Uhr (Winterzeit) zurück; das Minutenlimit nach ca. 1 Minute. "
+                "Prüfen: [aistudio.google.com → Usage & Billing](https://aistudio.google.com/usage). "
+                "Steht dort bei einem Modell „limit: 0“, ist es im Gratis-Tarif nicht freigeschaltet – dann hilft nur "
+                f"Abrechnung im Google-Cloud-Projekt aktivieren. {tried}"
+            )
+            with st.expander("Technische Fehlermeldung"):
+                st.code(msg[:1500])
         else:
             st.error(f"API-Fehler: {msg[:500]}")
         return
