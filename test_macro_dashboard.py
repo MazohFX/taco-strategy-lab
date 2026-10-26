@@ -209,3 +209,13 @@ def test_vix_spikes_and_zone_advice():
     adv_jpy = md.zone_advice("JPYUSD", -0.5, "JPY")
     assert "steigt" in adv_jpy[3]["Für JPY"]
     assert "kaum" in md.zone_advice("EURGBP", 0.1, "EURGBP")[2]["Für EURGBP"]
+
+
+def test_vix_link_robust_to_bad_print():
+    idx = pd.date_range("2025-10-01", periods=250, freq="B")
+    rng = np.random.default_rng(2)
+    vret = rng.normal(0, 0.05, 250)
+    vix = pd.Series(20 * np.cumprod(1 + vret), index=idx)
+    price = pd.Series(100 * np.cumprod(1 - 0.1 * vret + rng.normal(0, 0.002, 250)), index=idx)
+    price.iloc[100] = price.iloc[100] * 5          # Fehlkurs
+    assert md.vix_link(price, vix)["corr"] < -0.6

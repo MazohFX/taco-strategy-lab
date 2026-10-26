@@ -368,7 +368,10 @@ def vix_link(price: pd.Series, vix: pd.Series, years: float | None = None) -> di
     r = r[np.isfinite(r).all(axis=1)]
     if len(r) < 50 or r["v"].std() == 0:
         return None
-    corr = float(r["p"].corr(r["v"]))
+    # Yahoo-FX hat vereinzelt Fehlkurse (Spikes) -> Ausreisser kappen und Rangkorrelation
+    # (Spearman) verwenden, sonst kann ein einziger Fehlkurs die Korrelation auf ~0 druecken.
+    r = r.clip(lower=r.quantile(0.01), upper=r.quantile(0.99), axis=1)
+    corr = float(r["p"].corr(r["v"], method="spearman"))
     beta = float(np.cov(r["p"], r["v"])[0, 1] / r["v"].var())
     return {"corr": corr, "move_per_10pct_vix": beta * 10, "n": int(len(r))}
 
@@ -687,9 +690,11 @@ def fetch_daily_close(symbol: str, period: str = "1y") -> pd.Series:
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = [c[0] for c in data.columns]
         out = data["Close"].dropna()
+        out = out[out > 0]
         idx = pd.to_datetime(out.index)
-        out.index = idx.tz_localize(None) if idx.tz is not None else idx
-        return out
+        idx = idx.tz_localize(None) if idx.tz is not None else idx
+        out.index = idx.normalize()          # nur Datum -> FX- und VIX-Tage passen zusammen
+        return out[~out.index.duplicated(keep="last")]
 
     try:
         import yfinance as yf
