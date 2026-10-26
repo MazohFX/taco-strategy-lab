@@ -219,3 +219,12 @@ def test_vix_link_robust_to_bad_print():
     price = pd.Series(100 * np.cumprod(1 - 0.1 * vret + rng.normal(0, 0.002, 250)), index=idx)
     price.iloc[100] = price.iloc[100] * 5          # Fehlkurs
     assert md.vix_link(price, vix)["corr"] < -0.6
+
+
+def test_trading_dates_align_fx_and_vix():
+    fx = pd.DatetimeIndex(["2026-07-06 00:00", "2026-07-07 00:00"]).tz_localize("Europe/London")
+    vix = pd.DatetimeIndex(["2026-07-06 00:00", "2026-07-07 00:00"]).tz_localize("America/New_York")
+    utc_fx = fx.tz_convert("UTC")                       # 23:00 des Vortags
+    want = pd.DatetimeIndex(["2026-07-06", "2026-07-07"])
+    for idx in (fx, vix, utc_fx, utc_fx.tz_localize(None)):
+        assert (md._trading_dates(idx) == want).all()

@@ -676,6 +676,18 @@ def _cache(ttl: int):
     return st.cache_data(ttl=ttl, show_spinner=False)
 
 
+def _trading_dates(index) -> pd.DatetimeIndex:
+    """Handelstag je Tageskerze, unabhaengig von der Zeitzone, in der Yahoo stempelt.
+    FX-Kerzen beginnen um 00:00 London (= 23:00 UTC des Vortags im Sommer), VIX um
+    00:00 New York (= 04:00/05:00 UTC). Nach UTC umrechnen und auf den naechsten
+    Kalendertag runden -> beide landen auf demselben Datum. Ohne das waren FX und
+    VIX um einen Tag versetzt und die Korrelation lag faelschlich bei ~0."""
+    idx = pd.to_datetime(index)
+    if idx.tz is not None:
+        idx = idx.tz_convert("UTC").tz_localize(None)
+    return (idx + pd.Timedelta(hours=12)).normalize()
+
+
 @_cache(60 * 60)
 def fetch_daily_close(symbol: str, period: str = "1y") -> pd.Series:
     """Tagesschlusskurse. Mit explizitem Startdatum statt period=..., weil Yahoo bei
@@ -691,9 +703,7 @@ def fetch_daily_close(symbol: str, period: str = "1y") -> pd.Series:
             data.columns = [c[0] for c in data.columns]
         out = data["Close"].dropna()
         out = out[out > 0]
-        idx = pd.to_datetime(out.index)
-        idx = idx.tz_localize(None) if idx.tz is not None else idx
-        out.index = idx.normalize()          # nur Datum -> FX- und VIX-Tage passen zusammen
+        out.index = _trading_dates(out.index)
         return out[~out.index.duplicated(keep="last")]
 
     try:
