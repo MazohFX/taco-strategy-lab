@@ -235,3 +235,8 @@ def test_fx_dates_shift_back_one_trading_day():
     # Fr 23.10. 00:00 London -> Do 22.10.; Mo 26.10. 00:00 London (GMT) -> Fr 23.10.; Intraday bleibt Mo
     got = md._fx_trading_dates(idx)
     assert list(got.strftime("%Y-%m-%d")) == ["2026-10-22", "2026-10-23", "2026-10-26"]
+
+
+def test_fx_dates_naive_index_also_shifted():
+    idx = pd.DatetimeIndex(["2026-07-07", "2026-07-08", "2026-07-13"])      # Di, Mi, Mo
+    assert list(md._fx_trading_dates(idx).strftime("%Y-%m-%d")) == ["2026-07-06", "2026-07-07", "2026-07-10"]

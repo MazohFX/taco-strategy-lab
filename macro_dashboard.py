@@ -685,10 +685,12 @@ def _fx_trading_dates(index) -> pd.DatetimeIndex:
     (Stempel != Mitternacht) bleibt auf ihrem Tag."""
     idx = pd.to_datetime(index)
     if idx.tz is None:
-        idx = idx.tz_localize("UTC")
-    london = idx.tz_convert("Europe/London")
-    days = london.tz_localize(None).normalize()
-    at_midnight = (london.hour == 0) & (london.minute == 0)
+        # yfinance liefert Tageskerzen oft schon ohne Zeitzone mit 00:00 = London-Datum
+        local = idx
+    else:
+        local = idx.tz_convert("Europe/London").tz_localize(None)
+    days = local.normalize()
+    at_midnight = (local.hour == 0) & (local.minute == 0)
     shifted = days.where(~at_midnight, days - pd.offsets.BDay(1))
     return pd.DatetimeIndex(shifted)
 
