@@ -228,3 +228,10 @@ def test_trading_dates_align_fx_and_vix():
     want = pd.DatetimeIndex(["2026-07-06", "2026-07-07"])
     for idx in (fx, vix, utc_fx, utc_fx.tz_localize(None)):
         assert (md._trading_dates(idx) == want).all()
+
+
+def test_fx_dates_shift_back_one_trading_day():
+    idx = pd.DatetimeIndex(["2026-10-22 23:00", "2026-10-26 00:00", "2026-10-26 11:57"]).tz_localize("UTC")
+    # Fr 23.10. 00:00 London -> Do 22.10.; Mo 26.10. 00:00 London (GMT) -> Fr 23.10.; Intraday bleibt Mo
+    got = md._fx_trading_dates(idx)
+    assert list(got.strftime("%Y-%m-%d")) == ["2026-10-22", "2026-10-23", "2026-10-26"]

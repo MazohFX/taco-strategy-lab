@@ -676,6 +676,22 @@ def _cache(ttl: int):
     return st.cache_data(ttl=ttl, show_spinner=False)
 
 
+def _fx_trading_dates(index) -> pd.DatetimeIndex:
+    """Yahoo-FX ('...=X'): die Tageskerze mit Stempel 00:00 London (Tag D) enthaelt den
+    Schlusskurs des VORHERIGEN Handelstags (nachgemessen: Korrelation mit dem VIX ist
+    nur bei Verschiebung um einen Tag realistisch, z.B. AUDJPY -0.38 statt -0.06).
+    Diese Kerzen daher einen Handelstag zurueckdatieren; die laufende Intraday-Kerze
+    (Stempel != Mitternacht) bleibt auf ihrem Tag."""
+    idx = pd.to_datetime(index)
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
+    london = idx.tz_convert("Europe/London")
+    days = london.tz_localize(None).normalize()
+    at_midnight = (london.hour == 0) & (london.minute == 0)
+    shifted = days.where(~at_midnight, days - pd.offsets.BDay(1))
+    return pd.DatetimeIndex(shifted)
+
+
 def _trading_dates(index) -> pd.DatetimeIndex:
     """Handelstag je Tageskerze, unabhaengig von der Zeitzone, in der Yahoo stempelt.
     FX-Kerzen beginnen um 00:00 London (= 23:00 UTC des Vortags im Sommer), VIX um
@@ -697,13 +713,14 @@ def fetch_daily_close(symbol: str, period: str = "1y") -> pd.Series:
     start = (pd.Timestamp.today() - pd.DateOffset(years=years, days=7)).strftime("%Y-%m-%d")
 
     def _clean(data: pd.DataFrame) -> pd.Series:
+        is_fx = symbol.endswith("=X")
         if data is None or data.empty:
             return pd.Series(dtype=float)
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = [c[0] for c in data.columns]
         out = data["Close"].dropna()
         out = out[out > 0]
-        out.index = _trading_dates(out.index)
+        out.index = _fx_trading_dates(out.index) if is_fx else _trading_dates(out.index)
         return out[~out.index.duplicated(keep="last")]
 
     try:
