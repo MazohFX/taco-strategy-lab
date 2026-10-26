@@ -209,6 +209,55 @@ def score_rates(pair: str, calendar: pd.DataFrame, now: pd.Timestamp,
 
 
 # ── Saeule 2: Risikostimmung ─────────────────────────────────────────────────
+VIX_ZONES = [
+    # (von, bis, Name, Farbe Band, Farbe Linie/Text, Kurzhinweis)
+    (0, 15, "Ruhig", "rgba(34,197,94,.16)", "#4ade80", "Risk-on · Carry läuft"),
+    (15, 20, "Normal", "rgba(148,163,184,.10)", "#cbd5e1", "Normaler Markt"),
+    (20, 30, "Stress", "rgba(234,179,8,.18)", "#facc15", "Vorsicht · Risiko reduzieren"),
+    (30, 200, "Panik", "rgba(239,68,68,.22)", "#f87171", "Höchste Vorsicht · Carry-Unwind"),
+]
+VIX_SPIKE_DAYS = 5
+VIX_SPIKE_PCT = 30.0   # VIX-Anstieg in 5 Handelstagen, ab dem eine Warnphase markiert wird
+
+
+def vix_spike_periods(vix: pd.Series, days: int = VIX_SPIKE_DAYS, pct: float = VIX_SPIKE_PCT) -> list[tuple]:
+    """Zeitraeume, in denen der VIX innerhalb von `days` Handelstagen um >= pct % gestiegen
+    ist (zusammengefasst). Genau dann werden Risk-on-/Carry-Positionen typischerweise
+    schnell aufgeloest."""
+    if vix is None or len(vix) <= days:
+        return []
+    chg = (vix / vix.shift(days) - 1) * 100
+    hits = chg[chg >= pct].index
+    periods: list[list] = []
+    for t in hits:
+        start = vix.index[max(0, vix.index.get_loc(t) - days)]
+        if periods and start <= periods[-1][1] + pd.Timedelta(days=3):
+            periods[-1][1] = t
+            periods[-1][2] = max(periods[-1][2], float(chg.loc[t]))
+        else:
+            periods.append([start, t, float(chg.loc[t])])
+    return [tuple(p) for p in periods]
+
+
+def zone_advice(pair: str, diff: float | None, title: str) -> list[dict]:
+    """Was jede VIX-Zone fuer genau dieses Paar bedeutet (Faustregel)."""
+    rows = []
+    for lo, hi, name, _, _, short in VIX_ZONES:
+        rng = f"< {hi}" if lo == 0 else (f"> {lo}" if hi >= 200 else f"{lo}–{hi}")
+        if diff is None or abs(diff) < 0.3:
+            effect = "kaum direkter Einfluss auf dieses Paar"
+        elif name in ("Ruhig", "Normal"):
+            effect = (f"Rückenwind für {title} steigend" if diff > 0 else f"eher Gegenwind für {title}") + \
+                      (" (Carry/Trend laufen meist ruhig)" if name == "Ruhig" else "")
+        elif name == "Stress":
+            effect = f"Druck auf {title} {'fallend' if diff > 0 else 'steigend'} – Positionsgröße/Stopps prüfen"
+        else:
+            effect = (f"{title} {'fällt' if diff > 0 else 'steigt'} oft schnell und stark – "
+                      f"{'Longs' if diff > 0 else 'Shorts'} absichern/meiden")
+        rows.append({"Zone": f"{name} ({rng})", "Bedeutet allgemein": short, f"Für {title}": effect})
+    return rows
+
+
 def vix_regime(level: float) -> str:
     if level < 15:
         return "ruhig"
@@ -626,15 +675,29 @@ def _cache(ttl: int):
 
 @_cache(60 * 60)
 def fetch_daily_close(symbol: str, period: str = "1y") -> pd.Series:
-    try:
-        import yfinance as yf
-        data = yf.download(symbol, period=period, interval="1d", progress=False, auto_adjust=False)
-        if data.empty:
+    """Tagesschlusskurse. Mit explizitem Startdatum statt period=..., weil Yahoo bei
+    period='5y' teils nur gut ein Jahr liefert; bei zu kurzer Antwort zweiter Versuch
+    ueber Ticker.history."""
+    years = int(period.rstrip("y")) if period.endswith("y") else 1
+    start = (pd.Timestamp.today() - pd.DateOffset(years=years, days=7)).strftime("%Y-%m-%d")
+
+    def _clean(data: pd.DataFrame) -> pd.Series:
+        if data is None or data.empty:
             return pd.Series(dtype=float)
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = [c[0] for c in data.columns]
-        s = data["Close"].dropna()
-        s.index = pd.to_datetime(s.index).tz_localize(None)
+        out = data["Close"].dropna()
+        idx = pd.to_datetime(out.index)
+        out.index = idx.tz_localize(None) if idx.tz is not None else idx
+        return out
+
+    try:
+        import yfinance as yf
+        s = _clean(yf.download(symbol, start=start, interval="1d", progress=False, auto_adjust=False))
+        if s.empty or (s.index[-1] - s.index[0]).days < years * 365 * 0.8:
+            alt = _clean(yf.Ticker(symbol).history(start=start, interval="1d", auto_adjust=False))
+            if len(alt) > len(s):
+                s = alt
         return s
     except Exception:
         return pd.Series(dtype=float)
@@ -921,20 +984,58 @@ def _tab_risk(data: dict, pair: str, r: dict, title: str | None = None) -> None:
     start = vix.index[-1] - pd.DateOffset(years=years)
     v = vix[vix.index >= start]
     pr = price[price.index >= start] if not price.empty else price
+    now_level = float(vix.iloc[-1])
+    cur_zone = next(z for z in VIX_ZONES if z[0] <= now_level < z[1])
+    y_top = max(32.0, float(v.max()) + 3)
+
     fig = go.Figure()
-    # Farbige Baender fuer die VIX-Zonen
-    for y0, y1, col in ((0, 15, "rgba(34,197,94,.07)"), (15, 20, "rgba(148,163,184,.05)"),
-                        (20, 30, "rgba(234,179,8,.08)"), (30, max(31, float(v.max()) + 2), "rgba(239,68,68,.09)")):
-        fig.add_hrect(y0=y0, y1=y1, fillcolor=col, line_width=0, layer="below")
-    fig.add_trace(go.Scatter(x=v.index, y=v.values, name="VIX", line=dict(color="#f59e0b")))
+    for lo, hi, name, band, line, short in VIX_ZONES:
+        top = min(hi, y_top)
+        if lo >= y_top:
+            continue
+        fig.add_hrect(y0=lo, y1=top, fillcolor=band, line_width=0, layer="below")
+        fig.add_annotation(x=0.005, xref="paper", y=(lo + top) / 2 if hi < 200 else min(lo + 4, top - 1),
+                           text=f"<b>{name.upper()}</b> · {short}", showarrow=False, xanchor="left",
+                           font=dict(size=11, color=line), bgcolor="rgba(15,23,36,.65)")
+        if lo > 0:
+            fig.add_hline(y=lo, line_dash="dash", line_width=1, line_color=line, opacity=0.6)
+    # Warnphasen: schnelle VIX-Spruenge
+    spikes = vix_spike_periods(v)
+    for t0, t1, jump in spikes:
+        fig.add_vrect(x0=t0, x1=t1 + pd.Timedelta(days=1), fillcolor="rgba(239,68,68,.28)", line_width=0,
+                      layer="below")
+        fig.add_annotation(x=t1, y=y_top - 1, text=f"⚠ +{jump:.0f}%", showarrow=False,
+                           font=dict(size=10, color="#fca5a5"))
+    fig.add_trace(go.Scatter(x=v.index, y=v.values, name="VIX", line=dict(color="#f59e0b", width=2)))
     if not pr.empty:
         fig.add_trace(go.Scatter(x=pr.index, y=pr.values, name=title, yaxis="y2",
-                                 line=dict(color="#3b82f6")))
-    _plotly_layout(fig, height=360, title=f"VIX vs. {title} ({span})")
-    fig.update_layout(yaxis=dict(title="VIX", range=[max(0, float(v.min()) - 2), float(v.max()) + 2]),
+                                 line=dict(color="#3b82f6", width=1.5)))
+    fig.add_hline(y=now_level, line_color=cur_zone[4], line_width=2,
+                  annotation_text=f"Heute {now_level:.1f} ({cur_zone[2]})", annotation_position="top right",
+                  annotation_font=dict(color=cur_zone[4], size=12))
+    _plotly_layout(fig, height=420, title=f"VIX vs. {title} ({span})")
+    fig.update_layout(yaxis=dict(title="VIX", range=[max(0, float(v.min()) - 2), y_top]),
                       yaxis2=dict(title=title, overlaying="y", side="right", showgrid=False))
     st.plotly_chart(fig, use_container_width=True)
-    st.caption("Hintergrund: grün < 15 ruhig · grau 15–20 normal · gelb 20–30 Stress · rot > 30 Panik.")
+
+    have_years = (v.index[-1] - v.index[0]).days / 365.25 if len(v) > 1 else 0
+    if have_years < years * 0.8:
+        st.caption(f"Hinweis: Yahoo hat nur Daten ab {v.index[0]:%d.%m.%Y} geliefert.")
+    st.caption(f"Rot hinterlegt = Warnphase: VIX stieg innerhalb von {VIX_SPIKE_DAYS} Handelstagen um "
+               f"mindestens {VIX_SPIKE_PCT:.0f} % ({len(spikes)}× im Zeitraum). In solchen Phasen werden "
+               "Risk-on- und Carry-Positionen (z. B. AUDJPY, GBPJPY) oft schnell aufgelöst.")
+
+    st.markdown(f"**Was die Zonen für {title} bedeuten** – aktuell: "
+                f"<span style='color:{cur_zone[4]};font-weight:700'>{cur_zone[2]} (VIX {now_level:.1f})</span>",
+                unsafe_allow_html=True)
+    adv = pd.DataFrame(zone_advice(pair, assumed, title))
+    cur_label = cur_zone[2]
+    st.dataframe(
+        adv.style.apply(lambda row: ["background-color: rgba(250,204,21,.18); font-weight:600"
+                                     if row["Zone"].startswith(cur_label) else "" for _ in row], axis=1),
+        use_container_width=True, hide_index=True,
+    )
+    st.caption("Faustregeln, keine Handelsempfehlung.")
 
 
 def _tab_surprise(data: dict, pair: str, r: dict) -> None:

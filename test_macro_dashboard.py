@@ -197,3 +197,15 @@ def test_vix_level_uses_long_history_and_absolute_zones():
     assert long["vix_regime"] == "normal"
     assert long["vix_pct"] < 0.5 < short["vix_pct"]       # 5J: unterdurchschnittlich, 1J: "hoch"
     assert md.vix_regime(13) == "ruhig" and md.vix_regime(25) == "Stress" and md.vix_regime(35) == "Panik"
+
+
+def test_vix_spikes_and_zone_advice():
+    idx = pd.date_range("2026-01-01", periods=60, freq="B")
+    v = np.full(60, 15.0); v[30:35] = [17, 19, 22, 26, 30]   # +100% in 5 Tagen
+    spikes = md.vix_spike_periods(pd.Series(v, index=idx))
+    assert len(spikes) == 1 and spikes[0][2] >= 30
+    adv = md.zone_advice("AUDUSD", 1.5, "AUD")
+    assert len(adv) == 4 and "fällt" in adv[3]["Für AUD"]
+    adv_jpy = md.zone_advice("JPYUSD", -0.5, "JPY")
+    assert "steigt" in adv_jpy[3]["Für JPY"]
+    assert "kaum" in md.zone_advice("EURGBP", 0.1, "EURGBP")[2]["Für EURGBP"]
