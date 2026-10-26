@@ -61,8 +61,15 @@ CONFIG = {
     "mt5_stale_days": 3,
 }
 
-PAIRS = ["GBPJPY", "EURJPY", "AUDJPY", "NZDJPY", "USDJPY",
-         "EURUSD", "GBPUSD", "AUDUSD", "USDCHF", "USDCAD"]
+# Alle 28 Forex-Paare der 8 Hauptwaehrungen in Marktkonvention (EUR > GBP > AUD >
+# NZD > USD > CAD > CHF > JPY bestimmt, welche Waehrung Basis ist).
+_PAIR_ORDER = ["EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF", "JPY"]
+PAIRS = [a + b for i, a in enumerate(_PAIR_ORDER) for b in _PAIR_ORDER[i + 1:]]
+# Waehrungs-Futures (CME): notieren die Waehrung in USD, z.B. 6S = CHF/USD.
+# DXY = US-Dollar-Index (USD gegen Korb), eigene Logik in FUTURES.
+CURRENCY_FUTURES = {"CHF": "CHFUSD", "EUR": "EURUSD", "AUD": "AUDUSD",
+                    "NZD": "NZDUSD", "CAD": "CADUSD", "GBP": "GBPUSD"}
+FUTURE_LIST = ["CHF", "EUR", "DXY", "AUD", "NZD", "CAD", "GBP"]
 CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF"]
 SAFE_HAVENS = {"JPY", "CHF"}
 
@@ -89,7 +96,8 @@ FUTURES = {
 # Fuer Aktienindizes nur den VIX als Risiko-Input nehmen (S&P-/Nikkei-Returns
 # waeren sonst der eigene Kurs).
 EQUITY_INDICES = {"Nasdaq 100", "S&P 500"}
-FUTURE_SYMBOLS = {"Gold": "GC=F", "DXY": "DX-Y.NYB", "Nasdaq 100": "^NDX", "S&P 500": "^GSPC"}
+FUTURE_SYMBOLS = {"Gold": "GC=F", "DXY": "DX-Y.NYB", "Nasdaq 100": "^NDX", "S&P 500": "^GSPC",
+                  "EUR": "6E=F", "GBP": "6B=F", "AUD": "6A=F", "NZD": "6N=F", "CAD": "6C=F", "CHF": "6S=F"}
 CURRENCY_COT_LABELS = {
     "USD": "DXY", "EUR": "EURO Futures", "GBP": "Pfund Futures", "JPY": "YEN Futures",
     "AUD": "AUD Futures", "NZD": "NZD Futures", "CAD": "CANADA Futures", "CHF": "CHF Futures",
@@ -602,8 +610,19 @@ def compute_all(deps: dict) -> dict:
             "cot": score_cot(pair, cot_stats),
             "event": score_event(pair, calendar, now, closes["usdjpy"]),
         }
-        results[pair] = {"pillars": pillars, "verdict": overall(pillars, pair)}
-    for name, spec in FUTURES.items():
+        results[pair] = {"pillars": pillars, "verdict": overall(pillars, pair), "code": pair}
+    for cur, code in CURRENCY_FUTURES.items():
+        pillars = {
+            "zinsen": score_rates(code, calendar, now, expected),
+            "risiko": score_risk(code, appetite),
+            "surprise": score_surprise(code, deps["surprise_index"], history),
+            # COT des Futures selbst (nicht Waehrung minus USD-Index)
+            "cot": score_cot_future(cur, cot_stats(cur)),
+            "event": score_event(code, calendar, now, closes["usdjpy"]),
+        }
+        results[cur] = {"pillars": pillars, "verdict": overall(pillars, code), "code": code}
+    for name in [n for n in FUTURE_LIST if n in FUTURES]:
+        spec = FUTURES[name]
         pillars = {
             "zinsen": score_rates_future(name, calendar, now, expected),
             "risiko": score_risk_future(name, appetite, appetite_vix),
@@ -611,7 +630,7 @@ def compute_all(deps: dict) -> dict:
             "cot": score_cot_future(name, cot_by_label(spec["cot"])),
             "event": score_event_future(name, calendar, now),
         }
-        results[name] = {"pillars": pillars, "verdict": overall(pillars, name)}
+        results[name] = {"pillars": pillars, "verdict": overall(pillars, name), "code": name}
     return {"now": now, "calendar": calendar, "history": history, "closes": closes,
             "appetite": appetite, "results": results}
 
@@ -680,10 +699,11 @@ def _render_overview(data: dict, names: list[str], index_label: str = "Paar") ->
             "Daten": v["quality"],
         })
     df = pd.DataFrame(rows).set_index(index_label)
-    st.dataframe(df.style.map(_cell_style), use_container_width=True, height=(len(df) + 1) * 35 + 3)
+    st.dataframe(df.style.map(_cell_style), use_container_width=True, height=(min(len(df), 12) + 1) * 35 + 3)
 
 
-def _render_verdict(pair: str, r: dict) -> None:
+def _render_verdict(title: str, r: dict, pair: str | None = None) -> None:
+    pair = pair or title
     p, v = r["pillars"], r["verdict"]
     ev = p["event"].extra.get("level", "–")
     color = _LABEL_COL.get(v["label"], _COL["neu"])
@@ -692,7 +712,7 @@ def _render_verdict(pair: str, r: dict) -> None:
         f'<div style="background:{_COL["bg"]};border:1px solid {color};border-left:6px solid {color};'
         f'border-radius:10px;padding:16px 20px;margin:6px 0 14px 0">'
         f'<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:14px">'
-        f'<span style="font-size:1.6rem;font-weight:800;color:{_COL["text"]}">{pair}</span>'
+        f'<span style="font-size:1.6rem;font-weight:800;color:{_COL["text"]}">{title}</span>'
         f'<span style="font-size:1.6rem;font-weight:800;color:{color}">{v["label"]}</span>'
         f'<span style="color:{_COL["muted"]}">Score {score_txt} · Daten {v["quality"]} Säulen · '
         f'Event-Risiko <b style="color:{_EVENT_COL.get(ev, _COL["neu"])}">{ev}</b></span></div>'
@@ -795,7 +815,7 @@ def _tab_cot(pair: str, r: dict) -> None:
     st.write(pil.reason)
     if not pil.available:
         return
-    if pair in FUTURES:
+    if "single" in pil.extra:
         s = pil.extra["single"]
         h = s.get("history")
         if h is not None and not h.empty:
@@ -870,11 +890,9 @@ Basis minus Quote.
 **Positionierung (COT)** – Netto-Position der Non-Commercials in % des Open Interest. Score = Veränderung über
 4 Wochen im Verhältnis zur üblichen Schwankung. Über 90. bzw. unter 10. Perzentil (3 Jahre) = überfüllt, Score wird halbiert.
 
-**Futures & Indizes** (Gold, DXY, Nasdaq 100, S&P 500) – Zinsen: Fed-Zinszyklus relativ zum Durchschnitt der
-anderen Notenbanken (hawkishe Fed = gut für DXY, schlecht für Gold und Aktien). Überraschungen: US-Surprise-Index
-(gute US-Daten = gut für DXY und Aktien, schlecht für Gold). Risiko: Risk-on gut für Aktien, schlecht für Gold
-(Aktienindizes nur über den VIX, sonst bewertet der Index sich selbst); für den DXY entfällt die Säule.
-COT: eigener Future-Markt.
+**Futures** – Währungs-Futures (CHF, EUR, AUD, NZD, CAD, GBP) werden wie das Paar gegen den USD bewertet
+(z. B. CHF-Future = CHF/USD), nur die COT-Säule nutzt die Positionierung im Future selbst. DXY: Fed-Zinszyklus relativ
+zum Durchschnitt der anderen Notenbanken und US-Surprise-Index; COT aus dem Dollar-Index-Future.
 
 **Event-Risiko** – fließt nicht in den Score. Hoch = Notenbank-Sitzung in ≤ 7 Tagen oder hohes Interventionsrisiko.
 JPY-Interventionsrisiko ist eine Faustregel (USDJPY ≥ {CONFIG['intervention_level_mid']:.0f} oder ≥ {CONFIG['intervention_move_mid_pct']:.0f}% Anstieg in 20 Tagen).
@@ -918,15 +936,21 @@ def render_macro_dashboard(deps: dict) -> None:
     if stale_msg:
         st.warning(stale_msg)
 
-    st.markdown("#### Übersicht Währungspaare")
-    _render_overview(data, PAIRS, "Paar")
-    st.markdown("#### Übersicht Futures & Indizes")
-    _render_overview(data, list(FUTURES), "Markt")
+    mode = st.radio("Ansicht", ["Forex-Paare", "Futures"], horizontal=True, key="macro_dash_mode")
+    if mode == "Forex-Paare":
+        choices, default, label = PAIRS, "GBPJPY", "Paar"
+        st.markdown("#### Übersicht Forex-Paare (alle 28)")
+    else:
+        choices, default, label = FUTURE_LIST, "EUR", "Future"
+        st.markdown("#### Übersicht Futures")
+        st.caption("Währungs-Futures notieren in USD (z. B. CHF-Future = CHF gegen USD, LONG = CHF steigt). "
+                   "DXY = US-Dollar gegen einen Währungskorb.")
+    _render_overview(data, choices, label)
 
-    choices = PAIRS + list(FUTURES)
-    pair = st.selectbox("Markt im Detail", choices, index=choices.index("GBPJPY"), key="macro_dash_pair")
-    r = data["results"][pair]
-    _render_verdict(pair, r)
+    name = st.selectbox("Markt im Detail", choices, index=choices.index(default), key=f"macro_dash_pick_{label}")
+    r = data["results"][name]
+    pair = r.get("code", name)
+    _render_verdict(name, r, pair)
 
     tabs = st.tabs(["Zinsen & Notenbanken", "Risikostimmung", "Daten-Überraschungen",
                     "Positionierung (COT)", "Kalender 4 Wochen", "KI-Einschätzung", "Methodik"])
@@ -946,6 +970,6 @@ def render_macro_dashboard(deps: dict) -> None:
             st.caption("KI-Analyse nicht verfügbar.")
         else:
             st.caption("Qualitative Einschätzung inkl. Geopolitik über Gemini + Google-Suche. Fließt nicht in den Score.")
-            render_ki(pair, FUTURE_SYMBOLS.get(pair, f"{pair}=X"))
+            render_ki(name, FUTURE_SYMBOLS.get(name, f"{name}=X"))
     with tabs[6]:
         _tab_method()

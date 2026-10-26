@@ -157,3 +157,10 @@ def test_futures_rates_relative_to_others():
     cal = pd.DataFrame(rows)
     assert md.score_rates_future("DXY", cal, NOW).score > 0.3
     assert md.score_rates_future("Gold", cal, NOW).score < -0.3
+
+
+def test_universe():
+    assert len(md.PAIRS) == 28 and len(set(md.PAIRS)) == 28
+    for p in ("AUDNZD", "CADCHF", "GBPJPY", "EURUSD", "USDJPY", "CHFJPY"):
+        assert p in md.PAIRS
+    assert set(md.FUTURE_LIST) == {"CHF", "EUR", "DXY", "AUD", "NZD", "CAD", "GBP"}
