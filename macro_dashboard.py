@@ -809,9 +809,17 @@ def _render_verdict(title: str, r: dict, pair: str | None = None) -> None:
         col.markdown(html, unsafe_allow_html=True)
 
 
-def _plotly_layout(fig, height=320, **kw):
-    fig.update_layout(template="plotly_dark", height=height, margin=dict(t=30, b=20, l=50, r=20),
-                      legend=dict(orientation="h", yanchor="bottom", y=1.02), **kw)
+def _plotly_layout(fig, height=320, title: str | None = None, **kw):
+    # Titel links oben in eigener Zeile, Legende rechts daneben -- beide oberhalb der
+    # Plotflaeche, damit nichts die Linien oder die Plotly-Werkzeugleiste verdeckt.
+    layout = dict(template="plotly_dark", height=height + (40 if title else 0),
+                  margin=dict(t=80 if title else 40, b=30, l=60, r=60),
+                  legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                              bgcolor="rgba(0,0,0,0)", font=dict(size=11)))
+    if title:
+        layout["title"] = dict(text=title, x=0, xanchor="left", y=0.98, yanchor="top",
+                               font=dict(size=14))
+    fig.update_layout(**layout, **kw)
     return fig
 
 
