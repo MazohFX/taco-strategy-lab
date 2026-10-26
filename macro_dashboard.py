@@ -68,8 +68,9 @@ PAIRS = [a + b for i, a in enumerate(_PAIR_ORDER) for b in _PAIR_ORDER[i + 1:]]
 # Waehrungs-Futures (CME): notieren die Waehrung in USD, z.B. 6S = CHF/USD.
 # DXY = US-Dollar-Index (USD gegen Korb), eigene Logik in FUTURES.
 CURRENCY_FUTURES = {"CHF": "CHFUSD", "EUR": "EURUSD", "AUD": "AUDUSD",
-                    "NZD": "NZDUSD", "CAD": "CADUSD", "GBP": "GBPUSD"}
-FUTURE_LIST = ["CHF", "EUR", "DXY", "AUD", "NZD", "CAD", "GBP"]
+                    "NZD": "NZDUSD", "CAD": "CADUSD", "GBP": "GBPUSD",
+                    "JPY": "JPYUSD"}
+FUTURE_LIST = ["CHF", "EUR", "DXY", "AUD", "NZD", "CAD", "GBP", "JPY"]
 CURRENCIES = ["USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF"]
 SAFE_HAVENS = {"JPY", "CHF"}
 # Risiko-Empfindlichkeit je Waehrung (+ = Risk-on-Waehrung, - = sicherer Hafen).
@@ -102,7 +103,7 @@ FUTURES = {
 # waeren sonst der eigene Kurs).
 EQUITY_INDICES = {"Nasdaq 100", "S&P 500"}
 FUTURE_SYMBOLS = {"Gold": "GC=F", "DXY": "DX-Y.NYB", "Nasdaq 100": "^NDX", "S&P 500": "^GSPC",
-                  "EUR": "6E=F", "GBP": "6B=F", "AUD": "6A=F", "NZD": "6N=F", "CAD": "6C=F", "CHF": "6S=F"}
+                  "EUR": "6E=F", "GBP": "6B=F", "AUD": "6A=F", "NZD": "6N=F", "CAD": "6C=F", "CHF": "6S=F", "JPY": "6J=F"}
 # Exakte, aktuell gepflegte CFTC-Marktnamen (geprueft Okt. 2026). Die Volltextsuche
 # ueber COT_WATCHLIST trifft fuer NZD und DXY die alten, 2022 eingestellten Namen
 # ("NEW ZEALAND DOLLAR", "U.S. DOLLAR INDEX") -> dort gab es keine aktuellen Daten.
@@ -920,7 +921,7 @@ Basis minus Quote.
 **Positionierung (COT)** – Netto-Position der Non-Commercials in % des Open Interest. Score = Veränderung über
 4 Wochen im Verhältnis zur üblichen Schwankung. Über 90. bzw. unter 10. Perzentil (3 Jahre) = überfüllt, Score wird halbiert.
 
-**Futures** – Währungs-Futures (CHF, EUR, AUD, NZD, CAD, GBP) werden wie das Paar gegen den USD bewertet
+**Futures** – Währungs-Futures (CHF, EUR, AUD, NZD, CAD, GBP, JPY) werden wie das Paar gegen den USD bewertet
 (z. B. CHF-Future = CHF/USD), nur die COT-Säule nutzt die Positionierung im Future selbst. DXY: Fed-Zinszyklus relativ
 zum Durchschnitt der anderen Notenbanken und US-Surprise-Index; COT aus dem Dollar-Index-Future.
 

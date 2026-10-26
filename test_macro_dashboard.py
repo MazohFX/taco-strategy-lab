@@ -169,4 +169,4 @@ def test_universe():
     assert len(md.PAIRS) == 28 and len(set(md.PAIRS)) == 28
     for p in ("AUDNZD", "CADCHF", "GBPJPY", "EURUSD", "USDJPY", "CHFJPY"):
         assert p in md.PAIRS
-    assert set(md.FUTURE_LIST) == {"CHF", "EUR", "DXY", "AUD", "NZD", "CAD", "GBP"}
+    assert set(md.FUTURE_LIST) == {"CHF", "EUR", "DXY", "AUD", "NZD", "CAD", "GBP", "JPY"}
