@@ -7,3 +7,6 @@ scipy
 requests
 lxml
 google-genai
+sqlalchemy
+pillow
+psycopg2-binary
