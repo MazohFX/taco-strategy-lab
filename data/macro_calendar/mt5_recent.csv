@@ -1,8 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-278184,124010022,gdp-qq,CAD,CA,Bruttoinlandsprodukt q/q,Medium,percent,2026-08-28 12:30,2026-04-01,0.8,0.0,0.0,0.1,positive
-278305,124010036,gdp-annualized-qq,CAD,CA,BIP Annualisiert q/q,Medium,percent,2026-08-28 12:30,2026-04-01,3.3,0.7,-0.1,0.3,positive
-306660,124010021,gdp-mm,CAD,CA,BIP m/m,Medium,percent,2026-08-28 12:30,2026-06-01,0.3,0.1,0.3,,positive
-306667,124010035,gdp-yy,CAD,CA,Bruttoinlandsprodukt y/y,Medium,percent,2026-08-28 12:30,2026-06-01,2.0,1.2,1.7,1.6,positive
 268712,840210001,michigan-consumer-sentiment,USD,US,Michigan Konsumklima,Medium,none,2026-08-28 14:00,2026-08-01,51.7,51.0,51.0,,positive
 268736,840210002,michigan-consumer-expectations,USD,US,Michigan Konsumentenerwartungen,Medium,none,2026-08-28 14:00,2026-08-01,51.5,50.6,50.6,,positive
 268784,840210004,michigan-inflation-expectations,USD,US,Michigan Inflationserwartungen,Medium,percent,2026-08-28 14:00,2026-08-01,4.0,4.3,4.3,,negative
