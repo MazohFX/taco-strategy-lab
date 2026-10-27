@@ -1,38 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-301592,840220012,5-year-note-auction,USD,US,5-jährige Schatzanweisung Auktion,Medium,percent,2026-08-26 17:00,1970-01-01,,,4.408,,
-291472,250040001,jobseekers-total,EUR,FR,Arbeitssuchende Insgesamt,Medium,job,2026-08-26 22:00,2026-07-27,3143.0,3177.0,3121.5,,positive
-265854,36030001,rba-bulletin,AUD,AU,RBA Bulletin,Medium,none,2026-08-27 01:30,1970-01-01,,,,,
-302086,36010033,private-new-capital-expenditure-qq,AUD,AU,Private neue Investitionen q/q,Medium,percent,2026-08-27 01:30,2026-04-01,-3.6,0.7,6.5,6.9,negative
-302130,276040001,gfk-consumer-climate,EUR,DE,GfK Konsumentenklima,Medium,none,2026-08-27 06:00,2026-09-01,-26.6,-29.5,-29.6,-29.4,positive
-284181,756020008,employment-level,CHF,CH,Beschäftigungsniveau,Medium,people,2026-08-27 06:30,2026-04-01,5.698,5.54,5.537,5.65,positive
-278381,999010019,ecb-households-loans-yy,EUR,EU,EZB Kredite an private Haushalte y/y,Medium,percent,2026-08-27 08:00,2026-07-01,3.1,2.9,3.0,,positive
-310621,999010002,ecb-monetary-policy-meeting-accounts,EUR,EU,ECB Geldpolitische Sitzung,Medium,none,2026-08-27 11:30,1970-01-01,,,,,
-270390,840020019,goods-trade-balance,USD,US,Warenhandelsbilanz,Medium,currency,2026-08-27 12:30,2026-07-01,-118.806,-104.172,-101.461,-101.407,negative
-270506,840020027,retail-inventories-mm,USD,US,Lagerbestände der Einzelhändler m/m,Medium,percent,2026-08-27 12:30,2026-07-01,0.7,-0.1,-0.2,,negative
-270530,840020028,retail-inventories-ex-autos-mm,USD,US,Lagerbestände der Einzelhändler exkl. Autos m/m,Medium,percent,2026-08-27 12:30,2026-07-01,0.7,,-0.4,-0.5,
-278053,124010010,current-account,CAD,CA,Leistungsbilanz,Medium,currency,2026-08-27 12:30,2026-04-01,8.836,-4.065,-7.184,-8.31,positive
-309704,840140001,initial-jobless-claims,USD,US,Erstanträge auf Arbeitslosenhilfe,High,none,2026-08-27 12:30,2026-08-22,203.0,216.0,206.0,207.0,positive
-309708,840140002,continuing-jobless-claims,USD,US,Folgeanträge auf Arbeitslosenhilfe,Medium,none,2026-08-27 12:30,2026-08-15,1.778,1.79,1.799,1.796,positive
-301595,840220013,7-year-note-auction,USD,US,7-jährige Schatzanweisung Auktion,Medium,percent,2026-08-27 17:00,1970-01-01,,,4.473,,
-285025,392030005,tokyo-consumer-price-index-ex-food-energy-yy,JPY,JP,Tokyo VPI ex Nahrungsmittel und Energie y/y,High,percent,2026-08-27 23:30,2026-08-01,2.0,2.0,2.0,1.8,
-285037,392030006,tokyo-consumer-price-index-ex-fresh-food-yy,JPY,JP,Tokyo Kern VPI y/y,Medium,percent,2026-08-27 23:30,2026-08-01,1.8,2.2,1.9,1.7,negative
-285738,392030007,unemployment-rate,JPY,JP,Arbeitslosenrate,Low,percent,2026-08-27 23:30,2026-07-01,2.4,2.5,2.5,,positive
-285753,392050002,jobs-to-applicants-ratio,JPY,JP,Verhältnis von offenen Stellen zu Bewerbern,Low,none,2026-08-27 23:30,2026-07-01,1.18,1.17,1.18,,positive
-300580,250010001,cpi-mm,EUR,FR,CPI m/m,Medium,percent,2026-08-28 06:45,2026-08-01,0.7,0.3,0.6,,positive
-300582,250010002,cpi-yy,EUR,FR,CPI y/y,Low,percent,2026-08-28 06:45,2026-08-01,2.4,2.3,2.1,,positive
-300584,250010003,hicp-mm,EUR,FR,HVPI m/m,Medium,percent,2026-08-28 06:45,2026-08-01,0.8,0.2,0.6,,positive
-300587,250010005,gdp-qq,EUR,FR,Bruttoinlandsprodukt q/q,Medium,percent,2026-08-28 06:45,2026-04-01,0.0,0.2,0.2,,negative
-300588,250010006,gdp-yy,EUR,FR,Bruttoinlandsprodukt y/y,Medium,percent,2026-08-28 06:45,2026-04-01,0.5,0.7,0.7,,negative
-300590,250010008,consumer-spending-mm,EUR,FR,Konsumausgaben m/m,Medium,percent,2026-08-28 06:45,2026-07-01,0.5,0.0,0.4,0.6,positive
-274264,756050001,kof-economic-barometer,CHF,CH,KOF Konjunkturbarometer,Medium,none,2026-08-28 07:00,2026-08-01,,100.5,103.5,,
-282175,724010002,cpi-yy,EUR,ES,CPI y/y,Medium,percent,2026-08-28 07:00,2026-08-01,4.3,,,,
-282221,724010004,hicp-yy,EUR,ES,HVPI y/y,Medium,percent,2026-08-28 07:00,2026-08-01,4.5,,,,
-282269,724010009,retail-sales-yy,EUR,ES,Einzelhandelsumsatz y/y,Low,percent,2026-08-28 07:00,2026-07-01,-0.3,0.9,0.5,,negative
-229135,276060001,unemployment-change,EUR,DE,Änderung der Arbeitslosigkeit,Medium,people,2026-08-28 07:55,2026-08-01,4.0,1.0,6.0,,negative
-229159,276060002,unemployment-rate,EUR,DE,Arbeitslosenrate,Medium,percent,2026-08-28 07:55,2026-08-01,6.4,6.3,6.4,,negative
-229207,276060004,unemployment,EUR,DE,Arbeitslosenzahl,Medium,job,2026-08-28 07:55,2026-08-01,2.996,2.991,2.993,,negative
-283322,999040005,economic-sentiment-indicator,EUR,EU,Indikator der wirtschaftlichen Einschätzung,Medium,none,2026-08-28 09:00,2026-08-01,98.4,96.9,96.9,97.1,positive
-283358,999040007,consumer-price-expectations,EUR,EU,Verbraucherpreiserwartung,High,none,2026-08-28 09:00,2026-08-01,33.0,24.4,30.3,30.4,positive
 278184,124010022,gdp-qq,CAD,CA,Bruttoinlandsprodukt q/q,Medium,percent,2026-08-28 12:30,2026-04-01,0.8,0.0,0.0,0.1,positive
 278305,124010036,gdp-annualized-qq,CAD,CA,BIP Annualisiert q/q,Medium,percent,2026-08-28 12:30,2026-04-01,3.3,0.7,-0.1,0.3,positive
 306660,124010021,gdp-mm,CAD,CA,BIP m/m,Medium,percent,2026-08-28 12:30,2026-06-01,0.3,0.1,0.3,,positive
