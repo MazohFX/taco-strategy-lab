@@ -240,3 +240,55 @@ def test_fx_dates_shift_back_one_trading_day():
 def test_fx_dates_naive_index_also_shifted():
     idx = pd.DatetimeIndex(["2026-07-07", "2026-07-08", "2026-07-13"])      # Di, Mi, Mo
     assert list(md._fx_trading_dates(idx).strftime("%Y-%m-%d")) == ["2026-07-06", "2026-07-07", "2026-07-10"]
+
+
+def _scores(d):
+    return pd.DataFrame([{"currency": c, "score": v} for c, v in d.items()])
+
+
+def test_watchlist_strong_vs_weak_and_convention():
+    sc = _scores({"GBP": 0.6, "AUD": 0.4, "USD": 0.1, "EUR": 0.0, "CAD": -0.1, "CHF": -0.2, "NZD": -0.3, "JPY": -0.7})
+    wl = md.build_watchlist(sc)
+    assert wl[0]["pair"] == "GBPJPY" and wl[0]["direction"] == "LONG"
+    assert len(wl) == 3
+    pairs = [w["pair"] for w in wl]
+    assert all(sum(c in p for p in pairs) <= 2 for c in md.CURRENCIES)
+    # Marktkonvention: NZD stark, EUR schwach -> EURNZD SHORT
+    wl2 = md.build_watchlist(_scores({"NZD": 0.8, "EUR": -0.8, **{c: 0.0 for c in ["GBP", "AUD", "USD", "CAD", "CHF", "JPY"]}}), top_n=1)
+    assert wl2[0]["pair"] == "EURNZD" and wl2[0]["direction"] == "SHORT"
+    assert md.build_watchlist(_scores({c: 0.0 for c in md.CURRENCIES})) == []
+
+
+def test_regime_rules_and_blocks():
+    idx = pd.date_range("2026-01-01", periods=30, freq="B")
+    calm = pd.Series(np.full(30, 16.0), index=idx)
+    r = md.trading_regime({"vix": 16.0, "score": 0.2}, calm)
+    assert r["effective"] == "Normal" and r["risk_pct"] == 1.0
+    spike = calm.copy(); spike.iloc[-1] = 22.0          # +37 % in 5 Tagen
+    r2 = md.trading_regime({"vix": 22.0, "score": -0.3}, spike)
+    assert r2["effective"] == "Panik" and r2["risk_pct"] == 0
+    stress = md.trading_regime({"vix": 24.0, "score": -0.3}, pd.Series(np.full(30, 24.0), index=idx))
+    empty = pd.DataFrame(columns=["currency", "time_utc", "importance", "event_code", "actual"])
+    long_aud = md.trade_status({"pair": "AUDJPY", "direction": "LONG"}, stress, empty, NOW)
+    short_aud = md.trade_status({"pair": "AUDJPY", "direction": "SHORT"}, stress, empty, NOW)
+    assert long_aud["status"] == "gesperrt" and short_aud["status"] == "handelbar"
+
+
+def test_central_bank_block_and_intervention():
+    cal = _calendar()   # BoJ-Sitzung am 24.10., NOW = 20.10.
+    normal = {"effective": "Normal", "mult": 1.0}
+    st_far = md.trade_status({"pair": "GBPJPY", "direction": "LONG"}, normal, cal, NOW)
+    assert st_far["status"] == "Hinweis" and "BoJ" in st_far["warns"][0]
+    st_near = md.trade_status({"pair": "GBPJPY", "direction": "LONG"}, normal, cal, pd.Timestamp("2026-10-23 12:00"))
+    assert st_near["status"] == "gesperrt"
+    hi = {"level": "hoch"}
+    assert "JPY-Interventionsrisiko hoch" in md.trade_status({"pair": "USDJPY", "direction": "LONG"}, normal, cal.iloc[:0], NOW, hi)["blocks"]
+    assert md.trade_status({"pair": "USDJPY", "direction": "SHORT"}, normal, cal.iloc[:0], NOW, hi)["status"] == "handelbar"
+
+
+def test_currency_scores_relative():
+    cal = _calendar()
+    sc = md.currency_scores(cal, NOW, lambda c: ({"GBP": 0.5, "JPY": -0.5}.get(c), 5), lambda c: None,
+                            {"score": 0.5, "vix": 15})
+    top, bottom = sc.iloc[0]["currency"], sc.dropna(subset=["score"]).iloc[-1]["currency"]
+    assert top in ("GBP", "AUD", "NZD") and bottom in ("JPY", "CHF")

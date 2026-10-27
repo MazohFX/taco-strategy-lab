@@ -660,6 +660,160 @@ def summary_sentence(pair: str, pillars: dict[str, Pillar], verdict: dict) -> st
     return "Zu wenig Daten für ein Fazit."
 
 
+# ── Tagesplan: Regime -> Waehrungs-Ranking -> Watchlist -> Event-Sperren ──────
+PLAN_CONFIG = {
+    "base_risk_pct": 1.0,          # dein Standardrisiko je Trade (max. 1 %)
+    "regime_risk_mult": {"Ruhig": 1.0, "Normal": 1.0, "Stress": 0.5, "Panik": 0.0},
+    "watch_top_n": 3,
+    "watch_min_gap": 0.25,         # Mindestabstand Basis-Score minus Quote-Score
+    "max_per_currency": 2,         # eine Waehrung hoechstens 2x auf der Watchlist
+    "cb_block_hours": 24,          # keine neuen Trades so kurz vor einer Notenbank-Sitzung
+    "cb_warn_days": 7,
+}
+REGIME_ORDER = ["Ruhig", "Normal", "Stress", "Panik"]
+
+
+def trading_regime(appetite: dict | None, vix: pd.Series | None) -> dict:
+    """VIX-Zone -> erlaubtes Risiko je Trade. Ein frischer VIX-Sprung (letzte 5 Tage
+    +30 %) stuft eine Stufe hoeher ein, auch wenn das Niveau noch 'normal' ist."""
+    if not appetite or "vix" not in appetite:
+        return {"zone": "unbekannt", "vix": None, "mult": 0.5, "risk_pct": PLAN_CONFIG["base_risk_pct"] * 0.5,
+                "spike": False, "note": "VIX nicht abrufbar – vorsichtshalber halbe Größe."}
+    level = appetite["vix"]
+    zone = vix_regime(level).capitalize()
+    spike = False
+    if vix is not None and len(vix) > VIX_SPIKE_DAYS:
+        chg = (float(vix.iloc[-1]) / float(vix.iloc[-1 - VIX_SPIKE_DAYS]) - 1) * 100
+        spike = chg >= VIX_SPIKE_PCT
+    eff = zone
+    if spike and zone in ("Ruhig", "Normal"):
+        eff = "Stress"
+    elif spike and zone == "Stress":
+        eff = "Panik"
+    mult = PLAN_CONFIG["regime_risk_mult"][eff]
+    notes = {
+        "Ruhig": "Volle Größe. Trend- und Carry-Trades in Bias-Richtung erlaubt.",
+        "Normal": "Volle Größe. Alles in Bias-Richtung erlaubt.",
+        "Stress": "Halbe Größe. Keine neuen Risk-on-Longs (z. B. AUDJPY, GBPJPY long) – nur Trades mit der Risk-off-Richtung.",
+        "Panik": "Keine neuen Positionen. Bestehende absichern oder schließen.",
+    }
+    note = notes[eff] + (" (Hochgestuft wegen VIX-Sprung in den letzten 5 Tagen.)" if eff != zone else "")
+    return {"zone": zone, "effective": eff, "vix": level, "mult": mult,
+            "risk_pct": PLAN_CONFIG["base_risk_pct"] * mult, "spike": spike, "note": note}
+
+
+def currency_scores(calendar: pd.DataFrame, now: pd.Timestamp,
+                    surprise: Callable[[str], tuple[float | None, int]],
+                    cot: Callable[[str], dict | None], appetite: dict | None,
+                    expected_change: Callable[[str], float | None] | None = None) -> pd.DataFrame:
+    """Score je Waehrung (-1..+1, + = stark) aus denselben Bausteinen wie die Paar-Ansicht,
+    jeweils relativ zum Durchschnitt der anderen 7 Waehrungen. Ein Paar = Basis minus Quote."""
+    w = CONFIG["weights"]
+    infos = {c: policy_rate_info(calendar, c, now) for c in CURRENCIES}
+
+    def cyc(c):
+        e = expected_change(c) if expected_change else None
+        return infos[c]["change"] + (e or 0.0)
+
+    have_rates = [c for c in CURRENCIES if infos[c] is not None]
+    mean_cyc = float(np.mean([cyc(c) for c in have_rates])) if have_rates else 0.0
+    mean_lvl = float(np.mean([infos[c]["rate"] for c in have_rates])) if have_rates else 0.0
+    mean_beta = float(np.mean(list(RISK_BETA.values())))
+    rows = []
+    for c in CURRENCIES:
+        parts = {}
+        if infos[c] is not None:
+            wc = CONFIG["rates_cycle_weight"]
+            parts["zinsen"] = wc * _tanh(cyc(c) - mean_cyc, CONFIG["rates_cycle_scale"]) + \
+                (1 - wc) * _tanh(infos[c]["rate"] - mean_lvl, CONFIG["rates_level_scale"])
+        sv, _ = surprise(c)
+        if sv is not None:
+            parts["surprise"] = _tanh(sv, CONFIG["surprise_scale"])
+        st_ = cot(c)
+        crowded = None
+        if st_ is not None:
+            sc = st_["score"]
+            if st_["percentile"] >= CONFIG["cot_extreme_high"]:
+                crowded = "Longs überfüllt"
+                sc = sc * CONFIG["cot_extreme_damping"] if sc > 0 else sc
+            elif st_["percentile"] <= CONFIG["cot_extreme_low"]:
+                crowded = "Shorts überfüllt"
+                sc = sc * CONFIG["cot_extreme_damping"] if sc < 0 else sc
+            parts["cot"] = sc
+        if appetite is not None:
+            parts["risiko"] = float(np.clip((RISK_BETA[c] - mean_beta) * appetite["score"], -1, 1))
+        total = sum(w[k] * v for k, v in parts.items()) / sum(w[k] for k in parts) if parts else np.nan
+        rows.append({"currency": c, "score": float(np.clip(total, -1, 1)) if parts else np.nan,
+                     **{k: parts.get(k) for k in SCORED_PILLARS}, "crowded": crowded,
+                     "n_parts": len(parts)})
+    return pd.DataFrame(rows).sort_values("score", ascending=False).reset_index(drop=True)
+
+
+def build_watchlist(scores: pd.DataFrame, top_n: int | None = None, min_gap: float | None = None) -> list[dict]:
+    """Paare mit dem groessten Abstand stark-gegen-schwach, in Marktkonvention notiert
+    (Richtung LONG/SHORT bezieht sich auf das Paar wie es gehandelt wird)."""
+    top_n = top_n or PLAN_CONFIG["watch_top_n"]
+    min_gap = PLAN_CONFIG["watch_min_gap"] if min_gap is None else min_gap
+    sc = scores.dropna(subset=["score"]).set_index("currency")["score"].to_dict()
+    cands = []
+    for pair in PAIRS:
+        b, q = split_pair(pair)
+        if b in sc and q in sc:
+            gap = sc[b] - sc[q]
+            if abs(gap) >= min_gap:
+                cands.append((abs(gap), pair, gap))
+    cands.sort(reverse=True)
+    used: dict[str, int] = {}
+    out = []
+    for _, pair, gap in cands:
+        b, q = split_pair(pair)
+        if used.get(b, 0) >= PLAN_CONFIG["max_per_currency"] or used.get(q, 0) >= PLAN_CONFIG["max_per_currency"]:
+            continue
+        strong, weak = (b, q) if gap > 0 else (q, b)
+        out.append({"pair": pair, "direction": "LONG" if gap > 0 else "SHORT", "gap": gap,
+                    "strong": strong, "weak": weak})
+        used[b] = used.get(b, 0) + 1
+        used[q] = used.get(q, 0) + 1
+        if len(out) >= top_n:
+            break
+    return out
+
+
+def trade_status(item: dict, regime: dict, calendar: pd.DataFrame, now: pd.Timestamp,
+                 intervention: dict | None = None) -> dict:
+    """Ampel je Watchlist-Paar: handelbar / gesperrt (mit Grund) / Hinweis."""
+    pair, direction = item["pair"], item["direction"]
+    sign = 1 if direction == "LONG" else -1
+    blocks, warns = [], []
+    eff = regime.get("effective", regime.get("zone"))
+    if regime.get("mult", 1) == 0:
+        blocks.append("Panik-Regime: keine neuen Positionen")
+    elif eff == "Stress" and sign * risk_diff(pair) > 0.3:
+        blocks.append("Stress-Regime: das wäre ein Risk-on-Trade")
+    ev = upcoming_events(calendar, pair, now)
+    next_cb = None
+    if ev is not None and not ev.empty:
+        cb = ev[ev["notenbank"]]
+        if not cb.empty:
+            t = cb["time_utc"].iloc[0]
+            hours = (t - now).total_seconds() / 3600
+            next_cb = (t, CENTRAL_BANK_NAMES[cb["currency"].iloc[0]])
+            if hours <= PLAN_CONFIG["cb_block_hours"]:
+                blocks.append(f"{next_cb[1]}-Sitzung in {hours:.0f} h")
+            elif hours <= PLAN_CONFIG["cb_warn_days"] * 24:
+                warns.append(f"{next_cb[1]}-Sitzung in {hours / 24:.0f} Tagen")
+    b, q = split_pair(pair)
+    if intervention and "JPY" in (b, q):
+        # Intervention = JPY wird schlagartig staerker -> gefaehrlich fuer JPY-Shorts
+        jpy_short = (q == "JPY" and sign > 0) or (b == "JPY" and sign < 0)
+        if jpy_short and intervention["level"] == "hoch":
+            blocks.append("JPY-Interventionsrisiko hoch")
+        elif jpy_short and intervention["level"] == "mittel":
+            warns.append("JPY-Interventionsrisiko mittel")
+    status = "gesperrt" if blocks else ("Hinweis" if warns else "handelbar")
+    return {"status": status, "blocks": blocks, "warns": warns, "next_cb": next_cb}
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Daten laden (Streamlit-Cache) und UI
 # ═════════════════════════════════════════════════════════════════════════════
@@ -830,8 +984,16 @@ def compute_all(deps: dict) -> dict:
             "event": score_event_future(name, calendar, now),
         }
         results[name] = {"pillars": pillars, "verdict": overall(pillars, name), "code": name}
+    scores = currency_scores(calendar, now, deps["surprise_index"], cot_stats, appetite, expected)
+    regime = trading_regime(appetite, closes["vix"])
+    interv = intervention_level(closes["usdjpy"])
+    watch = build_watchlist(scores)
+    for item in watch:
+        item.update(trade_status(item, regime, calendar, now, interv))
+        item["verdict"] = results.get(item["pair"], {}).get("verdict", {})
+    plan = {"scores": scores, "regime": regime, "watchlist": watch, "intervention": interv}
     return {"now": now, "calendar": calendar, "history": history, "closes": closes,
-            "appetite": appetite, "results": results}
+            "appetite": appetite, "results": results, "plan": plan}
 
 
 # ── UI-Bausteine ─────────────────────────────────────────────────────────────
@@ -1200,6 +1362,100 @@ vorhersagt, ist noch nicht getestet. Kein Finanzrat.
 """)
 
 
+_REGIME_COL = {"Ruhig": "#4ade80", "Normal": "#cbd5e1", "Stress": "#facc15", "Panik": "#f87171", "unbekannt": "#94a3b8"}
+_STATUS_STYLE = {"handelbar": ("#22c55e", "✅ HANDELBAR"), "Hinweis": ("#eab308", "⚠️ MIT VORSICHT"),
+                 "gesperrt": ("#ef4444", "⛔ GESPERRT")}
+
+
+def render_tagesplan(data: dict) -> None:
+    import plotly.graph_objects as go
+    plan = data.get("plan")
+    if not plan:
+        return
+    reg, scores, watch = plan["regime"], plan["scores"], plan["watchlist"]
+    eff = reg.get("effective", reg["zone"])
+    rcol = _REGIME_COL.get(eff, "#94a3b8")
+
+    st.markdown("### 🗓️ Tagesplan")
+    st.caption("Von oben nach unten: 1) Regime bestimmt Größe und Erlaubtes · 2) Währungs-Ranking · "
+               "3) Watchlist mit fester Richtung · 4) Einstieg nur mit deinem H4/H1-Setup in diese Richtung.")
+
+    # 1) Regime
+    vix_txt = f"VIX {reg['vix']:.1f}" if reg.get("vix") is not None else "VIX n/a"
+    st.markdown(
+        f'<div style="background:{_COL["bg"]};border:1px solid {rcol};border-left:6px solid {rcol};'
+        f'border-radius:10px;padding:14px 18px;margin:4px 0 12px 0">'
+        f'<div style="display:flex;flex-wrap:wrap;gap:18px;align-items:baseline">'
+        f'<span style="font-size:.75rem;color:{_COL["muted"]};text-transform:uppercase">1 · Marktregime</span>'
+        f'<span style="font-size:1.5rem;font-weight:800;color:{rcol}">{eff.upper()}</span>'
+        f'<span style="color:{_COL["muted"]}">{vix_txt}</span>'
+        f'<span style="font-size:1.1rem;font-weight:700;color:{_COL["text"]}">Risiko je Trade: '
+        f'{reg["risk_pct"]:.2g} %</span></div>'
+        f'<div style="color:#cbd5e1;margin-top:6px">{reg["note"]}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    col_rank, col_watch = st.columns([2, 3])
+    # 2) Ranking
+    with col_rank:
+        st.markdown("**2 · Währungs-Ranking** (stark → schwach)")
+        sc = scores.dropna(subset=["score"]).iloc[::-1]
+        if sc.empty:
+            st.info("Keine Daten für das Ranking.")
+        else:
+            colors = ["#22c55e" if v >= 0.15 else "#ef4444" if v <= -0.15 else "#64748b" for v in sc["score"]]
+            hover = []
+            for _, r in sc.iterrows():
+                parts = " · ".join(f"{PILLAR_LABELS[k].split(' ')[0]} {r[k]:+.2f}" for k in SCORED_PILLARS
+                                   if pd.notna(r.get(k)))
+                hover.append(f"{r['currency']}: {r['score']:+.2f}<br>{parts}" + (f"<br>⚠️ COT {r['crowded']}" if r.get("crowded") else ""))
+            labels = [f"{c} ⚠️" if cr else c for c, cr in zip(sc["currency"], sc["crowded"])]
+            fig = go.Figure(go.Bar(x=sc["score"], y=labels, orientation="h", marker_color=colors,
+                                   text=[f"{v:+.2f}" for v in sc["score"]], textposition="outside",
+                                   hovertext=hover, hoverinfo="text"))
+            fig.update_layout(template="plotly_dark", height=300, margin=dict(t=10, b=10, l=10, r=30),
+                              xaxis=dict(range=[-1.15, 1.15], showgrid=False, zeroline=True,
+                                         zerolinecolor="#475569", showticklabels=False),
+                              yaxis=dict(showgrid=False), showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+            if sc["crowded"].notna().any():
+                st.caption("⚠️ = Spekulanten extrem einseitig positioniert (COT) – Squeeze-Gefahr.")
+
+    # 3) Watchlist + 4) Sperren
+    with col_watch:
+        st.markdown("**3 · Watchlist der Woche** – nur in dieser Richtung nach Setups suchen")
+        if not watch:
+            st.info("Heute hat kein Paar einen klaren Abstand zwischen starker und schwacher Währung – "
+                    "keine Makro-Favoriten. Weniger handeln ist hier die bessere Option.")
+        for item in watch:
+            col, badge = _STATUS_STYLE[item["status"]]
+            dcol = _COL["pos"] if item["direction"] == "LONG" else _COL["neg"]
+            reasons = item["blocks"] or item["warns"]
+            reason_txt = " · ".join(reasons) if reasons else "Keine Sperre in den nächsten 7 Tagen."
+            v = item.get("verdict") or {}
+            vlabel = v.get("label")
+            confirm = ""
+            if vlabel:
+                ok = vlabel == item["direction"]
+                confirm = (f'<span style="color:{"#4ade80" if ok else _COL["muted"]}">Paar-Ansicht: {vlabel}'
+                           f'{" ✓" if ok else ""}</span>')
+            st.markdown(
+                f'<div style="background:{_COL["bg"]};border:1px solid {_COL["border"]};border-left:5px solid {col};'
+                f'border-radius:10px;padding:10px 14px;margin-bottom:8px">'
+                f'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:baseline">'
+                f'<span style="font-size:1.25rem;font-weight:800;color:{_COL["text"]}">{item["pair"]}</span>'
+                f'<span style="font-size:1.1rem;font-weight:800;color:{dcol}">nur {item["direction"]}</span>'
+                f'<span style="font-size:.8rem;font-weight:700;color:{col}">{badge}</span>{confirm}</div>'
+                f'<div style="font-size:.82rem;color:#cbd5e1;margin-top:4px">{item["strong"]} stark vs. '
+                f'{item["weak"]} schwach (Abstand {abs(item["gap"]):.2f}) · {reason_txt}</div></div>',
+                unsafe_allow_html=True,
+            )
+        st.caption("4 · Einstieg nur mit deinem technischen Setup (H4/H1) in Watchlist-Richtung. "
+                   f"Keine neuen Trades ≤ {PLAN_CONFIG['cb_block_hours']} h vor einer Notenbank-Sitzung. "
+                   "Gewichte unvalidiert – als Filter nutzen, nicht als Signal.")
+    st.divider()
+
+
 def render_macro_dashboard(deps: dict) -> None:
     """deps-Schluessel:
     load_calendar() -> DataFrame MT5-Kalender
@@ -1230,6 +1486,9 @@ def render_macro_dashboard(deps: dict) -> None:
     if stale_msg:
         st.warning(stale_msg)
 
+    render_tagesplan(data)
+
+    st.markdown("### 🔎 Details je Markt")
     mode = st.radio("Ansicht", ["Forex-Paare", "Futures"], horizontal=True, key="macro_dash_mode")
     if mode == "Forex-Paare":
         choices, default, label = PAIRS, "GBPJPY", "Paar"
