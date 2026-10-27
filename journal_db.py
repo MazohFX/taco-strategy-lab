@@ -83,6 +83,12 @@ screenshots = Table(
     Column("created_at", DateTime),
 )
 
+settings_tbl = Table(
+    "tj_settings", metadata,
+    Column("key", String(60), primary_key=True),
+    Column("value", Text),
+)
+
 # Felder, die beim Broker-Sync überschrieben werden dürfen – alles andere
 # (Kriterien, Checkliste, Notizen, Sterne …) bleibt beim erneuten Sync erhalten.
 BROKER_FIELDS = (
@@ -290,3 +296,17 @@ def screenshot_counts() -> dict[int, int]:
         rows = c.execute(select(screenshots.c.trade_id, func.count())
                          .group_by(screenshots.c.trade_id)).all()
     return {int(t): int(n) for t, n in rows}
+
+
+# --------------------------------------------------------------------------- Einstellungen
+def get_setting(key: str) -> str | None:
+    with get_engine().connect() as c:
+        r = c.execute(select(settings_tbl.c.value).where(settings_tbl.c.key == key)).first()
+    return r[0] if r else None
+
+
+def set_setting(key: str, value: str | None) -> None:
+    with get_engine().begin() as c:
+        c.execute(delete(settings_tbl).where(settings_tbl.c.key == key))
+        if value:
+            c.execute(insert(settings_tbl).values(key=key, value=value))

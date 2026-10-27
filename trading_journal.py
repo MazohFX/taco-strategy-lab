@@ -403,11 +403,11 @@ def _render_list(df: pd.DataFrame, acc: pd.DataFrame, shots: dict) -> None:
         "Richtung": view["direction"],
         "Order": view["order_type"],
         "TF": view["timeframe"],
-        "Ergebnis %": view["pnl_pct"].round(2),
+        "Ergebnis %": pd.to_numeric(view["pnl_pct"], errors="coerce").round(2),
         "R": view["r_multiple"],
         "Risiko %": view["risk_pct"],
         "Plan": view["plan_followed"],
-        "Checkliste %": view["compliance"].round(0),
+        "Checkliste %": pd.to_numeric(view["compliance"], errors="coerce").round(0),
         "Sterne": view["rating"].apply(_stars),
         "Kriterien": view["confluences"].apply(lambda l: ", ".join(l)),
         "📷": view["id"].map(shots).fillna(0).astype(int),
@@ -509,21 +509,18 @@ def _render_stats(df: pd.DataFrame) -> None:
 
 
 # =========================================================================== Konten & Sync
+def _metaapi_token() -> str | None:
+    return _secret("metaapi", "token") or db.get_setting("metaapi_token") or st.session_state.get("tj_token")
+
+
 def _render_accounts(acc: pd.DataFrame) -> None:
-    token = _secret("metaapi", "token") or st.session_state.get("tj_token")
+    token = _metaapi_token()
     st.markdown("#### 🔌 Verbundene Konten")
-    if token:
-        st.caption("MetaApi-Token ist hinterlegt ✅")
-    else:
-        st.warning("Kein MetaApi-Token in den Secrets. Für einen Test kannst du ihn hier eingeben "
-                   "(wird nicht gespeichert, nur für diese Sitzung).")
-        t = st.text_input("MetaApi-Token", type="password", key="tj_token_in")
-        if t:
-            st.session_state.tj_token = t
-            token = t
+    if st.session_state.get("tj_flash"):
+        st.success(st.session_state.pop("tj_flash"))
 
     if acc.empty:
-        st.info("Noch kein Konto angelegt.")
+        st.info("Noch kein Konto verbunden. Unten Server, Login und Passwort eintragen.")
     else:
         if token and acc["metaapi_account_id"].notna().any() and st.button("🔄 Alle Konten synchronisieren", type="primary"):
             for _, a in acc[acc["metaapi_account_id"].notna()].iterrows():
@@ -532,7 +529,15 @@ def _render_accounts(acc: pd.DataFrame) -> None:
             with st.container(border=True):
                 c = st.columns([3, 2, 2, 1, 1])
                 c[0].markdown(f"**{a['name']}**  \n{a['broker'] or ''} · {a['platform'] or ''} · {a['currency'] or ''}")
-                c[1].caption(f"MetaApi-ID: {a['metaapi_account_id'] or '–'}  \nRegion: {a['region'] or '–'}")
+                if a["metaapi_account_id"] and token:
+                    info = _cached_info(token, a["metaapi_account_id"])
+                    status = info.get("connectionStatus") or info.get("state") or "?"
+                    label = {"CONNECTED": "🟢 verbunden", "DISCONNECTED": "🟡 verbindet …",
+                             "DISCONNECTED_FROM_BROKER": "🔴 Broker lehnt ab (Login/Passwort/Server prüfen)",
+                             "DEPLOYING": "🟡 wird eingerichtet …"}.get(status, status)
+                    c[1].caption(f"Status: {label}")
+                else:
+                    c[1].caption("Nur manuell / CSV")
                 last = pd.to_datetime(a["last_sync"])
                 c[2].caption(f"Startsaldo: {a['start_balance'] or '–'}  \n"
                              f"Letzter Sync: {last.strftime('%d.%m.%Y %H:%M') if pd.notna(last) else 'nie'}")
@@ -541,48 +546,92 @@ def _render_accounts(acc: pd.DataFrame) -> None:
                 with c[4].popover("🗑️"):
                     st.write("Konto entfernen? Die Trades bleiben im Journal.")
                     if st.button("Entfernen", key=f"tj_delacc_{a['id']}", type="primary"):
+                        if token and a["metaapi_account_id"]:
+                            bs.remove_mt_account(token, a["metaapi_account_id"])
                         db.delete_account(int(a["id"]))
                         st.rerun()
 
-    with st.expander("➕ Konto hinzufügen", expanded=acc.empty):
-        with st.form("tj_add_acc", clear_on_submit=True):
+    with st.expander("➕ MT4/MT5-Konto verbinden", expanded=acc.empty):
+        if not token:
+            st.warning("Einmalig nötig: dein MetaApi-Token (siehe Anleitung unten). Danach reichen pro Konto "
+                       "Server, Login und Passwort.")
+            t = st.text_input("MetaApi-Token", type="password", key="tj_token_in")
+            remember = st.checkbox("Token im Journal speichern (nur einmal eingeben)", value=True, key="tj_token_rem")
+            if t and st.button("Token übernehmen", key="tj_token_btn"):
+                st.session_state.tj_token = t.strip()
+                if remember:
+                    db.set_setting("metaapi_token", t.strip())
+                st.rerun()
+        with st.form("tj_add_acc", clear_on_submit=False):
             c = st.columns(3)
-            name = c[0].text_input("Name", placeholder="FTMO 100k Phase 1")
-            broker = c[1].selectbox("Broker / Prop-Firm", BROKERS)
-            platform = c[2].selectbox("Plattform", PLATFORMS)
+            name = c[0].text_input("Name", placeholder="FTMO 100k Phase 1", key="tj_acc_name")
+            broker = c[1].selectbox("Broker / Prop-Firm", BROKERS, key="tj_acc_broker")
+            platform = c[2].selectbox("Plattform", PLATFORMS, key="tj_acc_platform")
             c = st.columns(3)
-            meta_id = c[0].text_input("MetaApi-Konto-ID (optional)",
-                                      help="Leer lassen, wenn du nur manuell oder per CSV journalst.")
-            region = c[1].selectbox("MetaApi-Region", bs.METAAPI_REGIONS)
-            sync_from = c[2].date_input("Sync ab", value=date.today() - timedelta(days=365), format="DD.MM.YYYY",
-                                        help="Am besten vor dem Kontostart, damit die Ersteinzahlung erkannt wird.")
+            server = c[0].text_input("Server", placeholder="z. B. FTMO-Server3", key="tj_acc_server",
+                                     help="Genau wie im MT5-Login-Fenster bzw. in der Zugangsdaten-Mail.")
+            login = c[1].text_input("Login (Kontonummer)", placeholder="z. B. 510123456", key="tj_acc_login")
+            password = c[2].text_input("Investor-Passwort", type="password", key="tj_acc_pw",
+                                       help="Am besten das Investor-Passwort (nur Lesezugriff). Es wird an MetaApi "
+                                            "übergeben und im Journal NICHT gespeichert.")
             c = st.columns(3)
-            start_balance = c[0].number_input("Startsaldo", value=100000.0, step=1000.0)
-            currency = c[1].selectbox("Kontowährung", ["USD", "EUR", "GBP", "CHF"])
-            if st.form_submit_button("Konto speichern", type="primary"):
-                if not name.strip():
-                    st.error("Bitte einen Namen angeben.")
-                else:
-                    db.save_account(dict(name=name.strip(), broker=broker, platform=platform,
-                                         metaapi_account_id=meta_id.strip() or None, region=region,
-                                         start_balance=start_balance, currency=currency,
-                                         sync_from=datetime.combine(sync_from, time())))
-                    st.toast("Konto gespeichert ✅")
+            start_balance = c[0].number_input("Startsaldo", value=100000.0, step=1000.0, key="tj_acc_bal")
+            currency = c[1].selectbox("Kontowährung", ["USD", "EUR", "GBP", "CHF"], key="tj_acc_cur")
+            sync_from = c[2].date_input("Trades laden ab", value=date.today() - timedelta(days=365),
+                                        format="DD.MM.YYYY", key="tj_acc_from")
+            manual_only = st.checkbox("Ohne Broker-Verbindung anlegen (nur manuell / CSV)", key="tj_acc_manual")
+            submitted = st.form_submit_button("🔌 Verbinden & speichern", type="primary")
+
+        if submitted:
+            if not name.strip():
+                st.error("Bitte einen Namen angeben.")
+            elif manual_only:
+                db.save_account(dict(name=name.strip(), broker=broker, platform=platform,
+                                     start_balance=start_balance, currency=currency,
+                                     sync_from=datetime.combine(sync_from, time())))
+                st.toast("Konto gespeichert ✅")
+                st.rerun()
+            elif not (server.strip() and login.strip() and password):
+                st.error("Bitte Server, Login und Passwort ausfüllen.")
+            elif not token:
+                st.error("Zuerst oben einmalig den MetaApi-Token eintragen.")
+            else:
+                tx_key = f"tj_tx_{login.strip()}_{server.strip()}"
+                with st.spinner("Verbinde mit deinem MT-Konto … (kann bis zu 2 Minuten dauern)"):
+                    try:
+                        res = bs.connect_mt_account(token, name.strip(), login, password, server, platform,
+                                                    transaction_id=st.session_state.get(tx_key))
+                    except bs.SyncError as e:
+                        if getattr(e, "transaction_id", None):
+                            st.session_state[tx_key] = e.transaction_id
+                        st.error(str(e))
+                        res = None
+                if res:
+                    st.session_state.pop(tx_key, None)
+                    acc_id = db.save_account(dict(name=name.strip(), broker=broker, platform=platform,
+                                                  metaapi_account_id=res["id"], region=res["region"],
+                                                  start_balance=start_balance, currency=currency,
+                                                  sync_from=datetime.combine(sync_from, time())))
+                    for k in ("tj_acc_name", "tj_acc_server", "tj_acc_login", "tj_acc_pw"):
+                        st.session_state.pop(k, None)
+                    st.session_state.tj_flash = ("Konto verbunden ✅ MetaApi baut jetzt die Verbindung zum Broker auf "
+                                                 "(1–3 Minuten). Danach oben beim Konto auf 🔄 Sync klicken – dann "
+                                                 "erscheinen deine Trades im Kalender.")
                     st.rerun()
 
-    with st.expander("ℹ️ So verbindest du Pepperstone, FTMO, Vantage & Co."):
+    with st.expander("ℹ️ Einmalige Einrichtung (MetaApi-Token)"):
         st.markdown("""
-1. Kostenlosen Account bei **metaapi.cloud** anlegen → unter *API access* einen **Token** erzeugen.
-2. Im MetaApi-Dashboard unter *Accounts* dein MT4/MT5-Konto hinzufügen: **Login, Server und das
-   Investor-Passwort** (nur Lesezugriff – damit kann niemand traden). Das Master-Passwort brauchst du nicht.
-   Investor-Passwort findest du bei FTMO/Pepperstone/Vantage im Kundenbereich bzw. setzt es im MT-Terminal.
-3. Konto auf **deployed** stellen, die **Konto-ID** und **Region** kopieren und oben eintragen.
-4. Token in `.streamlit/secrets.toml` (lokal) bzw. in den App-Secrets auf Streamlit Cloud eintragen:
-   ```toml
-   [metaapi]
-   token = "DEIN_TOKEN"
-   ```
-Ein Konto ist bei MetaApi kostenlos, weitere kosten. Alternativ: CSV-Import unten oder manuell eintragen.
+MetaTrader lässt sich nur über eine Brücke von außen auslesen (so machen es auch TradeZella & Co.).
+Dafür brauchst du **einmalig** einen kostenlosen MetaApi-Zugang:
+
+1. Auf **metaapi.cloud** registrieren.
+2. Im Dashboard links auf **API access** → **Generate token** → Token kopieren.
+3. Oben im Feld *MetaApi-Token* einfügen → **Token übernehmen**.
+
+Danach trägst du pro Konto nur noch **Server, Login und Investor-Passwort** ein.
+Das Passwort wird nur an MetaApi übergeben, nicht im Journal gespeichert.
+Ein Konto ist bei MetaApi kostenlos, für weitere fallen Gebühren an. Beim Entfernen eines Kontos
+hier wird es auch bei MetaApi gelöscht.
 """)
 
     st.markdown("#### 📄 CSV-Import")
@@ -602,6 +651,11 @@ Ein Konto ist bei MetaApi kostenlos, weitere kosten. Alternativ: CSV-Import unte
                 st.rerun()
         except bs.SyncError as e:
             st.error(str(e))
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_info(token: str, account_id: str) -> dict:
+    return bs.account_info(token, account_id)
 
 
 def _run_sync(account: dict, token: str) -> None:

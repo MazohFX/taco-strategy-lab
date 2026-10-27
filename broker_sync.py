@@ -17,6 +17,8 @@ Token in .streamlit/secrets.toml:
 from __future__ import annotations
 
 import io
+import time as _time
+import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -45,6 +47,69 @@ TRADE_DEAL_TYPES = {"DEAL_TYPE_BUY", "DEAL_TYPE_SELL"}
 
 class SyncError(Exception):
     pass
+
+
+PROVISIONING = "https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai/users/current/accounts"
+
+
+def connect_mt_account(token: str, name: str, login: str, password: str, server: str,
+                       platform: str = "mt5", transaction_id: str | None = None,
+                       max_wait: int = 100) -> dict:
+    """Legt das MT4/MT5-Konto bei MetaApi an (Login + Server + Passwort).
+    Das Passwort geht nur an MetaApi und wird im Journal NICHT gespeichert.
+    Rueckgabe: {"id", "region", "transaction_id"} – oder SyncError mit Hinweis."""
+    tx = transaction_id or uuid.uuid4().hex
+    body = {"name": name, "login": str(login).strip(), "password": password, "server": server.strip(),
+            "platform": platform.lower(), "magic": 0, "type": "cloud-g2", "reliability": "regular"}
+    waited = 0
+    while True:
+        try:
+            r = requests.post(PROVISIONING, json=body, timeout=60,
+                              headers={"auth-token": token, "transaction-id": tx,
+                                       "Content-Type": "application/json", "Accept": "application/json"})
+        except requests.RequestException as e:
+            raise SyncError(f"Keine Verbindung zu MetaApi: {e}") from e
+        if r.status_code in (200, 201):
+            acc_id = r.json().get("id")
+            info = account_info(token, acc_id)
+            return {"id": acc_id, "region": info.get("region") or "new-york", "transaction_id": tx}
+        if r.status_code == 202:
+            wait = int(r.headers.get("Retry-After", "20") or 20)
+            if waited + wait > max_wait:
+                err = SyncError("MetaApi erkennt noch die Broker-Einstellungen. Bitte in ca. 1 Minute "
+                                "nochmal auf 'Verbinden' klicken (die Eingaben bleiben stehen).")
+                err.transaction_id = tx
+                raise err
+            _time.sleep(min(wait, 30))
+            waited += min(wait, 30)
+            continue
+        if r.status_code == 401:
+            raise SyncError("MetaApi-Token ungültig. Bitte den Token prüfen.")
+        try:
+            msg = r.json().get("message") or r.text
+        except Exception:
+            msg = r.text
+        if "server" in msg.lower() and ("not found" in msg.lower() or "unable" in msg.lower()):
+            msg += " → Servername genau so eintragen wie im MT5-Login-Fenster (z. B. 'FTMO-Server3')."
+        if "password" in msg.lower() or "authoriz" in msg.lower():
+            msg += " → Login oder Passwort prüfen."
+        raise SyncError(f"Verbindung fehlgeschlagen ({r.status_code}): {msg[:400]}")
+
+
+def account_info(token: str, account_id: str) -> dict:
+    try:
+        r = requests.get(f"{PROVISIONING}/{account_id}", headers={"auth-token": token}, timeout=30)
+        return r.json() if r.status_code == 200 else {}
+    except Exception:
+        return {}
+
+
+def remove_mt_account(token: str, account_id: str) -> None:
+    """Loescht das Konto bei MetaApi (damit keine Kosten weiterlaufen)."""
+    try:
+        requests.delete(f"{PROVISIONING}/{account_id}", headers={"auth-token": token}, timeout=30)
+    except Exception:
+        pass
 
 
 # --------------------------------------------------------------------------- MetaApi REST
@@ -189,7 +254,9 @@ def sync_account(account: dict, token: str) -> dict:
     if isinstance(start, pd.Timestamp):
         start = start.to_pydatetime()
     end = datetime.now(timezone.utc) + timedelta(days=1)
-    region = account.get("region") or "new-york"
+    region = account.get("region")
+    if not region:
+        region = account_info(token, account["metaapi_account_id"]).get("region") or "new-york"
     acc_id = account["metaapi_account_id"].strip()
 
     deals = _get_paged(token, region, acc_id, "history-deals", start, end)
