@@ -1,14 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-310705,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-08-28 17:00,2026-08-28,447.0,,452.0,,
-310706,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-08-28 17:00,2026-08-28,588.0,,588.0,,
-287363,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-08-28 19:30,2026-08-25,-44.5,,-44.2,,
-287504,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-08-28 19:30,2026-08-25,-63.3,,-52.9,,
-287739,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-08-28 19:30,2026-08-25,-44.5,,-54.6,,
-287880,840520003,cftc-gold-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-08-28 19:30,2026-08-25,243.3,,222.2,,
-287927,840520004,cftc-crude-oil-non-commercial-net-positions,USD,US,CFTC Rohöl nichtkommerzielle Nettopositionen,Medium,position,2026-08-28 19:30,2026-08-25,123.4,,122.1,,
-287974,840520005,cftc-sp-500-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-08-28 19:30,2026-08-25,-68.0,,-10.6,,
-288256,840520011,cftc-nasdaq-100-non-commercial-net-positions,USD,US,CFTC Nasdaq 100 Nichtkommerzielle Nettopositionen,Medium,position,2026-08-28 19:30,2026-08-25,10.0,,-10.4,,
-288303,999520001,cftc-eur-non-commercial-net-positions,EUR,EU,CFTC EUR nichtkommerzielle Nettopositionen,Medium,position,2026-08-28 19:30,2026-08-25,-36.4,,-59.1,,
 289105,392020002,retail-sales-mm,JPY,JP,Einzelhandelsumsatz m/m,High,percent,2026-08-30 23:50,2026-07-01,2.4,-0.6,-4.1,-3.9,positive
 289117,392020003,retail-sales-yy,JPY,JP,Einzelhandelsumsatz y/y,Low,percent,2026-08-30 23:50,2026-07-01,4.0,3.6,0.5,0.6,positive
 289129,392020004,large-retailers-sales-yy,JPY,JP,Umsatz großer Einzelhändler y/y,Medium,percent,2026-08-30 23:50,2026-07-01,1.4,1.4,-1.0,,
