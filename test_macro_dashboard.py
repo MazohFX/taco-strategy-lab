@@ -292,3 +292,11 @@ def test_currency_scores_relative():
                             {"score": 0.5, "vix": 15})
     top, bottom = sc.iloc[0]["currency"], sc.dropna(subset=["score"]).iloc[-1]["currency"]
     assert top in ("GBP", "AUD", "NZD") and bottom in ("JPY", "CHF")
+
+
+def test_crowded_flag_only_where_set():
+    stats = {"GBP": {"score": 0.5, "percentile": 0.95}, "EUR": {"score": 0.1, "percentile": 0.5}}
+    sc = md.currency_scores(_calendar(), NOW, lambda c: (None, 0), lambda c: stats.get(c), None)
+    flags = dict(zip(sc["currency"], sc["crowded"]))
+    assert flags["GBP"] == "Longs überfüllt"
+    assert not isinstance(flags["EUR"], str) and not isinstance(flags["USD"], str)

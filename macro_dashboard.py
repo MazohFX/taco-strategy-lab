@@ -1408,8 +1408,8 @@ def render_tagesplan(data: dict) -> None:
             for _, r in sc.iterrows():
                 parts = " · ".join(f"{PILLAR_LABELS[k].split(' ')[0]} {r[k]:+.2f}" for k in SCORED_PILLARS
                                    if pd.notna(r.get(k)))
-                hover.append(f"{r['currency']}: {r['score']:+.2f}<br>{parts}" + (f"<br>⚠️ COT {r['crowded']}" if r.get("crowded") else ""))
-            labels = [f"{c} ⚠️" if cr else c for c, cr in zip(sc["currency"], sc["crowded"])]
+                hover.append(f"{r['currency']}: {r['score']:+.2f}<br>{parts}" + (f"<br>⚠️ COT {r['crowded']}" if isinstance(r.get("crowded"), str) else ""))
+            labels = [f"{c} ⚠️" if isinstance(cr, str) else c for c, cr in zip(sc["currency"], sc["crowded"])]
             fig = go.Figure(go.Bar(x=sc["score"], y=labels, orientation="h", marker_color=colors,
                                    text=[f"{v:+.2f}" for v in sc["score"]], textposition="outside",
                                    hovertext=hover, hoverinfo="text"))
@@ -1418,7 +1418,7 @@ def render_tagesplan(data: dict) -> None:
                                          zerolinecolor="#475569", showticklabels=False),
                               yaxis=dict(showgrid=False), showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
-            if sc["crowded"].notna().any():
+            if any(isinstance(cr, str) for cr in sc["crowded"]):
                 st.caption("⚠️ = Spekulanten extrem einseitig positioniert (COT) – Squeeze-Gefahr.")
 
     # 3) Watchlist + 4) Sperren
