@@ -1,8 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-268712,840210001,michigan-consumer-sentiment,USD,US,Michigan Konsumklima,Medium,none,2026-08-28 14:00,2026-08-01,51.7,51.0,51.0,,positive
-268736,840210002,michigan-consumer-expectations,USD,US,Michigan Konsumentenerwartungen,Medium,none,2026-08-28 14:00,2026-08-01,51.5,50.6,50.6,,positive
-268784,840210004,michigan-inflation-expectations,USD,US,Michigan Inflationserwartungen,Medium,percent,2026-08-28 14:00,2026-08-01,4.0,4.3,4.3,,negative
-268808,840210005,michigan-5-year-inflation-expectations,USD,US,Michigan 5-jährige Inflationserwartungen,Medium,percent,2026-08-28 14:00,2026-08-01,3.3,3.3,3.3,,
 316682,999010033,ecb-executive-board-member-schnabel-speech,EUR,EU,Das EZB-Direktoriumsmitglied Schnabel spricht,Medium,none,2026-08-28 16:00,1970-01-01,,,,,
 310705,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-08-28 17:00,2026-08-28,447.0,,452.0,,
 310706,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-08-28 17:00,2026-08-28,588.0,,588.0,,
