@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-316682,999010033,ecb-executive-board-member-schnabel-speech,EUR,EU,Das EZB-Direktoriumsmitglied Schnabel spricht,Medium,none,2026-08-28 16:00,1970-01-01,,,,,
 310705,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-08-28 17:00,2026-08-28,447.0,,452.0,,
 310706,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-08-28 17:00,2026-08-28,588.0,,588.0,,
 287363,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-08-28 19:30,2026-08-25,-44.5,,-44.2,,
