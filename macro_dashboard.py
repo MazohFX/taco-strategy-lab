@@ -53,6 +53,8 @@ CONFIG = {
     "cot_extreme_damping": 0.5,
     # Gesamtfazit
     "neutral_band": 0.15,          # |Score| darunter = NEUTRAL
+    "weak_band": 0.25,             # |Score| darunter = nur "leicht" LONG/SHORT
+    "stale_days": 7,               # MT5-Daten aelter -> Zinsen/Ueberraschungen als veraltet markieren
     "support_min": 0.15,           # ab hier zaehlt eine Saeule als "dafuer"
     "oppose_min": 0.30,            # ab hier zaehlt eine Saeule als "klar dagegen"
     # Event-Risiko / JPY-Intervention (Heuristik, keine offizielle Schwelle)
@@ -638,6 +640,47 @@ def overall(pillars: dict[str, Pillar], pair: str, force_risk: bool = False) -> 
     return {"score": score, "label": label, "quality": quality, "supporters": supporters, "opposers": opposers}
 
 
+def annotate_verdict(verdict: dict, pillars: dict[str, Pillar], pair: str,
+                     intervention: dict | None = None, stale_since: pd.Timestamp | None = None) -> dict:
+    """Ergaenzt das Fazit um Staerke und Warnhinweise:
+    - 'leicht LONG/SHORT', wenn der Score knapp ueber der Neutral-Grenze liegt
+      oder eine tragende Saeule auf veralteten Daten beruht;
+    - JPY-Interventionsrisiko bremst JPY-Short-Richtungen (z. B. USDJPY/GBPJPY long):
+      mittel -> nur 'leicht', hoch -> GEMISCHT."""
+    v = dict(verdict)
+    label, score = v.get("label"), v.get("score")
+    notes, weak = [], False
+    if label in ("LONG", "SHORT") and score is not None and abs(score) < CONFIG["weak_band"]:
+        weak = True
+        notes.append(f"Score nur {score:+.2f} – knapp über der Neutral-Grenze")
+    if stale_since is not None:
+        stale_keys = [k for k in ("zinsen", "surprise") if pillars.get(k) and pillars[k].extra.get("stale")]
+        if stale_keys:
+            names = " & ".join(PILLAR_LABELS[k].split(" ")[0] for k in stale_keys)
+            notes.append(f"⏳ {names} auf Datenstand {stale_since:%d.%m.%Y} (MT5)")
+            if label in ("LONG", "SHORT") and any(k in v.get("supporters", []) for k in stale_keys):
+                weak = True
+    code = pair if pair in FUTURES else pair
+    if intervention and code not in FUTURES and "JPY" in split_pair(code) and label in ("LONG", "SHORT"):
+        b, q = split_pair(code)
+        sign = 1 if label == "LONG" else -1
+        jpy_short = (q == "JPY" and sign > 0) or (b == "JPY" and sign < 0)
+        lvl = intervention.get("level")
+        if jpy_short and lvl in ("mittel", "hoch"):
+            usd = intervention.get("usdjpy")
+            txt = f"Interventionsrisiko {lvl} (USDJPY {usd:.1f})" if usd else f"Interventionsrisiko {lvl}"
+            if lvl == "hoch":
+                v["label"] = "GEMISCHT"
+                notes.append(f"🛑 {txt} – Yen-Schwäche-Trades gebremst")
+            else:
+                weak = True
+                notes.append(f"⚠️ {txt} – Yen-Schwäche-Trades nur mit Vorsicht")
+    v["weak"] = weak and v["label"] in ("LONG", "SHORT")
+    v["display"] = f"leicht {v['label']}" if v["weak"] else v["label"]
+    v["notes"] = notes
+    return v
+
+
 def summary_sentence(pair: str, pillars: dict[str, Pillar], verdict: dict) -> str:
     lbl = verdict["label"]
     names = lambda ks: ", ".join(PILLAR_LABELS[k] for k in ks)
@@ -984,6 +1027,19 @@ def compute_all(deps: dict) -> dict:
             "event": score_event_future(name, calendar, now),
         }
         results[name] = {"pillars": pillars, "verdict": overall(pillars, name), "code": name}
+    # Veraltete MT5-Daten markieren und Fazit um Staerke/Intervention ergaenzen
+    stale_since = None
+    if calendar is not None and not calendar.empty and "actual" in calendar:
+        last_actual = calendar[calendar["actual"].notna()]["time_utc"].max()
+        if pd.notna(last_actual) and (now - last_actual).days > CONFIG["stale_days"]:
+            stale_since = last_actual
+    interv_all = intervention_level(closes["usdjpy"])
+    for name, r in results.items():
+        if stale_since is not None:
+            for k in ("zinsen", "surprise"):
+                if r["pillars"][k].available:
+                    r["pillars"][k].extra["stale"] = True
+        r["verdict"] = annotate_verdict(r["verdict"], r["pillars"], r.get("code", name), interv_all, stale_since)
     scores = currency_scores(calendar, now, deps["surprise_index"], cot_stats, appetite, expected)
     regime = trading_regime(appetite, closes["vix"])
     interv = intervention_level(closes["usdjpy"])
@@ -1014,6 +1070,10 @@ def _score_cell(score: float | None) -> str:
 def _cell_style(val: str) -> str:
     if not isinstance(val, str):
         return ""
+    if val.startswith("leicht LONG"):
+        return "color:#86efac"
+    if val.startswith("leicht SHORT"):
+        return "color:#fca5a5"
     if val.startswith("▲") or val.startswith("LONG"):
         return "color:#4ade80;font-weight:600"
     if val.startswith("▼") or val.startswith("SHORT"):
@@ -1051,7 +1111,8 @@ def _render_overview(data: dict, names: list[str], index_label: str = "Paar") ->
         p, v = r["pillars"], r["verdict"]
         rows.append({
             index_label: pair,
-            "Fazit": f"{v['label']} ({v['score']:+.2f})" if v["score"] is not None else v["label"],
+            "Fazit": (f"{v.get('display', v['label'])} ({v['score']:+.2f})" if v["score"] is not None else v["label"])
+                     + (" ⚠️" if any(n.startswith(("⚠️", "🛑")) for n in v.get("notes", [])) else ""),
             "Zinsen": _score_cell(p["zinsen"].score),
             "Risiko": _score_cell(p["risiko"].score),
             "Überraschungen": _score_cell(p["surprise"].score),
@@ -1068,16 +1129,20 @@ def _render_verdict(title: str, r: dict, pair: str | None = None) -> None:
     p, v = r["pillars"], r["verdict"]
     ev = p["event"].extra.get("level", "–")
     color = _LABEL_COL.get(v["label"], _COL["neu"])
+    if v.get("weak"):
+        color = {"LONG": "#86efac", "SHORT": "#fca5a5"}.get(v["label"], color)
     score_txt = f"{v['score']:+.2f}" if v["score"] is not None else "–"
+    notes_html = "".join(f'<div style="color:#facc15;margin-top:4px;font-size:.9rem">{n}</div>'
+                         for n in v.get("notes", []))
     st.markdown(
         f'<div style="background:{_COL["bg"]};border:1px solid {color};border-left:6px solid {color};'
         f'border-radius:10px;padding:16px 20px;margin:6px 0 14px 0">'
         f'<div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:14px">'
         f'<span style="font-size:1.6rem;font-weight:800;color:{_COL["text"]}">{title}</span>'
-        f'<span style="font-size:1.6rem;font-weight:800;color:{color}">{v["label"]}</span>'
+        f'<span style="font-size:1.6rem;font-weight:800;color:{color}">{v.get("display", v["label"])}</span>'
         f'<span style="color:{_COL["muted"]}">Score {score_txt} · Daten {v["quality"]} Säulen · '
         f'Event-Risiko <b style="color:{_EVENT_COL.get(ev, _COL["neu"])}">{ev}</b></span></div>'
-        f'<div style="color:#cbd5e1;margin-top:6px">{summary_sentence(pair, p, v)}</div></div>',
+        f'<div style="color:#cbd5e1;margin-top:6px">{summary_sentence(pair, p, v)}</div>{notes_html}</div>',
         unsafe_allow_html=True,
     )
     cols = st.columns(5)
@@ -1090,7 +1155,13 @@ def _render_verdict(title: str, r: dict, pair: str | None = None) -> None:
             html = _card(PILLAR_LABELS[key], "n/a", "#475569", pil.reason, _bar_html(None))
         else:
             c = _COL["pos"] if pil.score >= 0.15 else _COL["neg"] if pil.score <= -0.15 else _COL["neu"]
-            html = _card(PILLAR_LABELS[key], f"{pil.score:+.2f}", c, pil.reason, _bar_html(pil.score))
+            reason = pil.reason
+            if pil.extra.get("stale"):
+                c = "#64748b"
+                reason = "⏳ veraltete MT5-Daten · " + reason
+            html = _card(PILLAR_LABELS[key], f"{pil.score:+.2f}", c, reason, _bar_html(pil.score))
+            if pil.extra.get("stale"):
+                html = f'<div style="opacity:.55">{html}</div>'
         col.markdown(html, unsafe_allow_html=True)
 
 
@@ -1437,7 +1508,7 @@ def render_tagesplan(data: dict) -> None:
             confirm = ""
             if vlabel:
                 ok = vlabel == item["direction"]
-                confirm = (f'<span style="color:{"#4ade80" if ok else _COL["muted"]}">Paar-Ansicht: {vlabel}'
+                confirm = (f'<span style="color:{"#4ade80" if ok else _COL["muted"]}">Paar-Ansicht: {v.get("display", vlabel)}'
                            f'{" ✓" if ok else ""}</span>')
             st.markdown(
                 f'<div style="background:{_COL["bg"]};border:1px solid {_COL["border"]};border-left:5px solid {col};'

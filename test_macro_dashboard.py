@@ -300,3 +300,28 @@ def test_crowded_flag_only_where_set():
     flags = dict(zip(sc["currency"], sc["crowded"]))
     assert flags["GBP"] == "Longs überfüllt"
     assert not isinstance(flags["EUR"], str) and not isinstance(flags["USD"], str)
+
+
+def _v(label, score, supporters=("surprise", "cot")):
+    return {"label": label, "score": score, "quality": "4/4", "supporters": list(supporters), "opposers": []}
+
+
+def test_annotate_weak_and_stale():
+    pills = {k: _pil(k, 0.3) for k in md.SCORED_PILLARS}
+    v = md.annotate_verdict(_v("LONG", 0.17), pills, "USDJPY")
+    assert v["display"] == "leicht LONG" and v["weak"]
+    v2 = md.annotate_verdict(_v("LONG", 0.40), pills, "GBPUSD")
+    assert v2["display"] == "LONG" and not v2["notes"]
+    pills["surprise"].extra["stale"] = True
+    v3 = md.annotate_verdict(_v("LONG", 0.40), pills, "GBPUSD", stale_since=pd.Timestamp("2026-09-29"))
+    assert v3["display"] == "leicht LONG" and any("29.09.2026" in n for n in v3["notes"])
+
+
+def test_annotate_intervention_brakes_jpy_weakness_only():
+    pills = {k: _pil(k, 0.4) for k in md.SCORED_PILLARS}
+    mid, high = {"level": "mittel", "usdjpy": 157.9}, {"level": "hoch", "usdjpy": 161.0}
+    assert md.annotate_verdict(_v("LONG", 0.5), pills, "USDJPY", mid)["display"] == "leicht LONG"
+    assert md.annotate_verdict(_v("LONG", 0.5), pills, "GBPJPY", high)["label"] == "GEMISCHT"
+    assert md.annotate_verdict(_v("SHORT", -0.5), pills, "USDJPY", high)["display"] == "SHORT"
+    assert md.annotate_verdict(_v("SHORT", -0.5), pills, "JPYUSD", mid)["display"] == "leicht SHORT"   # JPY-Future short
+    assert md.annotate_verdict(_v("LONG", 0.5), pills, "EURUSD", high)["display"] == "LONG"
