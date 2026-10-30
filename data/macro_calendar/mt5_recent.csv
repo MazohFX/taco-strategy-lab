@@ -1,8 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-289105,392020002,retail-sales-mm,JPY,JP,Einzelhandelsumsatz m/m,High,percent,2026-08-30 23:50,2026-07-01,2.4,-0.6,-4.1,-3.9,positive
-289117,392020003,retail-sales-yy,JPY,JP,Einzelhandelsumsatz y/y,Low,percent,2026-08-30 23:50,2026-07-01,4.0,3.6,0.5,0.6,positive
-289129,392020004,large-retailers-sales-yy,JPY,JP,Umsatz großer Einzelhändler y/y,Medium,percent,2026-08-30 23:50,2026-07-01,1.4,1.4,-1.0,,
-289146,392020006,industrial-production-mm,JPY,JP,Industrieproduktion m/m,Medium,percent,2026-08-30 23:50,2026-07-01,0.1,1.1,1.9,,negative
 302082,36010025,company-gross-operating-profits-qq,AUD,AU,Unternehmen Brutto-Betriebsgewinne q/q,Medium,percent,2026-08-31 01:30,2026-04-01,1.8,-2.7,-1.3,-1.5,positive
 317194,276010020,cpi-mm,EUR,DE,CPI m/m,Medium,percent,2026-08-31 12:00,2026-08-01,0.2,-0.2,0.8,,positive
 317196,276010021,cpi-yy,EUR,DE,CPI y/y,Medium,percent,2026-08-31 12:00,2026-08-01,2.9,2.2,2.8,,positive
