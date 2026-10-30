@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-317194,276010020,cpi-mm,EUR,DE,CPI m/m,Medium,percent,2026-08-31 12:00,2026-08-01,0.2,-0.2,0.8,,positive
-317196,276010021,cpi-yy,EUR,DE,CPI y/y,Medium,percent,2026-08-31 12:00,2026-08-01,2.9,2.2,2.8,,positive
 309605,840510001,chicago-pmi,USD,US,MNI Chicago Geschäftsklima,High,none,2026-08-31 13:45,2026-08-01,,58.9,57.6,,
 259222,392070002,capital-spending-yy,JPY,JP,Investitionstätigkeit y/y,Medium,percent,2026-08-31 23:50,2026-04-01,1.6,1.0,0.0,,positive
 302090,36010001,building-approvals-mm,AUD,AU,Baugenehmigungen m/m,Medium,percent,2026-09-01 01:30,2026-07-01,-3.6,-2.9,7.2,6.9,negative
