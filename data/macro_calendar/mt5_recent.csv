@@ -1,9 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-270175,840020002,construction-spending-mm,USD,US,Bauinvestitionen m/m,Medium,percent,2026-09-01 14:00,2026-07-01,-0.5,-0.2,-0.1,0.0,negative
-283016,840040001,ism-manufacturing-pmi,USD,US,ISM Einkaufsmanagerindex Hersteller PMI,High,none,2026-09-01 14:00,2026-08-01,54.6,55.2,55.6,,negative
-283022,840040002,ism-prices-paid,USD,US,ISM bezahlte Herstellerpreise,High,none,2026-09-01 14:00,2026-08-01,71.1,63.5,71.1,,positive
-283034,840040004,ism-manufacturing-employment,USD,US,ISM Verarbeitendes Gewerbe Beschäftigung,Medium,none,2026-09-01 14:00,2026-08-01,51.2,55.3,52.8,,negative
-289569,840030021,jolts-job-openings,USD,US,JOLTS Stellenangebote,High,job,2026-09-01 14:00,2026-07-01,7.271,7.496,7.359,7.182,negative
 289308,36020004,ai-group-industry-index,AUD,AU,Ai Group Herstellerindex,Medium,none,2026-09-01 23:00,2026-08-01,-3.5,,-29.9,,
 302101,36010019,gdp-qq,AUD,AU,Bruttoinlandsprodukt q/q,Medium,percent,2026-09-02 01:30,2026-04-01,0.4,0.5,0.3,,negative
 302102,36010020,gdp-yy,AUD,AU,Bruttoinlandsprodukt y/y,Medium,percent,2026-09-02 01:30,2026-04-01,2.1,-21.5,2.5,,positive
