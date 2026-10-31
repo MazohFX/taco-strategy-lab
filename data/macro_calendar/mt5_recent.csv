@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-289308,36020004,ai-group-industry-index,AUD,AU,Ai Group Herstellerindex,Medium,none,2026-09-01 23:00,2026-08-01,-3.5,,-29.9,,
 302101,36010019,gdp-qq,AUD,AU,Bruttoinlandsprodukt q/q,Medium,percent,2026-09-02 01:30,2026-04-01,0.4,0.5,0.3,,negative
 302102,36010020,gdp-yy,AUD,AU,Bruttoinlandsprodukt y/y,Medium,percent,2026-09-02 01:30,2026-04-01,2.1,-21.5,2.5,,positive
 314375,392060046,boj-board-member-takata-speech,JPY,JP,Rede von BoJ-Vorstandsmitglied Takata,Medium,none,2026-09-02 01:30,1970-01-01,,,,,
