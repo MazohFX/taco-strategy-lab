@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-313663,276500001,markit-manufacturing-pmi,EUR,DE,S&P Global PMI der Hersteller,Medium,none,2026-09-01 07:55,2026-08-01,54.3,54.1,54.1,,positive
-281620,380010021,gdp-yy,EUR,IT,Bruttoinlandsprodukt y/y,Low,percent,2026-09-01 08:00,2026-04-01,1.0,1.0,1.0,,
-313672,999500001,markit-manufacturing-pmi,EUR,EU,S&P Global PMI der Hersteller,Medium,none,2026-09-01 08:00,2026-08-01,52.7,52.8,52.8,,negative
 281628,380010022,unemployment-rate,EUR,IT,Arbeitslosenrate,Low,percent,2026-09-01 08:30,2026-07-01,5.8,6.2,5.7,5.8,positive
 313670,826500001,markit-manufacturing-pmi,GBP,GB,S&P Global/CIPS PMI der Hersteller,Medium,none,2026-09-01 08:30,2026-08-01,51.7,51.5,51.5,,positive
 281404,380010002,cpi-yy,EUR,IT,CPI y/y,Low,percent,2026-09-01 09:00,2026-08-01,3.3,2.4,2.9,,positive
