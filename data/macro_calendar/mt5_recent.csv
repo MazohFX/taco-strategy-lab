@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-314062,756020007,retail-sales-yy,CHF,CH,Einzelhandelsumsatz y/y,Low,percent,2026-09-01 06:30,2026-07-01,2.3,0.5,1.5,1.9,positive
-316732,276050007,bbk-vice-president-mauderer-speech,EUR,DE,Vorstandsmitglied Mauderer der BBk spricht,Medium,none,2026-09-01 06:30,1970-01-01,,,,,
 313669,724500001,markit-manufacturing-pmi,EUR,ES,S&P Global PMI der Hersteller,Medium,none,2026-09-01 07:15,2026-08-01,49.5,49.7,50.2,,negative
 309579,756060001,procurech-manufacturing-pmi,CHF,CH,procure.ch PMI der Hersteller,Medium,none,2026-09-01 07:30,2026-08-01,57.1,49.9,50.0,53.2,positive
 313665,380500001,markit-manufacturing-pmi,EUR,IT,S&P Global PMI der Hersteller,Medium,none,2026-09-01 07:45,2026-08-01,49.6,51.9,51.3,,negative
