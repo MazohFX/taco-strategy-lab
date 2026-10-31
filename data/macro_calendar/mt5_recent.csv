@@ -1,10 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-281404,380010002,cpi-yy,EUR,IT,CPI y/y,Low,percent,2026-09-01 09:00,2026-08-01,3.3,2.4,2.9,,positive
-313357,999030011,consumer-price-index-mm,EUR,EU,CPI m/m,Medium,percent,2026-09-01 09:00,2026-08-01,2.9,1.2,0.2,,positive
-313358,999030012,consumer-price-index-ex-food-energy-yy,EUR,EU,Kern CPI y/y,Medium,percent,2026-09-01 09:00,2026-08-01,2.4,2.4,2.5,,
-313359,999030013,consumer-price-index-yy,EUR,EU,CPI y/y,High,percent,2026-09-01 09:00,2026-08-01,2.8,3.1,2.9,,negative
-313360,999030020,unemployment-rate,EUR,EU,Arbeitslosenrate,Medium,percent,2026-09-01 09:00,2026-07-01,6.4,6.4,6.3,6.4,
-313364,999030027,core-consumer-price-index,EUR,EU,Kern VPI,Medium,none,2026-09-01 09:00,2026-08-01,103.07,,102.84,,
 316679,840050032,fed-vice-chair-for-supervision-barr-speech,USD,US,Rede des Vizevorsitzenden für Aufsicht der Fed Barr,Medium,none,2026-09-01 13:05,1970-01-01,,,,,
 313671,840500001,markit-manufacturing-pmi,USD,US,S&P Global PMI der Hersteller,High,none,2026-09-01 13:45,2026-08-01,53.9,55.5,53.9,,negative
 270175,840020002,construction-spending-mm,USD,US,Bauinvestitionen m/m,Medium,percent,2026-09-01 14:00,2026-07-01,-0.5,-0.2,-0.1,0.0,negative
