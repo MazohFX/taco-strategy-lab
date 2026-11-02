@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-312986,756040001,gdp-qq,CHF,CH,Bruttoinlandsprodukt q/q,Medium,percent,2026-09-03 07:00,2026-04-01,1.9,0.1,0.7,0.6,positive
-312988,756040002,gdp-yy,CHF,CH,Bruttoinlandsprodukt y/y,Medium,percent,2026-09-03 07:00,2026-04-01,2.8,0.6,0.5,,positive
 313894,724500002,markit-services-pmi,EUR,ES,S&P Global PMI der Dienstleister,Medium,none,2026-09-03 07:15,2026-08-01,57.8,55.5,58.3,,positive
 313895,724500003,markit-composite-pmi,EUR,ES,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-09-03 07:15,2026-08-01,55.8,,56.5,,
 313888,380500002,markit-services-pmi,EUR,IT,S&P Global PMI der Dienstleister,Medium,none,2026-09-03 07:45,2026-08-01,55.2,52.5,52.5,,positive
