@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-286748,392030008,household-spending-yy,JPY,JP,Ausgaben der Privathaushalte y/y,Medium,percent,2026-09-03 23:30,2026-07-01,-3.6,-1.8,-3.3,,negative
-286760,392030009,household-spending-mm,JPY,JP,Haushalte Ausgaben m/m,Medium,percent,2026-09-03 23:30,2026-07-01,0.5,-3.9,-6.4,-6.3,positive
 317192,276010018,factory-orders-mm,EUR,DE,Auftragseingänge der Hersteller m/m,Medium,percent,2026-09-04 06:00,2026-07-01,2.5,2.9,3.1,3.7,negative
 317193,276010019,factory-orders-yy,EUR,DE,Auftragseingänge y/y,Medium,percent,2026-09-04 06:00,2026-07-01,13.1,-2.7,6.5,7.2,positive
 313990,999500004,markit-construction-pmi,EUR,EU,S&P Global PMI des Baugewerbes,Medium,none,2026-09-04 07:30,2026-08-01,43.0,,44.3,,
