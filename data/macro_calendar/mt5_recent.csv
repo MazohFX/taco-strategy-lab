@@ -1,8 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-313875,36500002,commonwealth-bank-services-pmi,AUD,AU,S&P Global PMI der Dienstleister,Medium,none,2026-09-02 23:00,2026-08-01,53.2,50.6,53.6,,positive
-313876,36500003,commonwealth-bank-composite-pmi,AUD,AU,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-09-02 23:00,2026-08-01,52.7,,53.2,,
-313890,392500002,nikkei-services-pmi,JPY,JP,au Jibun Bank Japan Einkaufsmanagerindex (PMI) Dienstleistungen,Medium,none,2026-09-03 00:30,2026-08-01,52.5,51.3,52.3,,positive
-302100,36010011,trade-balance,AUD,AU,Handelsbilanz,Medium,currency,2026-09-03 01:30,2026-07-01,1.923,0.336,1.929,2.341,positive
 270613,756020001,cpi-mm,CHF,CH,CPI m/m,Medium,percent,2026-09-03 06:30,2026-08-01,0.4,0.0,-0.1,,positive
 270619,756020002,cpi-yy,CHF,CH,CPI y/y,Low,percent,2026-09-03 06:30,2026-08-01,0.8,0.2,0.4,,positive
 312986,756040001,gdp-qq,CHF,CH,Bruttoinlandsprodukt q/q,Medium,percent,2026-09-03 07:00,2026-04-01,1.9,0.1,0.7,0.6,positive
