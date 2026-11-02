@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-318043,826020034,boe-mpc-member-pill-speech,GBP,GB,BoE MPC Mitglied Pill spricht,Medium,none,2026-09-03 15:00,1970-01-01,,,,,
 318044,826020034,boe-mpc-member-pill-speech,GBP,GB,BoE MPC Mitglied Pill spricht,Medium,none,2026-09-03 17:15,1970-01-01,,,,,
 286748,392030008,household-spending-yy,JPY,JP,Ausgaben der Privathaushalte y/y,Medium,percent,2026-09-03 23:30,2026-07-01,-3.6,-1.8,-3.3,,negative
 286760,392030009,household-spending-mm,JPY,JP,Haushalte Ausgaben m/m,Medium,percent,2026-09-03 23:30,2026-07-01,0.5,-3.9,-6.4,-6.3,positive
