@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-313896,826500002,markit-services-pmi,GBP,GB,S&P Global/CIPS PMI der Dienstleister,Medium,none,2026-09-03 08:30,2026-08-01,52.5,52.8,52.8,,negative
-313897,826500005,markit-composite-pmi,GBP,GB,S&P Global/CIPS Zusammengesetzter PMI,Medium,none,2026-09-03 08:30,2026-08-01,52.5,,52.5,,
 270163,840020001,trade-balance,USD,US,Handelsbilanz,Medium,currency,2026-09-03 12:30,2026-07-01,-88.576,-75.77,-73.261,-71.182,negative
 270451,840020023,exports,USD,US,Exporte,Medium,currency,2026-09-03 12:30,2026-07-01,310.723,,314.728,317.335,
 270463,840020024,imports,USD,US,Importe,Medium,currency,2026-09-03 12:30,2026-07-01,399.299,,387.989,388.517,
