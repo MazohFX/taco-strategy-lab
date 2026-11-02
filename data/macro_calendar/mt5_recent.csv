@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-313888,380500002,markit-services-pmi,EUR,IT,S&P Global PMI der Dienstleister,Medium,none,2026-09-03 07:45,2026-08-01,55.2,52.5,52.5,,positive
-313881,250500002,markit-services-pmi,EUR,FR,S&P Global PMI der Dienstleister,Medium,none,2026-09-03 07:50,2026-08-01,48.0,48.4,48.4,,negative
-313883,276500002,markit-services-pmi,EUR,DE,S&P Global PMI der Dienstleister,Medium,none,2026-09-03 07:55,2026-08-01,49.7,48.5,48.5,,positive
 313900,999500002,markit-services-pmi,EUR,EU,S&P Global PMI der Dienstleister,Medium,none,2026-09-03 08:00,2026-08-01,51.6,51.7,51.7,,negative
 313901,999500003,markit-composite-pmi,EUR,EU,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-09-03 08:00,2026-08-01,52.0,52.1,52.1,,negative
 313896,826500002,markit-services-pmi,GBP,GB,S&P Global/CIPS PMI der Dienstleister,Medium,none,2026-09-03 08:30,2026-08-01,52.5,52.8,52.8,,negative
