@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-283027,840040003,ism-non-manufacturing-pmi,USD,US,ISM Dienstleistungen PMI,High,none,2026-09-03 14:00,2026-08-01,55.4,53.8,54.1,,positive
-283039,840040005,ism-non-manufacturing-employment,USD,US,ISM Nicht-verarbeitendes Gewerbe Beschäftigung,Medium,none,2026-09-03 14:00,2026-08-01,47.8,48.4,47.4,,negative
-283057,840040008,ism-non-manufacturing-prices,USD,US,ISM Nicht-verarbeitendes Gewerbe bezahlte Preise,High,none,2026-09-03 14:00,2026-08-01,72.6,68.2,70.3,,positive
 318043,826020034,boe-mpc-member-pill-speech,GBP,GB,BoE MPC Mitglied Pill spricht,Medium,none,2026-09-03 15:00,1970-01-01,,,,,
 318044,826020034,boe-mpc-member-pill-speech,GBP,GB,BoE MPC Mitglied Pill spricht,Medium,none,2026-09-03 17:15,1970-01-01,,,,,
 286748,392030008,household-spending-yy,JPY,JP,Ausgaben der Privathaushalte y/y,Medium,percent,2026-09-03 23:30,2026-07-01,-3.6,-1.8,-3.3,,negative
