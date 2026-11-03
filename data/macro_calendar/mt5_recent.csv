@@ -1,13 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-277611,840030015,unemployment-rate,USD,US,Arbeitslosenrate,High,percent,2026-09-04 12:30,2026-08-01,4.1,4.1,4.1,,
-277623,840030016,nonfarm-payrolls,USD,US,Beschäftigung außerhalb der Landwirtschaft,High,job,2026-09-04 12:30,2026-08-01,162.0,41.0,-23.0,21.0,positive
-277635,840030017,labor-force-participation-rate,USD,US,Erwerbsquote,Medium,percent,2026-09-04 12:30,2026-08-01,61.6,61.4,61.4,,positive
-277647,840030018,average-hourly-earnings-mm,USD,US,Durchschnittliche Stundenlöhne m/m,High,percent,2026-09-04 12:30,2026-08-01,0.3,0.2,0.1,0.2,positive
-277659,840030019,average-hourly-earnings-yy,USD,US,Durchschnittlicher Wochenverdienst y/y,Medium,percent,2026-09-04 12:30,2026-08-01,3.1,3.4,3.2,,negative
-277695,840030023,private-nonfarm-payrolls,USD,US,Beschäftigung außerhalb der Landwirtschaft,Medium,job,2026-09-04 12:30,2026-08-01,127.0,48.0,30.0,71.0,positive
-277707,840030024,u6-unemployment-rate,USD,US,U6 Arbeitslosenrate,Medium,percent,2026-09-04 12:30,2026-08-01,7.7,7.6,7.9,,negative
-278063,124010011,employment-change,CAD,CA,Beschäftigungsentwicklung,Medium,job,2026-09-04 12:30,2026-08-01,-41.7,-30.6,75.1,,negative
-278099,124010014,unemployment-rate,CAD,CA,Arbeitslosenrate,Medium,percent,2026-09-04 12:30,2026-08-01,6.4,6.4,6.4,,
 315179,124020001,ivey-pmi,CAD,CA,Ivey PMI,Medium,none,2026-09-04 14:00,2026-08-01,64.3,51.5,55.1,,positive
 315184,124020002,ivey-pmi-nsa,CAD,CA,Ivey PMI n.s.a.,Medium,none,2026-09-04 14:00,2026-08-01,62.7,,54.1,,
 311602,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-09-04 17:00,2026-09-04,449.0,,447.0,,
