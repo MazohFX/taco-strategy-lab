@@ -147,6 +147,30 @@ def _scan_is_window(
     return candidates
 
 
+def _return_matrix(year_data: dict, sorted_years: np.ndarray, holding_periods: list[int]):
+    """
+    Rendite-Matrix R[jahr, entry_doy-1, hold_idx] (Long-Rendite, NaN = kein gültiger Trade).
+    Exakt dieselbe Logik wie _single_trade (erster Handelstag >= DOY, Exit muss nach Entry liegen),
+    aber einmal pro Symbol statt einmal pro Fold/Fenster/Jahr.
+    """
+    entries = np.arange(1, 363)
+    holds = np.asarray(holding_periods, dtype=int)
+    R = np.full((len(sorted_years), len(entries), len(holds)), np.nan)
+    for yi, yr in enumerate(sorted_years):
+        yd = year_data[int(yr)]
+        doys, closes = yd["doys"], yd["closes"]
+        idx = np.searchsorted(doys, np.arange(0, 368))           # idx[d] = erster Index mit doy >= d
+        ei = idx[entries]
+        for hi, h in enumerate(holds):
+            xd = entries + h
+            ok_d = xd <= 366
+            xi = idx[np.minimum(xd, 367)]
+            ok = ok_d & (ei < len(doys)) & (xi < len(doys)) & (xi > ei)
+            ep = closes[np.minimum(ei, len(doys) - 1)]; xp = closes[np.minimum(xi, len(doys) - 1)]
+            R[yi, :, hi] = np.where(ok, (xp - ep) / ep, np.nan)
+    return entries, holds, R
+
+
 # ---------------------------------------------------------------------------
 # Datenklassen für das Ergebnis
 # ---------------------------------------------------------------------------
@@ -270,64 +294,42 @@ def run_seasonality_wfa(
         pattern_acc: dict[tuple, dict] = {}
         fold_results_sym: list[FoldResult] = []
 
+        entries, holds, R = _return_matrix(year_data, sorted_years, holding_periods)
+        valid = ~np.isnan(R)
+        Rz = np.where(valid, R, 0.0)
+        # kumulierte Summen über die Jahre -> jeder Fold (Jahre < Y) ist ein einziger Lookup
+        c_n = np.cumsum(valid, axis=0); c_sum = np.cumsum(Rz, axis=0)
+        c_wl = np.cumsum(valid & (R > 0), axis=0); c_ws = np.cumsum(valid & (R < 0), axis=0)
+
         for fold_i, oos_year in enumerate(oos_years):
-            # IS-Fenster = alle Jahre VOR oos_year
             is_years = sorted_years[sorted_years < oos_year]
             if len(is_years) < min_is_years:
-                # Sollte durch Konstruktion nicht passieren, aber zur Sicherheit
                 continue
-
-            # ---- Schritt a: Scan auf IS-Jahren ----
-            candidates = _scan_is_window(
-                year_data, sorted_years, is_years,
-                holding_periods, directions,
-                min_winrate, min_trades,
-            )
-
-            fold_res = FoldResult(
-                oos_year=int(oos_year),
-                n_candidates=len(candidates),
-            )
-
-            # ---- Schritt b/c: Kandidaten auf OOS-Jahr anwenden ----
-            for cand in candidates:
-                key = (cand["entry_doy"], cand["exit_doy"], cand["direction"])
-                t = _single_trade(year_data, int(oos_year),
-                                  cand["entry_doy"], cand["exit_doy"])
-
-                # Akkumulator aktualisieren (Muster wurde in diesem Fold gefunden)
-                if key not in pattern_acc:
-                    pattern_acc[key] = {
-                        "folds_found": 0,
-                        "oos_wins": 0,
-                        "oos_n": 0,
-                        "oos_ret_sum": 0.0,
-                        "is_wr_sum": 0.0,
-                    }
-                acc = pattern_acc[key]
-                acc["folds_found"] += 1
-                acc["is_wr_sum"] += cand["is_winrate"]
-
-                oos_ret: float | None = None
-                oos_win: bool | None = None
-                if t is not None:
-                    raw_ret = t[0] if cand["direction"] == "long" else t[1]
-                    oos_win = raw_ret > 0
-                    oos_ret = raw_ret
-                    acc["oos_n"] += 1
-                    acc["oos_ret_sum"] += raw_ret
-                    if oos_win:
-                        acc["oos_wins"] += 1
-
-                fold_res.trades.append({
-                    "entry_doy": cand["entry_doy"],
-                    "exit_doy":  cand["exit_doy"],
-                    "direction": cand["direction"],
-                    "is_winrate": cand["is_winrate"],
-                    "oos_win": oos_win,
-                    "oos_ret": oos_ret,
-                })
-
+            k = len(is_years) - 1                     # sorted_years ist aufsteigend -> Index des letzten IS-Jahres
+            yo = int(np.searchsorted(sorted_years, oos_year))
+            n = c_n[k]
+            fold_res = FoldResult(oos_year=int(oos_year), n_candidates=0)
+            for dir_ in directions:
+                wins = c_wl[k] if dir_ == "long" else c_ws[k]
+                avg = (c_sum[k] if dir_ == "long" else -c_sum[k]) / np.maximum(n, 1)
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    wr = np.where(n > 0, wins / np.maximum(n, 1), 0.0)
+                cand = (n >= min_trades) & (wr >= min_winrate) & (n > 0)
+                for ei_, hi_ in zip(*np.nonzero(cand)):
+                    entry_doy = int(entries[ei_]); exit_doy = entry_doy + int(holds[hi_])
+                    key = (entry_doy, exit_doy, dir_)
+                    acc = pattern_acc.setdefault(key, {"folds_found": 0, "oos_wins": 0, "oos_n": 0,
+                                                        "oos_ret_sum": 0.0, "is_wr_sum": 0.0})
+                    acc["folds_found"] += 1
+                    acc["is_wr_sum"] += float(wr[ei_, hi_])
+                    r = R[yo, ei_, hi_]
+                    oos_ret = oos_win = None
+                    if not np.isnan(r):
+                        oos_ret = float(r if dir_ == "long" else -r); oos_win = oos_ret > 0
+                        acc["oos_n"] += 1; acc["oos_ret_sum"] += oos_ret; acc["oos_wins"] += int(oos_win)
+                    fold_res.trades.append({"entry_doy": entry_doy, "exit_doy": exit_doy, "direction": dir_,
+                                            "is_winrate": float(wr[ei_, hi_]), "oos_win": oos_win, "oos_ret": oos_ret})
+                fold_res.n_candidates += int(cand.sum())
             fold_results_sym.append(fold_res)
 
         all_fold_results[symbol] = fold_results_sym
@@ -403,6 +405,220 @@ def wfa_badge_for_row(
                 return "✅ OOS-validiert"
             return "⚠️ Nur IS"
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Quant-Bewertung (0–5 Sterne) — "Würde ich das als Quant-Trader handeln?"
+# ---------------------------------------------------------------------------
+
+QUANT_CRITERIA = {
+    "★ OOS":         "Walk-Forward: ≥ 5 OOS-Trades, OOS-Winrate ≥ 65 % und OOS-Ø-Return > Kostenpuffer (0,1 %)",
+    "★ Beide Hälften": "Erste UND zweite Hälfte der Historie je ≥ {half:.0%} Winrate (Muster war nicht nur zuletzt gut)",
+    "★ Signifikanz":  "Binomial-p < {p:g} über alle Jahre — streng, weil je Symbol ~11.600 Fenster getestet werden",
+    "★ Plateau":     "≥ {plat:.0%} der Nachbar-Fenster (Entry ±2, Haltedauer ±2 Tage) mit ≥ 60 % Winrate",
+    "★ Ökonomie":    "Ø-Return ≥ {econ:.1%} und Median > 0 — lohnt sich nach Kosten wirklich",
+}
+QUANT_P, QUANT_HALF, QUANT_PLAT, QUANT_ECON = 0.0005, 0.70, 0.70, 0.004
+QUANT_CRITERIA = {k: v.format(p=QUANT_P, half=QUANT_HALF, plat=QUANT_PLAT, econ=QUANT_ECON) for k, v in QUANT_CRITERIA.items()}
+
+
+def _binom_p(k: int, n: int) -> float:
+    return float(sum(math.comb(n, i) for i in range(k, n + 1)) / 2 ** n)
+
+
+def _window_rets(year_data: dict, years: np.ndarray, entry_doy: int, exit_doy: int, direction: str) -> np.ndarray:
+    out = []
+    for yr in years:
+        t = _single_trade(year_data, int(yr), entry_doy, exit_doy)
+        if t is not None:
+            out.append(t[0] if direction == "long" else t[1])
+    return np.array(out, dtype=float)
+
+
+def quant_rating_dataframe(
+    wfa_result: WFAResult,
+    symbol_dfs: dict[str, pd.DataFrame],
+    cost_buffer: float = 0.001,          # 0,1 % Spread/Kommission je Trade
+    min_stars: int = 0,
+    dedup_days: int = 5,
+) -> pd.DataFrame:
+    """
+    Bewertet jedes WFA-Muster mit 0–5 Sternen (je ein Stern pro erfülltem Kriterium aus QUANT_CRITERIA).
+    Ohne "★ OOS" UND "★ Signifikanz" gibt es höchstens 3 Sterne. Schwellen an Zufallsdaten (gemischte Tagesrenditen) geeicht.
+    Überlappende Fenster (gleiches Symbol/Richtung, Entry ≤ dedup_days auseinander) werden zu einem
+    Setup zusammengefasst (das beste bleibt).
+    """
+    cache: dict[str, tuple] = {}
+    max_hold = max((ps.exit_doy - ps.entry_doy for ps in wfa_result.pattern_stats), default=20)
+    rows = []
+
+    def _rets(Rm, e: int, h: int, sign: float) -> np.ndarray:
+        if e < 1 or e > 362 or h < 1 or h > Rm.shape[2]:
+            return np.array([])
+        r = Rm[:, e - 1, h - 1]
+        return sign * r[~np.isnan(r)]
+
+    for ps in wfa_result.pattern_stats:
+        if ps.symbol not in symbol_dfs:
+            continue
+        if ps.symbol not in cache:
+            yd_, yrs_ = _build_year_data(symbol_dfs[ps.symbol])
+            Rm_ = _return_matrix(yd_, yrs_, list(range(1, max_hold + 3)))[2]
+            v_ = ~np.isnan(Rm_); cnt = v_.sum(axis=0)
+            ok_l = (cnt >= 8) & ((v_ & (Rm_ > 0)).sum(axis=0) >= 0.60 * cnt)
+            ok_s = (cnt >= 8) & ((v_ & (Rm_ < 0)).sum(axis=0) >= 0.60 * cnt)
+            cache[ps.symbol] = (Rm_, cnt >= 8, ok_l, ok_s)
+        Rm, has8, okL, okS = cache[ps.symbol]
+        n_folds_total = max(len(wfa_result.fold_results.get(ps.symbol, [])), 1)
+        sign = 1.0 if ps.direction == "long" else -1.0
+        hold = ps.exit_doy - ps.entry_doy
+
+        rets = _rets(Rm, ps.entry_doy, hold, sign)
+        if len(rets) < 8:
+            continue
+        wins = int((rets > 0).sum()); n = len(rets); half = n // 2
+        wr_all = wins / n
+        wr_h1 = float((rets[:half] > 0).mean()); wr_h2 = float((rets[half:] > 0).mean())
+        wilson_lo = _wilson_ci(wins, n)[0]
+
+        okG = okL if ps.direction == "long" else okS
+        nb_ok = nb_n = 0
+        for de in range(-2, 3):
+            for dh in range(-2, 3):
+                e_, h_ = ps.entry_doy + de, hold + dh
+                if (de == 0 and dh == 0) or e_ < 1 or e_ > 362 or h_ < 1 or h_ > Rm.shape[2] or e_ + h_ > 366:
+                    continue
+                if has8[e_ - 1, h_ - 1]:
+                    nb_n += 1; nb_ok += int(okG[e_ - 1, h_ - 1])
+        plateau = nb_ok / nb_n if nb_n else 0.0
+
+        c_oos = (ps.oos_n_trades >= 5 and (ps.oos_winrate or 0) >= 0.65
+                 and (ps.oos_avg_ret or 0) > cost_buffer)
+        c_hist = wr_h1 >= QUANT_HALF and wr_h2 >= QUANT_HALF
+        pval = _binom_p(wins, n)
+        c_sig = pval < QUANT_P
+        c_plat = plateau >= QUANT_PLAT
+        c_econ = float(rets.mean()) >= QUANT_ECON and float(np.median(rets)) > 0
+        stars = int(c_oos) + int(c_hist) + int(c_sig) + int(c_plat) + int(c_econ)
+        if not (c_oos and c_sig):
+            stars = min(stars, 3)        # ohne OOS-Nachweis UND Signifikanz kein Handels-Setup
+
+        start = pd.Timestamp("2001-01-01") + pd.Timedelta(days=ps.entry_doy - 1)
+        end = start + pd.Timedelta(days=hold)
+        rows.append({
+            "Symbol": ps.symbol,
+            "Richtung": "Long" if ps.direction == "long" else "Short",
+            "Fenster": f"{start:%d.%m.} – {end:%d.%m.}",
+            "Tage": hold,
+            "Quant ⭐": stars,
+            "Jahre": n,
+            "WR gesamt %": round(wr_all * 100, 1),
+            "WR 1. Hälfte %": round(wr_h1 * 100, 1),
+            "WR 2. Hälfte %": round(wr_h2 * 100, 1),
+            "Wilson-Untergrenze %": round(wilson_lo * 100, 1),
+            "Ø Return gesamt %": round(float(rets.mean()) * 100, 2),
+            "OOS Trades": ps.oos_n_trades,
+            "OOS WR %": round((ps.oos_winrate or 0) * 100, 1),
+            "OOS Ø Return %": round((ps.oos_avg_ret or 0) * 100, 2),
+            "Folds gefunden": f"{ps.n_folds_found}/{n_folds_total}",
+            "Plateau %": round(plateau * 100),
+            "p-Wert": round(pval, 4),
+            "★ OOS": "✅" if c_oos else "—", "★ Beide Hälften": "✅" if c_hist else "—",
+            "★ Signifikanz": "✅" if c_sig else "—", "★ Plateau": "✅" if c_plat else "—",
+            "★ Ökonomie": "✅" if c_econ else "—",
+            "_entry_doy": ps.entry_doy, "_exit_doy": ps.exit_doy,
+            "_score": stars - math.log10(max(pval, 1e-12)) / 10 + plateau / 10,
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # Cluster-Dedup: überlappende Fenster = ein Setup
+    df = df.sort_values(["Symbol", "Richtung", "_entry_doy"]).reset_index(drop=True)
+    keep, cluster_best = [], {}
+    last_key, last_doy, cid = None, -99, -1
+    for i, r in df.iterrows():
+        key = (r["Symbol"], r["Richtung"])
+        if key != last_key or r["_entry_doy"] - last_doy > dedup_days:
+            cid += 1
+        last_key, last_doy = key, r["_entry_doy"]
+        if cid not in cluster_best or r["_score"] > df.loc[cluster_best[cid], "_score"]:
+            cluster_best[cid] = i
+    df = df.loc[sorted(cluster_best.values())]
+    df = df[df["Quant ⭐"] >= min_stars]
+    return df.sort_values(["Quant ⭐", "_score"], ascending=False).reset_index(drop=True)
+
+
+def add_currency_clusters(df: pd.DataFrame, min_overlap: float = 0.5) -> pd.DataFrame:
+    """
+    Fasst Setups zu Clustern zusammen, die dieselbe Waehrungswette sind:
+    gleiche Waehrung in gleicher Rolle (stark/schwach) und zeitlich ueberlappende Fenster
+    (Ueberlappung >= min_overlap des kuerzeren Fensters). Beispiel: CADJPY Long + GBPJPY Long
+    Ende Maerz = beide "JPY schwach" -> ein Cluster, Risiko nur einmal.
+    """
+    if df.empty:
+        return df
+    df = df.copy().reset_index(drop=True)
+    legs = []
+    for i, r in df.iterrows():
+        sym = str(r["Symbol"]).upper()
+        if len(sym) != 6:
+            legs.append(set()); continue
+        b, q = sym[:3], sym[3:]
+        strong, weak = (b, q) if r["Richtung"] == "Long" else (q, b)
+        legs.append({f"{strong} stark", f"{weak} schwach"})
+    parent = list(range(len(df)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]; x = parent[x]
+        return x
+    for i in range(len(df)):
+        for j in range(i + 1, len(df)):
+            common = legs[i] & legs[j]
+            if not common:
+                continue
+            a0, a1 = df.at[i, "_entry_doy"], df.at[i, "_exit_doy"]
+            b0, b1 = df.at[j, "_entry_doy"], df.at[j, "_exit_doy"]
+            ov = min(a1, b1) - max(a0, b0)
+            if ov > 0 and ov >= min_overlap * min(a1 - a0, b1 - b0):
+                parent[find(i)] = find(j)
+    roots = [find(i) for i in range(len(df))]
+    labels = {}
+    for rt in set(roots):
+        members = [i for i in range(len(df)) if roots[i] == rt]
+        if len(members) == 1:
+            labels[rt] = "—"
+            continue
+        common = set.intersection(*[legs[m] for m in members]) or set.union(*[legs[m] for m in members])
+        s0 = min(df.at[m, "_entry_doy"] for m in members); s1 = max(df.at[m, "_exit_doy"] for m in members)
+        d0 = (pd.Timestamp("2001-01-01") + pd.Timedelta(days=int(s0) - 1)).strftime("%d.%m.")
+        d1 = (pd.Timestamp("2001-01-01") + pd.Timedelta(days=int(s1) - 1)).strftime("%d.%m.")
+        labels[rt] = f"{' / '.join(sorted(common))} · {d0}–{d1} ({len(members)} Paare = 1 Wette)"
+    df["Cluster"] = [labels[rt] for rt in roots]
+    return df
+
+
+def shuffled_symbol_dfs(symbol_dfs: dict[str, pd.DataFrame], seed: int = 7) -> dict[str, pd.DataFrame]:
+    """
+    Nullmodell für den Zufalls-Check: Tagesrenditen werden zufällig gemischt — gemeinsam für alle
+    Symbole (gleiche Permutation je Kalendertag), damit die Korrelation zwischen Paaren erhalten bleibt.
+    Volatilität und Drift bleiben gleich, echte Saisonalität ist zerstört.
+    """
+    rng = np.random.default_rng(seed)
+    idx = sorted(set().union(*[set(d.index) for d in symbol_dfs.values()]))
+    perm = rng.permutation(len(idx)); remap = dict(zip(idx, [idx[i] for i in perm]))
+    out = {}
+    for sym, d in symbol_dfs.items():
+        d = d.sort_index()
+        lr = np.log(d["close"]).diff().fillna(0.0)
+        hl = np.log(d["high"]) - np.log(d["close"]); ll = np.log(d["low"]) - np.log(d["close"])
+        src = pd.Index([remap[t] for t in d.index])
+        ok = src.isin(d.index)
+        r = np.where(ok, lr.reindex(src).values, 0.0)
+        h_ = np.where(ok, hl.reindex(src).values, 0.0); l_ = np.where(ok, ll.reindex(src).values, 0.0)
+        c = np.exp(np.log(d["close"].iloc[0]) + np.cumsum(r))
+        out[sym] = pd.DataFrame({"open": c, "high": c * np.exp(h_), "low": c * np.exp(l_), "close": c}, index=d.index)
+    return out
 
 
 def wfa_results_to_dataframe(wfa_result: WFAResult) -> pd.DataFrame:

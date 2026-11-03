@@ -1622,11 +1622,31 @@ def scan_seasonality_patterns(
     min_trades = max(int(lookback_years * 0.8), 3)
 
     all_rows: list[dict] = []
+    # Schneller Vorfilter (vektorisiert): nur Fenster, die im Primär-Zeitraum die Mindest-Winrate
+    # in mindestens einer gewählten Richtung erreichen, werden im Detail berechnet.
+    # Gleiche Trade-Logik wie _scan_patterns_cached -> identische Ergebnisse, nur schneller.
+    from seasonality_wfa import _return_matrix
+    _entries, _holds, _R = _return_matrix(year_data, sorted_years, list(holding_periods))
+    _year_start_primary = end_year - lookback_years + 1
+    _psel = (sorted_years >= _year_start_primary) & (sorted_years <= end_year)
+    _Rp = _R[_psel]
+    _vp = ~np.isnan(_Rp)
+    _n = _vp.sum(axis=0)
+    _ok = np.zeros(_n.shape, dtype=bool)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        if "long" in directions:
+            _ok |= ((_vp & (_Rp > 0)).sum(axis=0) / np.maximum(_n, 1)) >= min_winrate - 1e-12
+        if "short" in directions:
+            _ok |= ((_vp & (_Rp < 0)).sum(axis=0) / np.maximum(_n, 1)) >= min_winrate - 1e-12
+    _ok &= _n >= min_trades
+    _hold_idx = {int(h): i for i, h in enumerate(_holds)}
     # Scan: alle Entry-DOYs × alle Kalender-Haltedauern
     for entry_doy in range(1, 363):
         for cal_hold in holding_periods:
             exit_doy = entry_doy + cal_hold
             if exit_doy > 366:
+                continue
+            if not _ok[entry_doy - 1, _hold_idx[int(cal_hold)]]:
                 continue
             all_rows.extend(
                 _scan_patterns_cached(
@@ -2824,8 +2844,89 @@ primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwer
                 </div>""",
                 unsafe_allow_html=True,
             )
+            # ── Quant-Auswahl: nur Setups, die ich als Quant-Trader handeln würde ──
+            from seasonality_wfa import quant_rating_dataframe, QUANT_CRITERIA
+            _q_key = (id(_wfa_result), tuple(sorted(st.session_state.get("muster_dataframes", {}).keys())))
+            if st.session_state.get("muster_quant_key") != _q_key:
+                with st.spinner("Bewerte Setups (Historie, Signifikanz, Plateau)…"):
+                    st.session_state["muster_quant_df"] = quant_rating_dataframe(
+                        _wfa_result, st.session_state.get("muster_dataframes", {}))
+                st.session_state["muster_quant_key"] = _q_key
+            _qdf_all = st.session_state.get("muster_quant_df", pd.DataFrame())
+            _q_min = st.radio("Quant-Auswahl: Mindest-Sterne", [4, 5, 3], horizontal=True, index=0,
+                              key="muster_quant_min", format_func=lambda s: "⭐" * s + f" (≥ {s}/5)")
+            _qdf = _qdf_all[_qdf_all["Quant ⭐"] >= _q_min] if not _qdf_all.empty else _qdf_all
+            from seasonality_wfa import add_currency_clusters
+            _qdf = add_currency_clusters(_qdf)
+            st.markdown(
+                f"""<div style="background:#0a1220;border:1px solid rgba(240,196,64,.35);border-radius:10px;
+                    padding:14px 20px;margin:6px 0 10px 0;">
+                  <div style="color:#f0c040;font-weight:800;font-size:1.05rem;">🏆 Quant-Auswahl — {len(_qdf)} Setups mit ≥ {_q_min}/5 Sternen</div>
+                  <div style="color:#94a3b8;font-size:.82rem;margin-top:4px;">
+                    Je ein Stern pro bestandenem Kriterium. Ohne OOS- und Signifikanz-Stern maximal 3 Sterne. Schwellen so geeicht, dass Zufallsdaten praktisch nie 4 Sterne erreichen.
+                    Überlappende Fenster sind zu einem Setup zusammengefasst.</div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            with st.expander("Kriterien der Quant-Sterne", expanded=False):
+                st.markdown("\n".join(f"- **{k}** — {v}" for k, v in QUANT_CRITERIA.items()))
+            with st.expander("📏 Handelsregeln für die Quant-Auswahl", expanded=True):
+                st.markdown(
+                    "- **Auswahl:** nur ≥ 4 Sterne — und bevorzugt Setups mit **ökonomischem Grund** "
+                    "(z. B. Yen-Stärke Ende Juli/August, Yen-Schwäche Ende März/April, Dollar-Schwäche zum Jahresende) "
+                    "oder **Bestätigung über verwandte Paare**. Ohne Begründung: Beobachtungsliste.\n"
+                    "- **Cluster = eine Wette:** Setups mit gleichem Cluster (Spalte *Cluster*) teilen sich das Risiko — "
+                    "nur einmal Risiko für den ganzen Cluster.\n"
+                    "- **Einstieg:** Tages-Open am ersten Fenstertag. **Ausstieg:** Close am letzten Fenstertag. "
+                    "BOS-, POC-, Value-Area- oder Open-Level-Einstiege waren im Test nicht besser (spätere Einstiege, verpasste Jahre).\n"
+                    "- **Stop:** ca. 1,5 × Tages-ATR(14) ab Einstieg.\n"
+                    "- **Risiko:** 0,25–0,5 % pro Setup bzw. Cluster — rund die Hälfte der Setups kann statistisch Zufall sein.\n"
+                    "- **Nachhalten:** Liste vorab festschreiben; Setups, die live 2–3 Jahre in Folge versagen, fliegen raus."
+                )
+            # Zufalls-Check: gleiche Pipeline auf gemischten Daten -> erwartete Zufallstreffer
+            if st.button("🎲 Zufalls-Check (Falsch-Positiv-Rate schätzen)", key="muster_null_btn",
+                         help="Rechnet WFA + Quant-Sterne auf denselben Daten mit zufällig gemischten Tagesrenditen. "
+                              "Dauert so lange wie die WFA selbst."):
+                from seasonality_wfa import run_seasonality_wfa, shuffled_symbol_dfs
+                _null_counts = []
+                _nb = st.progress(0, text="Zufalls-Check…")
+                for _si, _seed in enumerate([7, 11]):
+                    _ndfs = shuffled_symbol_dfs(st.session_state.get("muster_dataframes", {}), seed=_seed)
+                    _nw = run_seasonality_wfa(
+                        symbol_dfs=_ndfs, holding_periods=holding_periods, directions=[d.lower() for d in dir_choice],
+                        min_winrate=min_wr / 100, min_trades=max(int(wfa_min_is * 0.8), 3),
+                        min_is_years=int(wfa_min_is), min_folds_for_badge=int(wfa_min_folds),
+                        progress_callback=lambda f, t, _s=_si: _nb.progress(min((_s + f) / 2, 1.0), text=f"Zufall {_s+1}/2 · {t}"))
+                    _nq = quant_rating_dataframe(_nw, _ndfs)
+                    _null_counts.append(int((_nq["Quant ⭐"] >= _q_min).sum()) if not _nq.empty else 0)
+                _nb.empty()
+                st.session_state["muster_null"] = (_q_min, float(np.mean(_null_counts)))
+            _null = st.session_state.get("muster_null")
+            if _null and _null[0] == _q_min:
+                _exp = _null[1]; _real = len(_qdf)
+                _fdr = min(_exp / _real, 1.0) if _real else 1.0
+                _col = "#4ade80" if _fdr <= 0.25 else ("#facc15" if _fdr <= 0.5 else "#f87171")
+                st.markdown(
+                    f"<div style='color:{_col};font-weight:700;margin:4px 0 10px 0;'>🎲 Auf Zufallsdaten: Ø {_exp:.1f} Setups mit ≥ {_q_min} Sternen "
+                    f"→ geschätzt ~{_fdr:.0%} der {_real} angezeigten Setups sind Zufall.</div>", unsafe_allow_html=True)
+            else:
+                st.caption("Kalibrierung (6 Paare, 2006–2025, 5 Zufallsläufe): Mit diesen Schwellen liefern echte Daten etwa doppelt "
+                           "so viele ≥4-Sterne-Setups wie Zufallsdaten — rund die Hälfte bleibt statistisch Zufall. "
+                           "Für Klarheit den Zufalls-Check laufen lassen und Setups mit Ökonomie-Begründung bevorzugen.")
+            if _qdf.empty:
+                st.info("Kein Setup erfüllt die Quant-Kriterien. Tipp: Analysezeitraum 20J, alle Symbole, Halte 5–20 Tage.")
+            else:
+                _qshow = _qdf.drop(columns=[c for c in _qdf.columns if c.startswith("_")]).copy()
+                if "Cluster" in _qshow.columns:
+                    _qshow.insert(3, "Cluster", _qshow.pop("Cluster"))
+                _qshow["Quant ⭐"] = _qshow["Quant ⭐"].apply(lambda s: "⭐" * int(s) + "☆" * (5 - int(s)))
+                st.dataframe(_qshow, use_container_width=True, hide_index=True)
+                st.download_button("⬇️ Quant-Auswahl CSV", _qshow.to_csv(index=False).encode("utf-8"),
+                                   file_name="seasonality_quant_auswahl.csv", mime="text/csv")
+
             if not wfa_df.empty:
-                st.dataframe(wfa_df, use_container_width=True, hide_index=True)
+                with st.expander("📋 Alle WFA-Muster (ungefiltert)", expanded=False):
+                    st.dataframe(wfa_df, use_container_width=True, hide_index=True)
                 st.download_button(
                     "⬇️ WFA-Ergebnis CSV",
                     wfa_df.to_csv(index=False).encode("utf-8"),
