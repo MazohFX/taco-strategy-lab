@@ -383,6 +383,19 @@ def run_seasonality_wfa(
 # Lookup-Hilfsfunktion (für die UI: "Hat dieses Ergebnis-Row ein WFA-Badge?")
 # ---------------------------------------------------------------------------
 
+def _badge_index(wfa_result: WFAResult) -> dict:
+    """Einmal pro WFA-Ergebnis: (symbol, entry, exit, richtung) -> Badge (O(1)-Lookup statt Liste durchsuchen)."""
+    idx = getattr(wfa_result, "_badge_idx", None)
+    if idx is None:
+        idx = {(ps.symbol, int(ps.entry_doy), int(ps.exit_doy), ps.direction):
+               ("✅ OOS-validiert" if ps.validated else "⚠️ Nur IS") for ps in wfa_result.pattern_stats}
+        try:
+            object.__setattr__(wfa_result, "_badge_idx", idx)
+        except Exception:
+            pass
+    return idx
+
+
 def wfa_badge_for_row(
     wfa_result: WFAResult,
     symbol: str,
@@ -396,15 +409,17 @@ def wfa_badge_for_row(
       "⚠️ Nur IS"          — wenn in WFA gefunden aber nicht validiert
       ""                   — wenn nicht in WFA-Ergebnis enthalten
     """
-    for ps in wfa_result.pattern_stats:
-        if (ps.symbol == symbol
-                and ps.entry_doy == entry_doy
-                and ps.exit_doy == exit_doy
-                and ps.direction == direction):
-            if ps.validated:
-                return "✅ OOS-validiert"
-            return "⚠️ Nur IS"
-    return ""
+    return _badge_index(wfa_result).get((symbol, int(entry_doy), int(exit_doy), direction), "")
+
+
+def wfa_badges_for_df(wfa_result: WFAResult, df: pd.DataFrame) -> list[str]:
+    """Badges für ein ganzes Muster-DataFrame auf einmal (Spalten Symbol, Richtung, _entry_doy, _exit_doy)."""
+    idx = _badge_index(wfa_result)
+    if df.empty:
+        return []
+    return [idx.get((str(s), int(e), int(x), "long" if r == "Long" else "short"), "")
+            for s, r, e, x in zip(df["Symbol"], df["Richtung"],
+                                  df["_entry_doy"].fillna(0), df["_exit_doy"].fillna(0))]
 
 
 # ---------------------------------------------------------------------------
@@ -447,103 +462,134 @@ def quant_rating_dataframe(
     Ohne "★ OOS" UND "★ Signifikanz" gibt es höchstens 3 Sterne. Schwellen an Zufallsdaten (gemischte Tagesrenditen) geeicht.
     Überlappende Fenster (gleiches Symbol/Richtung, Entry ≤ dedup_days auseinander) werden zu einem
     Setup zusammengefasst (das beste bleibt).
+    Vektorisiert: alle Kennzahlen werden pro Symbol einmal als Matrix über alle (Entry, Haltedauer) berechnet.
     """
-    cache: dict[str, tuple] = {}
-    max_hold = max((ps.exit_doy - ps.entry_doy for ps in wfa_result.pattern_stats), default=20)
     rows = []
-
-    def _rets(Rm, e: int, h: int, sign: float) -> np.ndarray:
-        if e < 1 or e > 362 or h < 1 or h > Rm.shape[2]:
-            return np.array([])
-        r = Rm[:, e - 1, h - 1]
-        return sign * r[~np.isnan(r)]
-
+    by_sym: dict[str, list] = {}
     for ps in wfa_result.pattern_stats:
-        if ps.symbol not in symbol_dfs:
-            continue
-        if ps.symbol not in cache:
-            yd_, yrs_ = _build_year_data(symbol_dfs[ps.symbol])
-            Rm_ = _return_matrix(yd_, yrs_, list(range(1, max_hold + 3)))[2]
-            v_ = ~np.isnan(Rm_); cnt = v_.sum(axis=0)
-            ok_l = (cnt >= 8) & ((v_ & (Rm_ > 0)).sum(axis=0) >= 0.60 * cnt)
-            ok_s = (cnt >= 8) & ((v_ & (Rm_ < 0)).sum(axis=0) >= 0.60 * cnt)
-            cache[ps.symbol] = (Rm_, cnt >= 8, ok_l, ok_s)
-        Rm, has8, okL, okS = cache[ps.symbol]
-        n_folds_total = max(len(wfa_result.fold_results.get(ps.symbol, [])), 1)
-        sign = 1.0 if ps.direction == "long" else -1.0
-        hold = ps.exit_doy - ps.entry_doy
+        if ps.symbol in symbol_dfs:
+            by_sym.setdefault(ps.symbol, []).append(ps)
+    max_hold = max((ps.exit_doy - ps.entry_doy for ps in wfa_result.pattern_stats), default=20)
+    H = max_hold + 2
+    binom_tab: list[list[float]] = []
 
-        rets = _rets(Rm, ps.entry_doy, hold, sign)
-        if len(rets) < 8:
-            continue
-        wins = int((rets > 0).sum()); n = len(rets); half = n // 2
-        wr_all = wins / n
-        wr_h1 = float((rets[:half] > 0).mean()); wr_h2 = float((rets[half:] > 0).mean())
-        wilson_lo = _wilson_ci(wins, n)[0]
-
-        okG = okL if ps.direction == "long" else okS
-        nb_ok = nb_n = 0
+    for sym, plist in by_sym.items():
+        yd_, yrs_ = _build_year_data(symbol_dfs[sym])
+        R = _return_matrix(yd_, yrs_, list(range(1, H + 1)))[2]          # (Y, 362, H)
+        V = ~np.isnan(R); Rz = np.where(V, R, 0.0)
+        n = V.sum(axis=0)
+        cV = np.cumsum(V, axis=0)
+        cWL = np.cumsum(V & (R > 0), axis=0); cWS = np.cumsum(V & (R < 0), axis=0)
+        sumR = Rz.sum(axis=0)
+        with np.errstate(all="ignore"):
+            import warnings as _w
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")
+                med = np.nanmedian(R, axis=0)
+        has8 = n >= 8
+        wL, wS = cWL[-1], cWS[-1]
+        okL = has8 & (wL >= 0.60 * n); okS = has8 & (wS >= 0.60 * n)
+        # Plateau-Gitter: Anteil guter Nachbarn (Entry ±2, Haltedauer ±2) je Zelle
+        E_, H_ = np.meshgrid(np.arange(1, 363), np.arange(1, H + 1), indexing="ij")
+        nbN = np.zeros((362, H)); nbL = np.zeros((362, H)); nbS = np.zeros((362, H))
         for de in range(-2, 3):
             for dh in range(-2, 3):
-                e_, h_ = ps.entry_doy + de, hold + dh
-                if (de == 0 and dh == 0) or e_ < 1 or e_ > 362 or h_ < 1 or h_ > Rm.shape[2] or e_ + h_ > 366:
+                if de == 0 and dh == 0:
                     continue
-                if has8[e_ - 1, h_ - 1]:
-                    nb_n += 1; nb_ok += int(okG[e_ - 1, h_ - 1])
-        plateau = nb_ok / nb_n if nb_n else 0.0
+                e2 = E_ + de; h2 = H_ + dh
+                inb = (e2 >= 1) & (e2 <= 362) & (h2 >= 1) & (h2 <= H) & (e2 + h2 <= 366)
+                e2c = np.clip(e2, 1, 362) - 1; h2c = np.clip(h2, 1, H) - 1
+                m = inb & has8[e2c, h2c]
+                nbN += m; nbL += m & okL[e2c, h2c]; nbS += m & okS[e2c, h2c]
+        half = n // 2
+        hidx = np.argmax(cV >= np.maximum(half, 1)[None], axis=0)
+        n_folds_total = max(len(wfa_result.fold_results.get(sym, [])), 1)
 
-        c_oos = (ps.oos_n_trades >= 5 and (ps.oos_winrate or 0) >= 0.65
-                 and (ps.oos_avg_ret or 0) > cost_buffer)
-        c_hist = wr_h1 >= QUANT_HALF and wr_h2 >= QUANT_HALF
-        pval = _binom_p(wins, n)
+        # ---- alle Muster dieses Symbols auf einmal ----
+        ent = np.array([ps.entry_doy for ps in plist]); hold = np.array([ps.exit_doy - ps.entry_doy for ps in plist])
+        lg = np.array([ps.direction == "long" for ps in plist])
+        okm = (hold >= 1) & (hold <= H)
+        ei = ent - 1; hi = np.clip(hold - 1, 0, H - 1)
+        nn = n[ei, hi]
+        okm &= nn >= 8
+        wins = np.where(lg, wL[ei, hi], wS[ei, hi])
+        hh = half[ei, hi]
+        w1 = np.where(lg, cWL[hidx[ei, hi], ei, hi], cWS[hidx[ei, hi], ei, hi])
+        w1 = np.where(hh > 0, w1, 0)
+        sg = np.where(lg, 1.0, -1.0)
+        avg = sumR[ei, hi] / np.maximum(nn, 1) * sg
+        md = med[ei, hi] * sg
+        nbn = nbN[ei, hi]
+        plat = np.where(nbn > 0, np.where(lg, nbL[ei, hi], nbS[ei, hi]) / np.where(nbn > 0, nbn, 1), 0.0)
+        idx_ok = np.flatnonzero(okm)
+        if len(idx_ok) == 0:
+            continue
+        nk = nn[idx_ok].astype(int); wk = wins[idx_ok].astype(int); hk = hh[idx_ok].astype(int); w1k = w1[idx_ok].astype(int)
+        nmax = int(nk.max())
+        while len(binom_tab) <= nmax:
+            m_ = len(binom_tab)
+            binom_tab.append([_binom_p(k_, m_) for k_ in range(m_ + 1)])
+        pval = np.array([binom_tab[a_][b_] for a_, b_ in zip(nk, wk)])
+        with np.errstate(all="ignore"):
+            wr_h1 = np.where(hk > 0, w1k / np.maximum(hk, 1), np.nan)
+            wr_h2 = (wk - w1k) / (nk - hk)
+        avg_k = sumR[ei[idx_ok], hi[idx_ok]] / nk * sg[idx_ok]
+        md_k = md[idx_ok]; plateau = plat[idx_ok]
+        oos_n = np.array([plist[k].oos_n_trades for k in idx_ok])
+        oos_wr = np.array([plist[k].oos_winrate or 0 for k in idx_ok], dtype=float)
+        oos_avg = np.array([plist[k].oos_avg_ret or 0 for k in idx_ok], dtype=float)
+        c_oos = (oos_n >= 5) & (oos_wr >= 0.65) & (oos_avg > cost_buffer)
+        c_hist = (wr_h1 >= QUANT_HALF) & (wr_h2 >= QUANT_HALF)
         c_sig = pval < QUANT_P
         c_plat = plateau >= QUANT_PLAT
-        c_econ = float(rets.mean()) >= QUANT_ECON and float(np.median(rets)) > 0
-        stars = int(c_oos) + int(c_hist) + int(c_sig) + int(c_plat) + int(c_econ)
-        if not (c_oos and c_sig):
-            stars = min(stars, 3)        # ohne OOS-Nachweis UND Signifikanz kein Handels-Setup
+        c_econ = (avg_k >= QUANT_ECON) & (md_k > 0)
+        stars = c_oos.astype(int) + c_hist + c_sig + c_plat + c_econ
+        stars = np.where(c_oos & c_sig, stars, np.minimum(stars, 3))
+        score = stars - np.log10(np.maximum(pval, 1e-12)) / 10 + plateau / 10
+        for j, k in enumerate(idx_ok):
+            ps = plist[k]
+            rows.append((sym, "Long" if lg[k] else "Short", ps.entry_doy, ps.exit_doy, float(score[j]),
+                         (ps, int(nk[j]), int(wk[j]), int(hk[j]), int(w1k[j]), float(wr_h1[j]), float(wr_h2[j]),
+                          float(avg_k[j]), float(plateau[j]), float(pval[j]), int(stars[j]),
+                          bool(c_oos[j]), bool(c_hist[j]), bool(c_sig[j]), bool(c_plat[j]), bool(c_econ[j]),
+                          n_folds_total)))
 
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame([r[:5] for r in rows], columns=["Symbol", "Richtung", "_entry_doy", "_exit_doy", "_score"])
+    df["_pl"] = [r[5] for r in rows]
+    # Cluster-Dedup: überlappende Fenster = ein Setup
+    df = df.sort_values(["Symbol", "Richtung", "_entry_doy"]).reset_index(drop=True)
+    key_change = (df["Symbol"].ne(df["Symbol"].shift()) | df["Richtung"].ne(df["Richtung"].shift()))
+    gap = df["_entry_doy"].diff().fillna(10**9) > dedup_days
+    cid = (key_change | gap).cumsum()
+    cluster_best = {c: i for c, i in df.groupby(cid, sort=False)["_score"].idxmax().items()}
+    df = df.loc[sorted(cluster_best.values())]
+
+    def _full_row(r) -> dict:
+        ps, nk, wk, hk, w1k, wr_h1, wr_h2, avg_k, plateau, pval, stars, c_oos, c_hist, c_sig, c_plat, c_econ, nft = r["_pl"]
+        hold = ps.exit_doy - ps.entry_doy
         start = pd.Timestamp("2001-01-01") + pd.Timedelta(days=ps.entry_doy - 1)
         end = start + pd.Timedelta(days=hold)
-        rows.append({
-            "Symbol": ps.symbol,
-            "Richtung": "Long" if ps.direction == "long" else "Short",
-            "Fenster": f"{start:%d.%m.} – {end:%d.%m.}",
-            "Tage": hold,
-            "Quant ⭐": stars,
-            "Jahre": n,
-            "WR gesamt %": round(wr_all * 100, 1),
-            "WR 1. Hälfte %": round(wr_h1 * 100, 1),
-            "WR 2. Hälfte %": round(wr_h2 * 100, 1),
-            "Wilson-Untergrenze %": round(wilson_lo * 100, 1),
-            "Ø Return gesamt %": round(float(rets.mean()) * 100, 2),
-            "OOS Trades": ps.oos_n_trades,
-            "OOS WR %": round((ps.oos_winrate or 0) * 100, 1),
+        return {
+            "Symbol": r["Symbol"], "Richtung": r["Richtung"],
+            "Fenster": f"{start:%d.%m.} – {end:%d.%m.}", "Tage": hold, "Quant ⭐": stars, "Jahre": nk,
+            "WR gesamt %": round(wk / nk * 100, 1),
+            "WR 1. Hälfte %": round(wr_h1 * 100, 1), "WR 2. Hälfte %": round(wr_h2 * 100, 1),
+            "Wilson-Untergrenze %": round(_wilson_ci(wk, nk)[0] * 100, 1),
+            "Ø Return gesamt %": round(avg_k * 100, 2),
+            "OOS Trades": ps.oos_n_trades, "OOS WR %": round((ps.oos_winrate or 0) * 100, 1),
             "OOS Ø Return %": round((ps.oos_avg_ret or 0) * 100, 2),
-            "Folds gefunden": f"{ps.n_folds_found}/{n_folds_total}",
-            "Plateau %": round(plateau * 100),
+            "Folds gefunden": f"{ps.n_folds_found}/{nft}", "Plateau %": round(plateau * 100),
             "p-Wert": round(pval, 4),
             "★ OOS": "✅" if c_oos else "—", "★ Beide Hälften": "✅" if c_hist else "—",
             "★ Signifikanz": "✅" if c_sig else "—", "★ Plateau": "✅" if c_plat else "—",
             "★ Ökonomie": "✅" if c_econ else "—",
-            "_entry_doy": ps.entry_doy, "_exit_doy": ps.exit_doy,
-            "_score": stars - math.log10(max(pval, 1e-12)) / 10 + plateau / 10,
-        })
-    df = pd.DataFrame(rows)
+            "_entry_doy": ps.entry_doy, "_exit_doy": ps.exit_doy, "_score": r["_score"],
+        }
+    df = pd.DataFrame([_full_row(r) for _, r in df.iterrows()])
     if df.empty:
         return df
-    # Cluster-Dedup: überlappende Fenster = ein Setup
-    df = df.sort_values(["Symbol", "Richtung", "_entry_doy"]).reset_index(drop=True)
-    keep, cluster_best = [], {}
-    last_key, last_doy, cid = None, -99, -1
-    for i, r in df.iterrows():
-        key = (r["Symbol"], r["Richtung"])
-        if key != last_key or r["_entry_doy"] - last_doy > dedup_days:
-            cid += 1
-        last_key, last_doy = key, r["_entry_doy"]
-        if cid not in cluster_best or r["_score"] > df.loc[cluster_best[cid], "_score"]:
-            cluster_best[cid] = i
-    df = df.loc[sorted(cluster_best.values())]
     df = df[df["Quant ⭐"] >= min_stars]
     return df.sort_values(["Quant ⭐", "_score"], ascending=False).reset_index(drop=True)
 

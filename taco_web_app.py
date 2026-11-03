@@ -2900,8 +2900,11 @@ primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwer
                                    file_name="seasonality_quant_auswahl.csv", mime="text/csv")
 
             if not wfa_df.empty:
-                with st.expander("📋 Alle WFA-Muster (ungefiltert)", expanded=False):
-                    st.dataframe(wfa_df, use_container_width=True, hide_index=True)
+                with st.expander(f"📋 Alle WFA-Muster (ungefiltert, {len(wfa_df):,} Muster)".replace(",", "."), expanded=False):
+                    _wfa_cap = 5000
+                    st.dataframe(wfa_df.head(_wfa_cap), use_container_width=True, hide_index=True)
+                    if len(wfa_df) > _wfa_cap:
+                        st.caption(f"Angezeigt: die ersten {_wfa_cap:,} (✅ zuerst, nach OOS-Winrate). Alle Muster im CSV-Download.".replace(",", "."))
                 st.download_button(
                     "⬇️ WFA-Ergebnis CSV",
                     wfa_df.to_csv(index=False).encode("utf-8"),
@@ -3021,16 +3024,8 @@ primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwer
         # WFA-Badge in Tabelle einfügen (wenn WFA-Ergebnis vorhanden)
         _wfa_res_for_display = st.session_state.get("muster_wfa_result")
         if _wfa_res_for_display is not None:
-            from seasonality_wfa import wfa_badge_for_row
-            def _get_wfa_badge(row: pd.Series) -> str:
-                return wfa_badge_for_row(
-                    _wfa_res_for_display,
-                    symbol=str(row.get("Symbol", "")),
-                    entry_doy=int(row.get("_entry_doy", 0)),
-                    exit_doy=int(row.get("_exit_doy", 0)),
-                    direction="long" if row.get("Richtung") == "Long" else "short",
-                )
-            display["WFA"] = display.apply(_get_wfa_badge, axis=1)
+            from seasonality_wfa import wfa_badges_for_df
+            display["WFA"] = wfa_badges_for_df(_wfa_res_for_display, display)
 
         style_obj = (
             display.style
@@ -3079,16 +3074,11 @@ primäre Validierungsmethode</b>, nicht der <code>min_trades</code>-Schwellenwer
         # WFA-Status pro Muster ermitteln (für Top-Setups-Badge/Filter — Sterne allein sagen
         # nichts über OOS-Validierung aus, siehe Walk-Forward-Erklärung oben)
         _wfa_res_top = st.session_state.get("muster_wfa_result")
-        def _wfa_status_for_row(r: pd.Series) -> str:
-            if _wfa_res_top is None:
-                return ""
-            from seasonality_wfa import wfa_badge_for_row
-            return wfa_badge_for_row(
-                _wfa_res_top, symbol=str(r.get("Symbol", "")),
-                entry_doy=int(r.get("_entry_doy", 0)), exit_doy=int(r.get("_exit_doy", 0)),
-                direction="long" if r.get("Richtung") == "Long" else "short",
-            )
-        result_clean["WFA Status"] = result_clean.apply(_wfa_status_for_row, axis=1)
+        if _wfa_res_top is None:
+            result_clean["WFA Status"] = ""
+        else:
+            from seasonality_wfa import wfa_badges_for_df
+            result_clean["WFA Status"] = wfa_badges_for_df(_wfa_res_top, result_clean)
 
         _today = _dt.date.today()
         # Wochenende: nächsten Montag als effektiven "heute" nutzen
