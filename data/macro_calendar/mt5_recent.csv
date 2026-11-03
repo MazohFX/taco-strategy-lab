@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-281546,380010014,retail-sales-mm,EUR,IT,Einzelhandelsumsatz m/m,Low,percent,2026-09-04 08:00,2026-07-01,-0.4,-1.7,-0.1,-0.2,positive
-281557,380010015,retail-sales-yy,EUR,IT,Einzelhandelsumsatz y/y,Low,percent,2026-09-04 08:00,2026-07-01,0.8,2.7,3.1,,negative
 313989,826500003,markit-construction-pmi,GBP,GB,S&P Global/CIPS Einkaufsmanagerindex (PMI) des Baugewerbes,Medium,none,2026-09-04 08:30,2026-08-01,44.3,39.2,44.7,,positive
 316081,826020032,boe-governor-bailey-speech,GBP,GB,BoE Gouverneur Bailey spricht,High,none,2026-09-04 08:50,1970-01-01,,,,,
 313352,999030003,retail-sales-mm,EUR,EU,Einzelhandelsumsatz m/m,Low,percent,2026-09-04 09:00,2026-07-01,-0.6,-0.2,-0.3,0.2,negative
