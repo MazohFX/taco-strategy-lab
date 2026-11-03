@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-315179,124020001,ivey-pmi,CAD,CA,Ivey PMI,Medium,none,2026-09-04 14:00,2026-08-01,64.3,51.5,55.1,,positive
-315184,124020002,ivey-pmi-nsa,CAD,CA,Ivey PMI n.s.a.,Medium,none,2026-09-04 14:00,2026-08-01,62.7,,54.1,,
 311602,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-09-04 17:00,2026-09-04,449.0,,447.0,,
 311603,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-09-04 17:00,2026-09-04,588.0,,588.0,,
 287364,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-09-04 19:30,2026-09-01,-39.4,,-44.5,,
