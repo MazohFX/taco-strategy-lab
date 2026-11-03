@@ -1621,40 +1621,15 @@ def scan_seasonality_patterns(
     sorted_years = np.array(sorted(year_data.keys()))
     min_trades = max(int(lookback_years * 0.8), 3)
 
-    all_rows: list[dict] = []
-    # Schneller Vorfilter (vektorisiert): nur Fenster, die im Primär-Zeitraum die Mindest-Winrate
-    # in mindestens einer gewählten Richtung erreichen, werden im Detail berechnet.
-    # Gleiche Trade-Logik wie _scan_patterns_cached -> identische Ergebnisse, nur schneller.
-    from seasonality_wfa import _return_matrix
-    _entries, _holds, _R = _return_matrix(year_data, sorted_years, list(holding_periods))
-    _year_start_primary = end_year - lookback_years + 1
-    _psel = (sorted_years >= _year_start_primary) & (sorted_years <= end_year)
-    _Rp = _R[_psel]
-    _vp = ~np.isnan(_Rp)
-    _n = _vp.sum(axis=0)
-    _ok = np.zeros(_n.shape, dtype=bool)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        if "long" in directions:
-            _ok |= ((_vp & (_Rp > 0)).sum(axis=0) / np.maximum(_n, 1)) >= min_winrate - 1e-12
-        if "short" in directions:
-            _ok |= ((_vp & (_Rp < 0)).sum(axis=0) / np.maximum(_n, 1)) >= min_winrate - 1e-12
-    _ok &= _n >= min_trades
-    _hold_idx = {int(h): i for i, h in enumerate(_holds)}
-    # Scan: alle Entry-DOYs × alle Kalender-Haltedauern
-    for entry_doy in range(1, 363):
-        for cal_hold in holding_periods:
-            exit_doy = entry_doy + cal_hold
-            if exit_doy > 366:
-                continue
-            if not _ok[entry_doy - 1, _hold_idx[int(cal_hold)]]:
-                continue
-            all_rows.extend(
-                _scan_patterns_cached(
-                    year_data, sorted_years, end_year, lookback_years,
-                    entry_doy, exit_doy,
-                    tuple(directions), min_winrate, min_trades,
-                )
-            )
+    # Vektorisierter Scan (seasonality_scan_fast) — identische Zeilen wie die frühere Schleife
+    # über _scan_patterns_cached, aber Trade-Matrix, Drawdowns, Robustheit und Späteinstieg
+    # werden einmal pro Symbol als Matrix berechnet.
+    from seasonality_scan_fast import scan_patterns_fast
+    all_rows: list[dict] = scan_patterns_fast(
+        year_data, sorted_years, end_year, lookback_years,
+        list(holding_periods), tuple(directions), min_winrate, min_trades,
+        compute_stars=_compute_stars,
+    )
 
     if not all_rows:
         return pd.DataFrame()
