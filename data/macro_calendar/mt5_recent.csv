@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-316081,826020032,boe-governor-bailey-speech,GBP,GB,BoE Gouverneur Bailey spricht,High,none,2026-09-04 08:50,1970-01-01,,,,,
-313352,999030003,retail-sales-mm,EUR,EU,Einzelhandelsumsatz m/m,Low,percent,2026-09-04 09:00,2026-07-01,-0.6,-0.2,-0.3,0.2,negative
-313353,999030004,retail-sales-yy,EUR,EU,Einzelhandelsumsatz y/y,Low,percent,2026-09-04 09:00,2026-07-01,0.6,1.2,0.7,1.4,negative
 318161,999010020,ecb-executive-board-member-lane-speech,EUR,EU,ECB Vorstandsmitglied Lane spricht,Medium,none,2026-09-04 09:10,1970-01-01,,,,,
 277611,840030015,unemployment-rate,USD,US,Arbeitslosenrate,High,percent,2026-09-04 12:30,2026-08-01,4.1,4.1,4.1,,
 277623,840030016,nonfarm-payrolls,USD,US,Beschäftigung außerhalb der Landwirtschaft,High,job,2026-09-04 12:30,2026-08-01,162.0,41.0,-23.0,21.0,positive
