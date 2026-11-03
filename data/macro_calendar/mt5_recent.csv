@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-318161,999010020,ecb-executive-board-member-lane-speech,EUR,EU,ECB Vorstandsmitglied Lane spricht,Medium,none,2026-09-04 09:10,1970-01-01,,,,,
 277611,840030015,unemployment-rate,USD,US,Arbeitslosenrate,High,percent,2026-09-04 12:30,2026-08-01,4.1,4.1,4.1,,
 277623,840030016,nonfarm-payrolls,USD,US,Beschäftigung außerhalb der Landwirtschaft,High,job,2026-09-04 12:30,2026-08-01,162.0,41.0,-23.0,21.0,positive
 277635,840030017,labor-force-participation-rate,USD,US,Erwerbsquote,Medium,percent,2026-09-04 12:30,2026-08-01,61.6,61.4,61.4,,positive
