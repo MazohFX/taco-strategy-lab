@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-311602,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-09-04 17:00,2026-09-04,449.0,,447.0,,
-311603,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-09-04 17:00,2026-09-04,588.0,,588.0,,
 287364,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-09-04 19:30,2026-09-01,-39.4,,-44.5,,
 287505,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-09-04 19:30,2026-09-01,-92.2,,-63.3,,
 287740,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-09-04 19:30,2026-09-01,-49.6,,-44.5,,
