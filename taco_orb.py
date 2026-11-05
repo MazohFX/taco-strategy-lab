@@ -38,6 +38,38 @@ FILTERS = [
     "Range eng", "Range mittel", "Range weit",
     "Mit Trend (Vortag über/unter EMA20)", "Gegen Trend",
 ]
+FILTER_TEXT = {
+    "Alle Signale": ("Jeder Ausbruch wird gehandelt – Long und Short, egal wie der Tag eröffnet hat.",
+                     "Ob der reine Ausbruch aus der Range die Tagesrichtung vorhersagt."),
+    "Nur Long": ("Nur Ausbrüche nach OBEN (M15-Schluss über dem Range-Hoch). Ausbrüche nach unten werden ignoriert.",
+                 "Ob Long-Ausbrüche allein besser sind. Achtung: Indizes steigen langfristig – Long profitiert davon automatisch."),
+    "Nur Short": ("Nur Ausbrüche nach UNTEN (M15-Schluss unter dem Range-Tief). Ausbrüche nach oben werden ignoriert.",
+                  "Ob Short-Ausbrüche allein funktionieren – gegen den langfristigen Aufwärtstrend der Indizes."),
+    "Gap > 0,3 ATR in Ausbruchsrichtung": (
+        "Nur Tage mit großem Eröffnungs-Gap (15:30-Kurs mehr als 0,3 × ATR vom Vortagesschluss 22:00 entfernt) – "
+        "und nur der Ausbruch in Gap-Richtung: Gap nach oben → nur Long, Gap nach unten → nur Short. "
+        "Kleines Gap → kein Trade.",
+        "„Gap and Go“: Wenn über Nacht etwas passiert ist (News, Zahlen) und der Kurs nach der Eröffnung in dieselbe "
+        "Richtung ausbricht, läuft er dann eher weiter?"),
+    "Gap in Ausbruchsrichtung": (
+        "Nur Ausbrüche in Richtung des Gaps, egal wie groß das Gap ist (Gap hoch → nur Long, Gap runter → nur Short).",
+        "Wie oben, aber ohne Mindestgröße – zeigt, ob die Größe des Gaps wichtig ist."),
+    "Gap gegen Ausbruchsrichtung": (
+        "Nur Ausbrüche GEGEN das Gap (Gap hoch, aber Ausbruch nach unten → Short; Gap runter, Ausbruch nach oben → Long).",
+        "Ob es sich lohnt, wenn der Markt das Gap nach der Eröffnung wieder schließen will („Gap Fill“)."),
+    "Range eng": ("Nur Tage, an denen die Range im Vergleich zum ATR klein ist (unteres Drittel).",
+                  "Ob ein Ausbruch aus einer engen, ruhigen Eröffnung sauberer läuft. Grenzen nur aus 2015–2020 bestimmt."),
+    "Range mittel": ("Nur Tage mit mittelgroßer Range (mittleres Drittel im Verhältnis zum ATR).",
+                     "Vergleich zu enger und weiter Range."),
+    "Range weit": ("Nur Tage, an denen die Range schon sehr groß ist (oberes Drittel im Verhältnis zum ATR).",
+                   "Ob nach einer wilden Eröffnung noch Bewegung übrig ist – oder ob der Tag schon „verbraucht“ ist."),
+    "Mit Trend (Vortag über/unter EMA20)": (
+        "Long nur, wenn der Vortagesschluss über dem 20-Tage-Durchschnitt (EMA20) lag; Short nur, wenn darunter.",
+        "Ob Ausbrüche in Richtung des übergeordneten Trends besser laufen."),
+    "Gegen Trend": ("Long nur, wenn der Vortag unter der EMA20 schloss; Short nur, wenn darüber.",
+                    "Ob Ausbrüche gegen den Trend (Gegenbewegungen) funktionieren."),
+}
+
 PRESETS = {
     "NQ Gap & Go – vorab festgelegte Regel": dict(market="NQ (Nasdaq 100)", or_min=15, stop="0,25 × Daily-ATR",
                                                  target="Tagesschluss (16:00 NY)", last="11:00 NY",
@@ -250,6 +282,31 @@ def render_orb_strategy() -> None:
     cost = c7.number_input(f"Kosten pro Trade ({mk['unit']})", 0.0, 50.0, float(mk["cost"]), 0.05, key=f"orb_cost_{mk['symbol']}",
                            help="Spread + Slippage für Ein- und Ausstieg zusammen. Kommission hier mit einrechnen.")
 
+    # ---- Erklärung: was wird getradet / getestet
+    with st.expander("🔎 Was wird hier getradet – und was wird getestet?"):
+        trade_txt, test_txt = FILTER_TEXT[filt]
+        end = {15: "15:45", 30: "16:00", 60: "16:30"}[or_min]
+        deadline = {"11:00 NY": "17:00", "12:00 NY": "18:00", "16:00 NY (ganzer Tag)": "22:00"}[last_lbl]
+        stop_e = {"Andere Seite der Range": "auf der anderen Seite der Range",
+                  "Mitte der Range": "in der Mitte der Range",
+                  "0,10 × Daily-ATR": "0,10 × ATR vom Einstieg entfernt",
+                  "0,25 × Daily-ATR": "0,25 × ATR vom Einstieg entfernt"}[stop_lbl]
+        tgt_e = "Ausstieg zum Schlusskurs um 22:00, wenn der Stop vorher nicht getroffen wurde" if TARGETS[tgt_lbl] == 0 \
+            else f"Ausstieg bei {tgt_lbl} Gewinn (Gewinn = {TARGETS[tgt_lbl]} × Stop-Abstand), sonst Stop oder Schlusskurs 22:00"
+        st.markdown(
+            f"**Getradet wird (Filter „{filt}“):** {trade_txt}\n\n"
+            f"**Ablauf jedes Trades:**\n"
+            f"1. 15:30–{end}: Hoch und Tief der ersten {or_min} Minuten = Range.\n"
+            f"2. Ab {end}: Die erste M15-Kerze, die über dem Hoch (Long) oder unter dem Tief (Short) **schließt**, "
+            f"ist das Signal. Einstieg zum Schlusskurs dieser Kerze. Nur ein Trade pro Tag.\n"
+            f"3. Kommt bis {deadline} Uhr kein Signal → kein Trade an diesem Tag.\n"
+            f"4. Stop {stop_e}. {tgt_e}.\n"
+            f"5. Von jedem Ergebnis werden {cost} {mk['unit']} Kosten abgezogen.\n\n"
+            f"**Getestet wird:** {test_txt}\n\n"
+            "**Wie wird getestet?** Alle Trades seit 2015 werden Kerze für Kerze simuliert und in drei Zeiträume geteilt: "
+            "2015–2020 (In-Sample, hier wurden die Regeln gesucht), 2021–2023 (Out-of-Sample) und 2024–heute (Holdout). "
+            "Eine echte Edge muss auch in den beiden neuen Zeiträumen positiv sein – idealerweise mit p-Wert unter 0,05.")
+
     loaded = _days(mk["symbol"])
     if loaded is not None:
         _render_today_box(st, loaded[0], market, mk, or_min, stop_lbl, filt, last_lbl)
@@ -257,7 +314,8 @@ def render_orb_strategy() -> None:
         st.error(f"Keine M15-Daten für {market} gefunden ({mk['symbol']}_M15.csv in data/dukascopy_intraday). "
                  "Am Mac mit **Import_Indizes_starten.command** laden.")
         return
-    t = apply_filter(_trades(mk["symbol"], or_min, STOPS[stop_lbl], TARGETS[tgt_lbl], LAST_ENTRY[last_lbl], cost), filt)
+    raw = _trades(mk["symbol"], or_min, STOPS[stop_lbl], TARGETS[tgt_lbl], LAST_ENTRY[last_lbl], cost)
+    t = apply_filter(raw, filt)
     if t.empty:
         st.warning("Keine Trades mit diesen Einstellungen.")
         return
@@ -292,6 +350,17 @@ def render_orb_strategy() -> None:
                 f"| Sharpe (pro Jahr) | {mtr['sharpe']:.2f} |\n"
                 f"| Profit-Faktor | {mtr['pf']:.2f} |\n"
                 f"| Max. Drawdown | {mtr['maxdd']:.1f} R |")
+
+    if filt != "Alle Signale":
+        base = period_metrics(raw)
+        rows = {"Mit Filter": [pm[n]["avg"] if pm[n].get("n") else np.nan for n, _, _ in PERIODS],
+                "Ohne Filter (alle Signale)": [base[n]["avg"] if base[n].get("n") else np.nan for n, _, _ in PERIODS]}
+        cmp_df = pd.DataFrame(rows, index=[n for n, _, _ in PERIODS]).T
+        cmp_df["Wirkung des Filters"] = ["", ""]
+        diffs = cmp_df.iloc[0, :3] - cmp_df.iloc[1, :3]
+        st.markdown(f"**Was bringt der Filter?** Ø R pro Trade mit und ohne Filter „{filt}“ "
+                    f"(Verbesserung: {', '.join(f'{n} {d:+.3f}' for n, d in diffs.items())})")
+        st.dataframe(cmp_df.iloc[:, :3].style.format("{:+.3f}"), width="stretch")
 
     with st.expander("ℹ️ Was bedeuten die Kennzahlen?"):
         st.markdown(
