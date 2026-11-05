@@ -12611,7 +12611,12 @@ def render_extra_fib618_bos() -> None:
     )
 
 
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "DAX Freitag Short", "Extra: Makro & Sentiment", "Extra: Makro & Sentiment (alt)", "Makro + Technik", "Extra: COT Commercials vs. Spekulanten", "Extra: Fib 0.618 + BOS Backtest", "BOS + Fib + Opens Setup", "📓 Trading-Journal"], horizontal=False, label_visibility="collapsed")
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "DAX Freitag Short", "Extra: Makro & Sentiment", "Extra: Makro & Sentiment (alt)", "Makro + Technik", "Extra: COT Commercials vs. Spekulanten", "Extra: Fib 0.618 + BOS Backtest", "BOS + Fib + Opens Setup", "⏰ Opening Range Strategie", "📓 Trading-Journal"], horizontal=False, label_visibility="collapsed")
+
+if test_mode == "⏰ Opening Range Strategie":
+    from taco_orb import render_orb_strategy
+    render_orb_strategy()
+    st.stop()
 
 if test_mode == "📓 Trading-Journal":
     from trading_journal import render_trading_journal

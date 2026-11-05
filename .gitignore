@@ -14,3 +14,4 @@ data/macro_calendar/sync.log
 # Trading-Journal (lokale Datenbank)
 data/trading_journal.db
 bos_research/results/
+level_research/results/
