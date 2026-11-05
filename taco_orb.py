@@ -90,6 +90,17 @@ def load_days(symbol: str):
     return days, ctx
 
 
+def next_session_info(days) -> dict:
+    """ATR(14) aus der US-Handelszeit inkl. letztem Datentag = Wert für die NÄCHSTE Sitzung."""
+    dates = list(days)
+    h = np.array([days[x][1].max() for x in dates]); lo = np.array([days[x][2].min() for x in dates])
+    c = np.array([days[x][3][-1] for x in dates]); pc = np.r_[np.nan, c[:-1]]
+    tr = np.maximum(h - lo, np.maximum(np.abs(h - pc), np.abs(lo - pc)))
+    atr = pd.Series(tr).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean().values
+    ema = pd.Series(c).ewm(span=20, adjust=False).mean().values
+    return dict(last_date=dates[-1], close=float(c[-1]), atr=float(atr[-1]), ema20=float(ema[-1]))
+
+
 # --------------------------------------------------------------------------- Simulation
 def simulate(days, ctx, or_min: int, stop: str, target_R: int, last_entry: int, cost: float) -> pd.DataFrame:
     rows = []
@@ -240,6 +251,8 @@ def render_orb_strategy() -> None:
                            help="Spread + Slippage für Ein- und Ausstieg zusammen. Kommission hier mit einrechnen.")
 
     loaded = _days(mk["symbol"])
+    if loaded is not None:
+        _render_today_box(st, loaded[0], market, mk, or_min, stop_lbl, filt, last_lbl)
     if loaded is None:
         st.error(f"Keine M15-Daten für {market} gefunden ({mk['symbol']}_M15.csv in data/dukascopy_intraday). "
                  "Am Mac mit **Import_Indizes_starten.command** laden.")
@@ -335,4 +348,48 @@ def render_orb_strategy() -> None:
             "- Liegen Stop und Ziel in derselben Kerze, zählt der Stop (konservativ).\n"
             f"- Kosten: {cost} {mk['unit']} pro Trade abgezogen.\n"
             "- Gap = Eröffnung 9:30 gegenüber Schluss 16:00 des Vortags, gemessen in Daily-ATR(14).\n"
+            "- ATR(14) wird nur aus der US-Handelszeit 9:30–16:00 NY berechnet – NICHT der ATR der 24h-Tageskerze im MT5 "
+            "(der ist größer).\n"
             "- Daten: Dukascopy-CFD, M15, Bid-Kurse, 2015 bis heute.")
+
+
+def _render_today_box(st, days, market, mk, or_min, stop_lbl, filt, last_lbl):
+    info = next_session_info(days)
+    u = mk["unit"]
+    de = lambda x, n=1: f"{x:,.{n}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    with st.container(border=True):
+        st.markdown(f"#### 📅 Heute handeln – {market}")
+        last = pd.Timestamp(info["last_date"])
+        st.caption(f"Berechnet aus den Daten bis **{last:%d.%m.%Y}** (letzter Handelstag in der Datenbank). "
+                   "Den Vortagesschluss unten kannst du mit deinem Chart überschreiben.")
+        c1, c2 = st.columns([1, 2])
+        prev = c1.number_input(f"Schlusskurs Vortag um 16:00 NY / 22:00 dt. Zeit", value=round(info["close"], 2),
+                               step=1.0 if u == "Punkte" else 0.1, key=f"orb_prev_{mk['symbol']}",
+                               help="Kurs der letzten M15-Kerze vor 16:00 New York (15:45–16:00), nicht der 23-Uhr-Kurs des CFD.")
+        atr = info["atr"]
+        thr = 0.3 * atr
+        c2.markdown(
+            f"| | |\n|---|---|\n"
+            f"| ATR(14) nur US-Handelszeit | **{de(atr)} {u}** |\n"
+            f"| Gap-Schwelle (0,3 × ATR) | **{de(thr)} {u}** |\n"
+            f"| 🟢 Long nur, wenn 15:30-Eröffnung **über** | **{de(prev + thr, 2)}** |\n"
+            f"| 🔴 Short nur, wenn 15:30-Eröffnung **unter** | **{de(prev - thr, 2)}** |")
+        stop_txt = {"0,25 × Daily-ATR": f"{de(0.25 * atr)} {u} vom Einstieg (0,25 × ATR)",
+                    "0,10 × Daily-ATR": f"{de(0.10 * atr)} {u} vom Einstieg (0,10 × ATR)",
+                    "Mitte der Range": "genau in der Mitte zwischen Range-Hoch und Range-Tief",
+                    "Andere Seite der Range": "auf der anderen Seite der Range (Long: unter dem Tief, Short: über dem Hoch)"}[stop_lbl]
+        end = {15: "15:45", 30: "16:00", 60: "16:30"}[or_min]
+        deadline = {"11:00 NY": "17:00", "12:00 NY": "18:00", "16:00 NY (ganzer Tag)": "21:45"}[last_lbl]
+        gap_rule = filt == "Gap > 0,3 ATR in Ausbruchsrichtung"
+        steps = []
+        if gap_rule:
+            steps.append(f"**15:30** – Eröffnungskurs ansehen. Liegt er zwischen {de(prev - thr, 2)} und {de(prev + thr, 2)} → **heute kein Trade**. "
+                         f"Darüber → nur Long möglich. Darunter → nur Short möglich.")
+        steps.append(f"**15:30–{end}** – Hoch und Tief der ersten {or_min} Minuten markieren (= Range).")
+        steps.append(f"**Ab {end}** – auf jeden M15-Schluss achten: Schluss über Range-Hoch → Long, unter Range-Tief → Short"
+                     + (" (nur in Gap-Richtung)" if gap_rule else "") + ". Einstieg zum Schlusskurs.")
+        steps.append(f"**Stop** – {stop_txt}.")
+        steps.append(f"**Kein Signal bis {deadline} Uhr** → kein Trade heute. **Ausstieg** – zum Schlusskurs um 22:00 (letzte M15-Kerze 21:45–22:00) bzw. vorher am Ziel oder Stop.")
+        st.markdown("\n".join(f"{i}. {x}" for i, x in enumerate(steps, 1)))
+        st.caption("Uhrzeiten in deutscher Zeit, gültig solange die USA und Deutschland gleichzeitig Sommer- bzw. Winterzeit haben. "
+                   "In den 1–3 Wochen der Zeitumstellung (März/Oktober-November) liegt alles eine Stunde früher.")
