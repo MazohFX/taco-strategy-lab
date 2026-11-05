@@ -31,7 +31,7 @@ STOPS = {
     "0,25 × Daily-ATR": "0.25",
 }
 TARGETS = {"Tagesschluss (16:00 NY)": 0, "1R": 1, "2R": 2, "3R": 3}
-LAST_ENTRY = {"11:00 NY": 660, "12:00 NY": 720, "16:00 NY (ganzer Tag)": 960}
+LAST_ENTRY = {"bis 17:00 (11:00 NY)": 660, "bis 18:00 (12:00 NY)": 720, "bis 22:00 (ganzer Handelstag)": 960}
 FILTERS = [
     "Alle Signale", "Nur Long", "Nur Short",
     "Gap > 0,3 ATR in Ausbruchsrichtung", "Gap in Ausbruchsrichtung", "Gap gegen Ausbruchsrichtung",
@@ -72,15 +72,15 @@ FILTER_TEXT = {
 
 PRESETS = {
     "NQ Gap & Go – vorab festgelegte Regel": dict(market="NQ (Nasdaq 100)", or_min=15, stop="0,25 × Daily-ATR",
-                                                 target="Tagesschluss (16:00 NY)", last="11:00 NY",
+                                                 target="Tagesschluss (16:00 NY)", last="bis 17:00 (11:00 NY)",
                                                  filt="Gap > 0,3 ATR in Ausbruchsrichtung"),
     "NQ Gap & Go – stabilste Variante": dict(market="NQ (Nasdaq 100)", or_min=60, stop="Mitte der Range",
-                                            target="Tagesschluss (16:00 NY)", last="16:00 NY (ganzer Tag)",
+                                            target="Tagesschluss (16:00 NY)", last="bis 22:00 (ganzer Handelstag)",
                                             filt="Gap > 0,3 ATR in Ausbruchsrichtung"),
     "Klassisch: 15 Min, Stop andere Seite, bis Schluss": dict(market="NQ (Nasdaq 100)", or_min=15,
                                                              stop="Andere Seite der Range",
                                                              target="Tagesschluss (16:00 NY)",
-                                                             last="16:00 NY (ganzer Tag)", filt="Alle Signale"),
+                                                             last="bis 22:00 (ganzer Handelstag)", filt="Alle Signale"),
 }
 PERIODS = [("In-Sample", 2015, 2020), ("Out-of-Sample", 2021, 2023), ("Holdout", 2024, 2100)]
 
@@ -277,7 +277,10 @@ def render_orb_strategy() -> None:
     c4, c5, c6, c7 = st.columns(4)
     stop_lbl = c4.selectbox("Stop", list(STOPS), key="orb_stop")
     tgt_lbl = c5.selectbox("Ziel", list(TARGETS), key="orb_target")
-    last_lbl = c6.selectbox("Spätester Einstieg", list(LAST_ENTRY), key="orb_last")
+    last_lbl = c6.selectbox("Signal zählt (dt. Zeit)", list(LAST_ENTRY), key="orb_last",
+                            help="Eingestiegen wird frühestens nach dem Ende der Range (bei 15 Min. um 15:45). "
+                                 "Hier stellst du ein, bis wann ein Ausbruch noch als Signal zählt. "
+                                 "Kommt bis dahin kein M15-Schluss außerhalb der Range, gibt es an dem Tag keinen Trade.")
     mk = MARKETS[market]
     cost = c7.number_input(f"Kosten pro Trade ({mk['unit']})", 0.0, 50.0, float(mk["cost"]), 0.05, key=f"orb_cost_{mk['symbol']}",
                            help="Spread + Slippage für Ein- und Ausstieg zusammen. Kommission hier mit einrechnen.")
@@ -286,7 +289,7 @@ def render_orb_strategy() -> None:
     with st.expander("🔎 Was wird hier getradet – und was wird getestet?"):
         trade_txt, test_txt = FILTER_TEXT[filt]
         end = {15: "15:45", 30: "16:00", 60: "16:30"}[or_min]
-        deadline = {"11:00 NY": "17:00", "12:00 NY": "18:00", "16:00 NY (ganzer Tag)": "22:00"}[last_lbl]
+        deadline = {"bis 17:00 (11:00 NY)": "17:00", "bis 18:00 (12:00 NY)": "18:00", "bis 22:00 (ganzer Handelstag)": "22:00"}[last_lbl]
         stop_e = {"Andere Seite der Range": "auf der anderen Seite der Range",
                   "Mitte der Range": "in der Mitte der Range",
                   "0,10 × Daily-ATR": "0,10 × ATR vom Einstieg entfernt",
@@ -413,7 +416,7 @@ def render_orb_strategy() -> None:
         st.markdown(
             f"- Range: Hoch/Tief von 9:30 bis {9 + (30 + or_min) // 60}:{(30 + or_min) % 60:02d} New York.\n"
             "- Einstieg: Schlusskurs der ersten M15-Kerze außerhalb der Range, höchstens ein Trade pro Tag.\n"
-            f"- Stop: {stop_lbl}. Ziel: {tgt_lbl}. Spätester Einstieg: {last_lbl}.\n"
+            f"- Stop: {stop_lbl}. Ziel: {tgt_lbl}. Signal zählt {last_lbl}.\n"
             "- Liegen Stop und Ziel in derselben Kerze, zählt der Stop (konservativ).\n"
             f"- Kosten: {cost} {mk['unit']} pro Trade abgezogen.\n"
             "- Gap = Eröffnung 9:30 gegenüber Schluss 16:00 des Vortags, gemessen in Daily-ATR(14).\n"
@@ -448,7 +451,7 @@ def _render_today_box(st, days, market, mk, or_min, stop_lbl, filt, last_lbl):
                     "Mitte der Range": "genau in der Mitte zwischen Range-Hoch und Range-Tief",
                     "Andere Seite der Range": "auf der anderen Seite der Range (Long: unter dem Tief, Short: über dem Hoch)"}[stop_lbl]
         end = {15: "15:45", 30: "16:00", 60: "16:30"}[or_min]
-        deadline = {"11:00 NY": "17:00", "12:00 NY": "18:00", "16:00 NY (ganzer Tag)": "21:45"}[last_lbl]
+        deadline = {"bis 17:00 (11:00 NY)": "17:00", "bis 18:00 (12:00 NY)": "18:00", "bis 22:00 (ganzer Handelstag)": "21:45"}[last_lbl]
         gap_rule = filt == "Gap > 0,3 ATR in Ausbruchsrichtung"
         steps = []
         if gap_rule:
