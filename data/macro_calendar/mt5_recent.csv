@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-318966,999030016,gross-domestic-product-qq,EUR,EU,Bruttoinlandsprodukt q/q,Medium,percent,2026-09-07 09:00,2026-04-01,0.6,0.4,0.4,0.0,positive
-318973,999030017,gross-domestic-product-yy,EUR,EU,Bruttoinlandsprodukt y/y,Medium,percent,2026-09-07 09:00,2026-04-01,1.2,1.0,1.0,0.6,positive
-318995,999030028,employment-level,EUR,EU,Beschäftigungsniveau,Medium,people,2026-09-07 09:00,2026-04-01,176.4482,,176.577,,
 288952,392010001,gross-domestic-product-qq,JPY,JP,Bruttoinlandsprodukt q/q,High,percent,2026-09-07 23:50,2026-04-01,0.4,0.3,0.3,,positive
 288960,392010002,gross-domestic-product-price-index-yy,JPY,JP,BIP Preisindex y/y,Medium,percent,2026-09-07 23:50,2026-04-01,2.6,2.6,2.6,,
 288968,392010003,gross-domestic-product-yy,JPY,JP,Bruttoinlandsprodukt y/y,Medium,percent,2026-09-07 23:50,2026-04-01,1.4,1.1,1.1,,positive
