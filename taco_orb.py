@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+DATA_VERSION = 2          # erhöhen, wenn sich das Format von load_days ändert (leert den Streamlit-Cache)
 DATA_DIR = Path(__file__).resolve().parent / "data" / "dukascopy_intraday"
 
 MARKETS = {
@@ -172,7 +173,7 @@ def simulate(days, ctx, or_min: int, stop: str, target_R: int, last_entry: int, 
     """be_R > 0: Stop auf Einstieg (Break-even), sobald der Kurs +be_R × Risiko erreicht hat (gilt ab der nächsten Kerze)."""
     rows = []
     n_or = or_min // 15
-    for date, (m, H, L, C, _o, _v) in days.items():
+    for date, (m, H, L, C, *_rest) in days.items():
         atr = ctx.at[date, "atr"]
         if not np.isfinite(atr):
             continue
@@ -291,12 +292,12 @@ def render_orb_strategy() -> None:
                "Einstieg nur mit **M15-Schlusskurs** außerhalb der Range.")
 
     @st.cache_data(show_spinner="Lade M15-Daten …")
-    def _days(symbol):
+    def _days(symbol, version=DATA_VERSION):
         return load_days(symbol)
 
     @st.cache_data(show_spinner="Simuliere Trades …")
-    def _trades(symbol, or_min, stop, target_R, last_entry, cost, be_R):
-        days, ctx = _days(symbol)
+    def _trades(symbol, or_min, stop, target_R, last_entry, cost, be_R, version=DATA_VERSION):
+        days, ctx = _days(symbol, DATA_VERSION)
         return simulate(days, ctx, or_min, stop, target_R, last_entry, cost, be_R)
 
     # ---- Einstellungen
@@ -367,7 +368,7 @@ def render_orb_strategy() -> None:
             "2015–2020 (In-Sample, hier wurden die Regeln gesucht), 2021–2023 (Out-of-Sample) und 2024–heute (Holdout). "
             "Eine echte Edge muss auch in den beiden neuen Zeiträumen positiv sein – idealerweise mit p-Wert unter 0,05.")
 
-    loaded = _days(mk["symbol"])
+    loaded = _days(mk["symbol"], DATA_VERSION)
     if loaded is not None:
         _render_today_box(st, loaded[0], market, mk, or_min, stop_lbl, filt, last_lbl)
     if loaded is None:
