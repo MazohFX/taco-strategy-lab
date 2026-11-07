@@ -1,12 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-288952,392010001,gross-domestic-product-qq,JPY,JP,Bruttoinlandsprodukt q/q,High,percent,2026-09-07 23:50,2026-04-01,0.4,0.3,0.3,,positive
-288960,392010002,gross-domestic-product-price-index-yy,JPY,JP,BIP Preisindex y/y,Medium,percent,2026-09-07 23:50,2026-04-01,2.6,2.6,2.6,,
-288968,392010003,gross-domestic-product-yy,JPY,JP,Bruttoinlandsprodukt y/y,Medium,percent,2026-09-07 23:50,2026-04-01,1.4,1.1,1.1,,positive
-288992,392010015,net-exports-contribution-to-gdp-qq,JPY,JP,Nettoexportbeitrag zum BIP q/q,Medium,percent,2026-09-07 23:50,2026-04-01,0.5,0.5,0.5,,
-296465,392070005,current-account-nsa,JPY,JP,Leistungsbilanz n.s.a.,Medium,currency,2026-09-07 23:50,2026-07-01,2988.9,1001.2,-92.3,,positive
-296467,392070008,adjusted-current-account,JPY,JP,Bereinigte Leistungsbilanz,Medium,currency,2026-09-07 23:50,2026-07-01,2523.1,2981.2,1396.9,,negative
-317167,36040001,nab-business-confidence,AUD,AU,NAB Geschäftsvertrauen,Medium,none,2026-09-08 01:30,2026-08-01,-8.0,,,,
-317187,276010007,trade-balance,EUR,DE,Handelsbilanz,Medium,currency,2026-09-08 06:00,2026-07-01,21.3,16.3,15.4,15.4,positive
 318216,826020025,boe-deputy-governor-markets-and-banking-ramsden-speech,GBP,GB,Rede des stellvertretenden Gouverneurs für Märkte und Banken der BoE Ramsden,Medium,none,2026-09-08 13:15,1970-01-01,,,,,
 318217,826020032,boe-governor-bailey-speech,GBP,GB,BoE Gouverneur Bailey spricht,High,none,2026-09-08 13:15,1970-01-01,,,,,
 318166,999010035,ecb-executive-board-member-elderson-speech,EUR,EU,EZB Direktoriumsmitglied Elderson spricht,Medium,none,2026-09-08 15:00,1970-01-01,,,,,
