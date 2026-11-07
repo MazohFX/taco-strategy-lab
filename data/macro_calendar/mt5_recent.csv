@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-281031,392060040,boj-l-money-stock-yy,JPY,JP,BoJ L Geldmenge y/y,High,percent,2026-09-08 23:50,2026-08-01,4.4,4.5,4.4,4.5,negative
 280407,276020003,10-year-bond-auction,EUR,DE,Auktion 10-jähriger Schuldverschreibungen,Medium,percent,2026-09-09 09:41,1970-01-01,3.39,,3.26,,
 248268,840200012,eia-short-term-energy-outlook,USD,US,EIA Kurzfristiger Energie-Ausblick,Medium,none,2026-09-09 16:00,2026-09-01,,,,,
 301599,840220014,10-year-note-auction,USD,US,10-jährige Schatzanweisung Auktion,High,percent,2026-09-09 17:00,1970-01-01,4.834,,,,
