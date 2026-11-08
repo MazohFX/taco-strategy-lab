@@ -1,8 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-280407,276020003,10-year-bond-auction,EUR,DE,Auktion 10-jähriger Schuldverschreibungen,Medium,percent,2026-09-09 09:41,1970-01-01,3.39,,3.26,,
-248268,840200012,eia-short-term-energy-outlook,USD,US,EIA Kurzfristiger Energie-Ausblick,Medium,none,2026-09-09 16:00,2026-09-01,,,,,
-301599,840220014,10-year-note-auction,USD,US,10-jährige Schatzanweisung Auktion,High,percent,2026-09-09 17:00,1970-01-01,4.834,,,,
-318163,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-09-09 17:00,1970-01-01,,,,,
 317195,276010020,cpi-mm,EUR,DE,CPI m/m,Medium,percent,2026-09-10 06:00,2026-08-01,0.2,0.2,0.2,,
 317197,276010021,cpi-yy,EUR,DE,CPI y/y,Medium,percent,2026-09-10 06:00,2026-08-01,2.9,2.9,2.9,,
 204752,999010006,ecb-deposit-rate-decision,EUR,EU,ECB Einlagenzinsentscheid,High,percent,2026-09-10 12:15,1970-01-01,2.5,,2.25,,
