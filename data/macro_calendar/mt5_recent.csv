@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-317195,276010020,cpi-mm,EUR,DE,CPI m/m,Medium,percent,2026-09-10 06:00,2026-08-01,0.2,0.2,0.2,,
-317197,276010021,cpi-yy,EUR,DE,CPI y/y,Medium,percent,2026-09-10 06:00,2026-08-01,2.9,2.9,2.9,,
 204752,999010006,ecb-deposit-rate-decision,EUR,EU,ECB Einlagenzinsentscheid,High,percent,2026-09-10 12:15,1970-01-01,2.5,,2.25,,
 204768,999010007,ecb-interest-rate-decision,EUR,EU,ECB Zinsentscheid,High,percent,2026-09-10 12:15,1970-01-01,2.65,,2.4,,
 204784,999010015,ecb-marginal-lending-facility-rate-decision,EUR,EU,EZB Entscheid zur Spitzenrefinanzierungsfazilität,Medium,percent,2026-09-10 12:15,1970-01-01,2.9,,2.65,,
