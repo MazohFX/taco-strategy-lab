@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-301602,840220015,30-year-bond-auction,USD,US,30-jährige Schuldverschreibung Auktion,High,percent,2026-09-10 17:00,1970-01-01,5.308,,5.216,,
 309606,554060001,businessnz-manufacturing-index,NZD,NZ,BusinessNZ Herstellerindex,Medium,none,2026-09-10 22:30,2026-08-01,,54.8,54.3,,
 279577,392070001,bsi-large-manufacturing-conditions,JPY,JP,BSI große Verarbeitungsunternehmen,Medium,none,2026-09-10 23:50,2026-07-01,7.6,2.0,-1.8,,positive
 277491,840030005,consumer-price-index-mm,USD,US,CPI m/m,High,percent,2026-09-11 12:30,2026-08-01,0.4,0.0,0.1,,positive
