@@ -1,16 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-204752,999010006,ecb-deposit-rate-decision,EUR,EU,ECB Einlagenzinsentscheid,High,percent,2026-09-10 12:15,1970-01-01,2.5,,2.25,,
-204768,999010007,ecb-interest-rate-decision,EUR,EU,ECB Zinsentscheid,High,percent,2026-09-10 12:15,1970-01-01,2.65,,2.4,,
-204784,999010015,ecb-marginal-lending-facility-rate-decision,EUR,EU,EZB Entscheid zur Spitzenrefinanzierungsfazilität,Medium,percent,2026-09-10 12:15,1970-01-01,2.9,,2.65,,
-204800,999010024,ecb-monetary-policy-statement,EUR,EU,EZB Geldpolitische Stellungnahme,Medium,none,2026-09-10 12:15,1970-01-01,,,,,
-277443,840030001,producer-price-index-mm,USD,US,PPI m/m,High,percent,2026-09-10 12:30,2026-08-01,0.4,-0.3,0.0,0.1,positive
-277455,840030002,producer-price-index-ex-food-energy-mm,USD,US,Kern PPI m/m,Medium,percent,2026-09-10 12:30,2026-08-01,0.2,0.6,0.2,0.3,negative
-313647,840140001,initial-jobless-claims,USD,US,Erstanträge auf Arbeitslosenhilfe,High,none,2026-09-10 12:30,2026-09-05,206.0,211.0,206.0,207.0,positive
-313651,840140002,continuing-jobless-claims,USD,US,Folgeanträge auf Arbeitslosenhilfe,Medium,none,2026-09-10 12:30,2026-08-29,1.774,1.774,1.779,1.775,
-204736,999010003,ecb-monetary-policy-press-conference,EUR,EU,ECB Geldpolitische Pressekonferenz,High,none,2026-09-10 12:45,1970-01-01,,,,,
-287286,840120001,existing-home-sales,USD,US,Tatsächliche Hausverkäufe,High,none,2026-09-10 14:00,2026-08-01,3.98,4.01,4.06,,negative
-287297,840120002,existing-home-sales-mm,USD,US,Tatsächliche Hausverkäufe m/m,Medium,percent,2026-09-10 14:00,2026-08-01,-2.0,0.1,-1.7,,negative
-318578,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-09-10 14:15,1970-01-01,,,,,
 310488,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-09-10 16:00,2026-09-04,-0.391,7.559,-4.45,,positive
 310489,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-09-10 16:00,2026-09-04,-0.684,0.823,0.08,,positive
 301602,840220015,30-year-bond-auction,USD,US,30-jährige Schuldverschreibung Auktion,High,percent,2026-09-10 17:00,1970-01-01,5.308,,5.216,,
