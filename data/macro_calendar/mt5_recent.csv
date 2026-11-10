@@ -1,22 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-268713,840210001,michigan-consumer-sentiment,USD,US,Michigan Konsumklima,Medium,none,2026-09-11 14:00,2026-09-01,47.8,49.8,51.7,,negative
-268737,840210002,michigan-consumer-expectations,USD,US,Michigan Konsumentenerwartungen,Medium,none,2026-09-11 14:00,2026-09-01,45.8,51.2,51.5,,negative
-268785,840210004,michigan-inflation-expectations,USD,US,Michigan Inflationserwartungen,Medium,percent,2026-09-11 14:00,2026-09-01,4.6,4.1,4.0,,positive
-268809,840210005,michigan-5-year-inflation-expectations,USD,US,Michigan 5-jährige Inflationserwartungen,Medium,percent,2026-09-11 14:00,2026-09-01,3.4,3.2,3.3,,positive
-318164,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-09-11 14:00,1970-01-01,,,,,
-293059,840320001,wasde-report,USD,US,WASDE Bericht,Medium,none,2026-09-11 16:00,1970-01-01,,,,,
-312496,840100001,baker-hughes-us-oil-rig-count,USD,US,Baker Hughes Ölplattformzählung,Medium,rig,2026-09-11 17:00,2026-09-11,450.0,,449.0,,
-312497,840100002,baker-hughes-us-total-rig-count,USD,US,Baker Hughes US Gesamtzahl der Ölförderanlagen,Medium,rig,2026-09-11 17:00,2026-09-11,591.0,,588.0,,
-318162,999010020,ecb-executive-board-member-lane-speech,EUR,EU,ECB Vorstandsmitglied Lane spricht,Medium,none,2026-09-11 17:00,1970-01-01,,,,,
-272953,840150001,federal-budget-balance,USD,US,Staatshaushalt,Medium,currency,2026-09-11 18:00,2026-08-01,-166.8,176.7,432.3,-432.3,negative
-287365,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-09-11 19:30,2026-09-08,-34.9,,-39.4,,
-287506,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-09-11 19:30,2026-09-08,10.8,,-92.2,,
-287741,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-09-11 19:30,2026-09-08,-58.8,,-49.6,,
-287882,840520003,cftc-gold-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-09-11 19:30,2026-09-08,232.0,,228.1,,
-287929,840520004,cftc-crude-oil-non-commercial-net-positions,USD,US,CFTC Rohöl nichtkommerzielle Nettopositionen,Medium,position,2026-09-11 19:30,2026-09-08,136.6,,129.9,,
-287976,840520005,cftc-sp-500-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-09-11 19:30,2026-09-08,-76.0,,-75.9,,
-288258,840520011,cftc-nasdaq-100-non-commercial-net-positions,USD,US,CFTC Nasdaq 100 Nichtkommerzielle Nettopositionen,Medium,position,2026-09-11 19:30,2026-09-08,20.9,,25.9,,
-288305,999520001,cftc-eur-non-commercial-net-positions,EUR,EU,CFTC EUR nichtkommerzielle Nettopositionen,Medium,position,2026-09-11 19:30,2026-09-08,-42.6,,-24.9,,
 318739,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-09-12 10:15,1970-01-01,,,,,
 289147,392020006,industrial-production-mm,JPY,JP,Industrieproduktion m/m,Medium,percent,2026-09-14 04:30,2026-07-01,-0.2,0.1,0.1,,negative
 319011,999010033,ecb-executive-board-member-schnabel-speech,EUR,EU,Das EZB-Direktoriumsmitglied Schnabel spricht,Medium,none,2026-09-14 09:15,1970-01-01,,,,,
