@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-279577,392070001,bsi-large-manufacturing-conditions,JPY,JP,BSI große Verarbeitungsunternehmen,Medium,none,2026-09-10 23:50,2026-07-01,7.6,2.0,-1.8,,positive
 277491,840030005,consumer-price-index-mm,USD,US,CPI m/m,High,percent,2026-09-11 12:30,2026-08-01,0.4,0.0,0.1,,positive
 277503,840030006,consumer-price-index-ex-food-energy-mm,USD,US,Kern-CPI m/m,High,percent,2026-09-11 12:30,2026-08-01,0.3,0.2,0.2,,positive
 277515,840030007,consumer-price-index-yy,USD,US,CPI y/y,High,percent,2026-09-11 12:30,2026-08-01,3.4,2.7,3.4,,positive
