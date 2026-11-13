@@ -1,8 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-277983,124010003,cpi-mm,CAD,CA,CPI m/m,Medium,percent,2026-09-14 12:30,2026-08-01,-0.1,0.0,0.5,,negative
-277995,124010004,cpi-yy,CAD,CA,CPI y/y,Low,percent,2026-09-14 12:30,2026-08-01,3.0,2.7,3.0,,positive
-278007,124010005,core-cpi-mm,CAD,CA,Kern-CPI m/m,Medium,percent,2026-09-14 12:30,2026-08-01,0.1,0.1,0.2,,
-278019,124010006,core-cpi-yy,CAD,CA,Kern CPI y/y,Medium,percent,2026-09-14 12:30,2026-08-01,2.4,2.5,2.3,,negative
 319007,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-09-14 15:15,1970-01-01,,,,,
 319008,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-09-14 15:35,1970-01-01,,,,,
 313503,554010001,electronic-card-retail-sales-mm,NZD,NZ,Electronic Card Einzelhandelsumsatz m/m,Medium,percent,2026-09-14 22:45,2026-08-01,-0.9,-0.7,1.3,1.2,negative
