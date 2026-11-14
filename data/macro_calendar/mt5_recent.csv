@@ -1,15 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-293279,392020005,tertiary-industry-activity-index-mm,JPY,JP,Index der Aktivitäten im Dienstleistungssektor m/m,Medium,percent,2026-09-15 04:30,2026-07-01,0.4,0.6,-0.2,,negative
-309891,250010001,cpi-mm,EUR,FR,CPI m/m,Medium,percent,2026-09-15 06:45,2026-08-01,0.7,0.7,0.7,,
-309895,250010002,cpi-yy,EUR,FR,CPI y/y,Low,percent,2026-09-15 06:45,2026-08-01,2.4,2.4,2.4,,
-309899,250010003,hicp-mm,EUR,FR,HVPI m/m,Medium,percent,2026-09-15 06:45,2026-08-01,0.7,0.8,0.8,,negative
-282176,724010002,cpi-yy,EUR,ES,CPI y/y,Medium,percent,2026-09-15 07:00,2026-08-01,4.3,4.3,4.3,,
-282222,724010004,hicp-yy,EUR,ES,HVPI y/y,Medium,percent,2026-09-15 07:00,2026-08-01,4.6,4.5,4.5,,positive
-315332,999030018,trade-balance,EUR,EU,Handelsbilanz,Medium,currency,2026-09-15 09:00,2026-07-01,5.0,1.6,1.8,1.0,positive
-315333,999030019,trade-balance-nsa,EUR,EU,Handelsbilanz n.s.a.,Medium,currency,2026-09-15 09:00,2026-07-01,14.2,2.5,8.6,7.2,positive
-316473,276070001,zew-economic-sentiment-indicator,EUR,DE,ZEW Konjunkturerwartungen,Medium,none,2026-09-15 09:05,2026-09-01,34.7,-5.8,34.2,,positive
-316477,276070002,zew-economic-situation,EUR,DE,ZEW Konjunktursituation,Medium,none,2026-09-15 09:05,2026-09-01,-47.1,-70.1,-61.1,,positive
-316481,999050001,zew-indicator-of-economic-sentiment,EUR,EU,ZEW Konjunkturerwartungen,Medium,none,2026-09-15 09:05,2026-09-01,,23.8,31.4,,
 278262,124010031,wholesale-trade-mm,CAD,CA,Großhandel m/m,Medium,percent,2026-09-15 12:30,2026-07-01,0.3,-0.6,2.8,,positive
 313644,840230001,ny-empire-state-manufacturing-index,USD,US,NY Empire-State-Index des verarbeitenden Gewerbes,Medium,none,2026-09-15 12:30,2026-09-01,7.6,13.5,20.6,,negative
 301608,840220019,20-year-bond-auction,USD,US,Auktion für 20-Jahres-Anleihen,Medium,percent,2026-09-15 17:00,1970-01-01,5.42,,5.204,,
