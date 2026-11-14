@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-301608,840220019,20-year-bond-auction,USD,US,Auktion für 20-Jahres-Anleihen,Medium,percent,2026-09-15 17:00,1970-01-01,5.42,,5.204,,
-319012,999010033,ecb-executive-board-member-schnabel-speech,EUR,EU,Das EZB-Direktoriumsmitglied Schnabel spricht,Medium,none,2026-09-15 17:00,1970-01-01,,,,,
 313518,554010028,current-account-12-months,NZD,NZ,12-monatige Leistungsbilanz,Medium,currency,2026-09-15 22:45,2026-04-01,-14.583,-16.004,-16.3,-13.692,positive
 284589,392040001,adjusted-trade-balance,JPY,JP,Bereinigte Handelsbilanz,Medium,currency,2026-09-15 23:50,2026-08-01,-840.6,-1214.3,-686.0,-681.2,positive
 284601,392040002,trade-balance,JPY,JP,Handelsbilanz,Medium,currency,2026-09-15 23:50,2026-08-01,-1105.6,71.2,-634.5,-638.3,negative
