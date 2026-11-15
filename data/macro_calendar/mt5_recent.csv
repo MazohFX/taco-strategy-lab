@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-319013,999010035,ecb-executive-board-member-elderson-speech,EUR,EU,EZB Direktoriumsmitglied Elderson spricht,Medium,none,2026-09-16 13:00,1970-01-01,,,,,
 270247,840020007,business-inventories-mm,USD,US,Lagerbestände der Hersteller Einzel- und Großhändler m/m,Medium,percent,2026-09-16 14:00,2026-07-01,0.8,-0.5,0.0,0.1,negative
 270507,840020027,retail-inventories-mm,USD,US,Lagerbestände der Einzelhändler m/m,Medium,percent,2026-09-16 14:00,2026-07-01,0.8,0.7,0.7,,negative
 270531,840020028,retail-inventories-ex-autos-mm,USD,US,Lagerbestände der Einzelhändler exkl. Autos m/m,Medium,percent,2026-09-16 14:00,2026-07-01,0.8,,0.7,,
