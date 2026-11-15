@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-318055,124030001,cmhc-housing-starts,CAD,CA,CMHC Baubeginne,Medium,building,2026-09-16 12:15,2026-08-01,,259.628,229.074,,
 270283,840020010,retail-sales-mm,USD,US,Einzelhandelsumsatz m/m,High,percent,2026-09-16 12:30,2026-08-01,1.2,0.3,-0.6,-0.5,positive
 270295,840020011,retail-sales-ex-autos-mm,USD,US,Kern Verbraucherpreise m/m,High,percent,2026-09-16 12:30,2026-08-01,1.4,0.5,-0.3,-0.2,positive
 270307,840020012,retail-control-mm,USD,US,Einzelhandelsumsätze m/m,Medium,percent,2026-09-16 12:30,2026-08-01,1.4,0.9,-0.4,,positive
