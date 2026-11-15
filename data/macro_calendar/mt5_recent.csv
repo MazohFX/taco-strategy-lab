@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-313514,554010024,gdp-qq,NZD,NZ,Bruttoinlandsprodukt q/q,Medium,percent,2026-09-16 22:45,2026-04-01,0.2,0.1,0.8,0.9,positive
-313515,554010025,gdp-yy,NZD,NZ,Bruttoinlandsprodukt y/y,Low,percent,2026-09-16 22:45,2026-04-01,2.6,1.4,1.5,1.7,positive
-313525,554010035,gdp-annual-change,NZD,NZ,Veränderung des BIP auf Jahresbasis,Medium,percent,2026-09-16 22:45,2026-04-01,1.7,0.9,0.8,,positive
 319006,999010020,ecb-executive-board-member-lane-speech,EUR,EU,ECB Vorstandsmitglied Lane spricht,Medium,none,2026-09-17 07:00,1970-01-01,,,,,
 315327,999030011,consumer-price-index-mm,EUR,EU,CPI m/m,Medium,percent,2026-09-17 09:00,2026-08-01,0.4,2.9,2.9,,negative
 315328,999030012,consumer-price-index-ex-food-energy-yy,EUR,EU,Kern CPI y/y,Medium,percent,2026-09-17 09:00,2026-08-01,2.4,2.4,2.4,,
