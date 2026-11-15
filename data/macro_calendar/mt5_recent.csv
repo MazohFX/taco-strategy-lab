@@ -1,15 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-270247,840020007,business-inventories-mm,USD,US,Lagerbestände der Hersteller Einzel- und Großhändler m/m,Medium,percent,2026-09-16 14:00,2026-07-01,0.8,-0.5,0.0,0.1,negative
-270507,840020027,retail-inventories-mm,USD,US,Lagerbestände der Einzelhändler m/m,Medium,percent,2026-09-16 14:00,2026-07-01,0.8,0.7,0.7,,negative
-270531,840020028,retail-inventories-ex-autos-mm,USD,US,Lagerbestände der Einzelhändler exkl. Autos m/m,Medium,percent,2026-09-16 14:00,2026-07-01,0.8,,0.7,,
-311272,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-09-16 14:30,2026-09-11,-0.64,6.729,-0.391,,positive
-311273,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-09-16 14:30,2026-09-11,-0.342,2.165,-0.684,,positive
-319536,276050008,bbk-president-nagel-speech,EUR,DE,BBk Präsident Nagel spricht,Medium,none,2026-09-16 16:00,1970-01-01,,,,,
-319009,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-09-16 17:00,1970-01-01,,,,,
-237365,840050002,fomc-meeting-statement,USD,US,FOMC-Kommuniqué,Medium,none,2026-09-16 18:00,1970-01-01,,,,,
-237370,840050003,fomc-economic-projections,USD,US,FOMC wirtschaftlicher Ausblick,Medium,none,2026-09-16 18:00,1970-01-01,,,,,
-237385,840050014,fed-interest-rate-decision,USD,US,Fed Zinsentscheid,High,percent,2026-09-16 18:00,1970-01-01,4.0,,3.75,,
-237393,840050018,fomc-press-conference,USD,US,FOMC Pressekonferenz,High,none,2026-09-16 18:30,1970-01-01,,,,,
 276709,840220001,tic-net-long-term-transactions,USD,US,TIC Langfristige Nettotransaktionen,Medium,currency,2026-09-16 20:00,2026-07-01,-27.9,118.2,172.7,174.4,negative
 313514,554010024,gdp-qq,NZD,NZ,Bruttoinlandsprodukt q/q,Medium,percent,2026-09-16 22:45,2026-04-01,0.2,0.1,0.8,0.9,positive
 313515,554010025,gdp-yy,NZD,NZ,Bruttoinlandsprodukt y/y,Low,percent,2026-09-16 22:45,2026-04-01,2.6,1.4,1.5,1.7,positive
