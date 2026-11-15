@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-276709,840220001,tic-net-long-term-transactions,USD,US,TIC Langfristige Nettotransaktionen,Medium,currency,2026-09-16 20:00,2026-07-01,-27.9,118.2,172.7,174.4,negative
 313514,554010024,gdp-qq,NZD,NZ,Bruttoinlandsprodukt q/q,Medium,percent,2026-09-16 22:45,2026-04-01,0.2,0.1,0.8,0.9,positive
 313515,554010025,gdp-yy,NZD,NZ,Bruttoinlandsprodukt y/y,Low,percent,2026-09-16 22:45,2026-04-01,2.6,1.4,1.5,1.7,positive
 313525,554010035,gdp-annual-change,NZD,NZ,Veränderung des BIP auf Jahresbasis,Medium,percent,2026-09-16 22:45,2026-04-01,1.7,0.9,0.8,,positive
