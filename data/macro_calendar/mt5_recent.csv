@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-284978,392030001,national-consumer-price-index-yy,JPY,JP,VPI y/y,Low,percent,2026-09-17 23:30,2026-08-01,1.9,2.1,1.9,1.9,negative
-284990,392030002,national-consumer-price-index-ex-food-energy-yy,JPY,JP,VPI ex Nahrungsmittel und Energie y/y,Medium,percent,2026-09-17 23:30,2026-08-01,1.9,1.6,1.9,1.9,positive
-285002,392030003,national-consumer-price-index-ex-fresh-food-yy,JPY,JP,Kern VPI y/y,Medium,percent,2026-09-17 23:30,2026-08-01,1.7,2.2,1.8,1.8,negative
 264428,392060018,boj-monetary-policy-statement,JPY,JP,BoJ geldpolitischen Erklärung,Medium,none,2026-09-18 02:54,1970-01-01,,,,,
 264440,392060022,boj-interest-rate-decision,JPY,JP,BoJ Zinsentscheid,High,percent,2026-09-18 02:54,1970-01-01,1.25,,1.0,,
 318490,276010014,ppi-mm,EUR,DE,PPI m/m,Medium,percent,2026-09-18 06:00,2026-08-01,1.6,1.9,1.1,4.3,negative
