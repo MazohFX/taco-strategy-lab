@@ -1,9 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-269629,826020008,boe-mpc-meeting-minutes,GBP,GB,BoE Protokoll der Sitzung des geldpolitischen Komitees,Medium,none,2026-09-17 11:00,1970-01-01,,,,,
-269637,826020009,boe-interest-rate-decision,GBP,GB,Bank von England (BoE) Zinsentscheid,High,percent,2026-09-17 11:00,1970-01-01,4.0,,3.75,,
-269645,826020010,boe-mpc-vote-cut,GBP,GB,Geldpolitisches Komitee der BoE Stimmen für Zinssenkung,Medium,vote,2026-09-17 11:00,1970-01-01,0.0,,0.0,,
-269653,826020011,boe-mpc-vote-hike,GBP,GB,BoE Abstimmung des geldpolitisches Komitees über Zinserhöhung,Medium,vote,2026-09-17 11:00,1970-01-01,3.0,,3.0,,
-269661,826020012,boe-mpc-vote-unchanged,GBP,GB,Geldpolitisches Komitee der Bank von England (BoE) Stimmen für unveränderten Zinssatz,Medium,vote,2026-09-17 11:00,1970-01-01,6.0,,6.0,,
 270199,840020004,housing-starts,USD,US,Baubeginne,Medium,none,2026-09-17 12:30,2026-08-01,1.275,1.305,1.239,1.309,negative
 270211,840020005,building-permits,USD,US,Baugenehmigungen,Medium,none,2026-09-17 12:30,2026-08-01,1.394,1.424,1.443,1.433,negative
 270343,840020015,housing-starts-mm,USD,US,Baubeginne m/m,Medium,percent,2026-09-17 12:30,2026-08-01,-2.6,-14.7,-12.4,-9.0,positive
