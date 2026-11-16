@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-319006,999010020,ecb-executive-board-member-lane-speech,EUR,EU,ECB Vorstandsmitglied Lane spricht,Medium,none,2026-09-17 07:00,1970-01-01,,,,,
 315327,999030011,consumer-price-index-mm,EUR,EU,CPI m/m,Medium,percent,2026-09-17 09:00,2026-08-01,0.4,2.9,2.9,,negative
 315328,999030012,consumer-price-index-ex-food-energy-yy,EUR,EU,Kern CPI y/y,Medium,percent,2026-09-17 09:00,2026-08-01,2.4,2.4,2.4,,
 315329,999030013,consumer-price-index-yy,EUR,EU,CPI y/y,High,percent,2026-09-17 09:00,2026-08-01,3.2,2.8,2.8,,positive
