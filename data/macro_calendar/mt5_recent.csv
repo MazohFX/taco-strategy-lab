@@ -1,14 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-270199,840020004,housing-starts,USD,US,Baubeginne,Medium,none,2026-09-17 12:30,2026-08-01,1.275,1.305,1.239,1.309,negative
-270211,840020005,building-permits,USD,US,Baugenehmigungen,Medium,none,2026-09-17 12:30,2026-08-01,1.394,1.424,1.443,1.433,negative
-270343,840020015,housing-starts-mm,USD,US,Baubeginne m/m,Medium,percent,2026-09-17 12:30,2026-08-01,-2.6,-14.7,-12.4,-9.0,positive
-278165,124010019,foreign-securities-purchases,CAD,CA,Ausländische Wertpapierkäufe,Medium,currency,2026-09-17 12:30,2026-07-01,20.653,,40.828,41.249,
-278222,124010026,rmpi-mm,CAD,CA,RMPI m/m,Medium,percent,2026-09-17 12:30,2026-08-01,3.1,-0.5,-2.2,-2.1,positive
-287215,840070001,philadelphia-fed-manufacturing-index,USD,US,Philadelphia Fed Index der Unternehmer,High,none,2026-09-17 12:30,2026-09-01,37.8,19.5,47.4,,positive
-287227,840070002,philadelphia-fed-employment,USD,US,Philadelphia Fed Beschäftigung,Medium,none,2026-09-17 12:30,2026-09-01,11.8,14.0,27.9,,negative
-313648,840140001,initial-jobless-claims,USD,US,Erstanträge auf Arbeitslosenhilfe,High,none,2026-09-17 12:30,2026-09-12,196.0,199.0,206.0,,positive
-313652,840140002,continuing-jobless-claims,USD,US,Folgeanträge auf Arbeitslosenhilfe,Medium,none,2026-09-17 12:30,2026-09-05,1.73,1.772,1.774,1.769,positive
-315999,124010030,new-housing-price-index-mm,CAD,CA,Neuer Immobilienpreisindex m/m,Medium,percent,2026-09-17 12:30,2026-08-01,-0.1,-0.1,-0.1,,
 287308,840120003,pending-home-sales-mm,USD,US,Schwebende Hausverkäufe m/m,Medium,percent,2026-09-17 14:00,2026-08-01,0.3,0.8,-2.3,-2.6,negative
 301605,840220017,10-year-tips-auction,USD,US,10-jährige TIPS Auktion,Medium,percent,2026-09-17 17:00,1970-01-01,2.653,,2.438,,
 313510,554010010,trade-balance-12-months,NZD,NZ,12-monatige Handelsbilanz,Medium,currency,2026-09-17 22:45,2026-08-01,-5.442,-5.123,-5.236,-5.406,negative
