@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-264428,392060018,boj-monetary-policy-statement,JPY,JP,BoJ geldpolitischen Erklärung,Medium,none,2026-09-18 02:54,1970-01-01,,,,,
-264440,392060022,boj-interest-rate-decision,JPY,JP,BoJ Zinsentscheid,High,percent,2026-09-18 02:54,1970-01-01,1.25,,1.0,,
 318490,276010014,ppi-mm,EUR,DE,PPI m/m,Medium,percent,2026-09-18 06:00,2026-08-01,1.6,1.9,1.1,4.3,negative
 264420,392060017,boj-press-conference,JPY,JP,BoJ Pressekonferenz,High,none,2026-09-18 06:30,1970-01-01,,,,,
 319010,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-09-18 10:30,1970-01-01,,,,,
