@@ -1,12 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-287366,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-09-18 19:30,2026-09-15,-38.9,,-34.9,,
-287507,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-09-18 19:30,2026-09-15,120.4,,10.8,,
-287742,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-09-18 19:30,2026-09-15,-58.7,,-58.8,,
-287883,840520003,cftc-gold-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-09-18 19:30,2026-09-15,230.3,,232.0,,
-287930,840520004,cftc-crude-oil-non-commercial-net-positions,USD,US,CFTC Rohöl nichtkommerzielle Nettopositionen,Medium,position,2026-09-18 19:30,2026-09-15,135.9,,136.6,,
-287977,840520005,cftc-sp-500-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-09-18 19:30,2026-09-15,-100.5,,-76.0,,
-288259,840520011,cftc-nasdaq-100-non-commercial-net-positions,USD,US,CFTC Nasdaq 100 Nichtkommerzielle Nettopositionen,Medium,position,2026-09-18 19:30,2026-09-15,33.7,,20.9,,
-288306,999520001,cftc-eur-non-commercial-net-positions,EUR,EU,CFTC EUR nichtkommerzielle Nettopositionen,Medium,position,2026-09-18 19:30,2026-09-15,-27.0,,-42.6,,
 318832,276050008,bbk-president-nagel-speech,EUR,DE,BBk Präsident Nagel spricht,Medium,none,2026-09-20 08:30,1970-01-01,,,,,
 320188,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-09-21 15:00,1970-01-01,,,,,
 295334,554070001,westpac-mcdermott-miller-consumer-confidence,NZD,NZ,Westpac McDermott Miller Verbrauchervertrauen,Medium,none,2026-09-21 21:00,2026-07-01,89.5,84.8,80.4,,positive
