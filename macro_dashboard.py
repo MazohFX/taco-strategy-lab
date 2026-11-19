@@ -1559,6 +1559,12 @@ def render_macro_dashboard(deps: dict) -> None:
 
     render_tagesplan(data)
 
+    try:
+        from carry_ampel import render_carry_ampel
+        render_carry_ampel(data)
+    except Exception as exc:  # Carry-Ampel darf die Seite nie blockieren
+        st.warning(f"Carry-Ampel konnte nicht geladen werden: {exc}")
+
     st.markdown("### 🔎 Details je Markt")
     mode = st.radio("Ansicht", ["Forex-Paare", "Futures"], horizontal=True, key="macro_dash_mode")
     if mode == "Forex-Paare":
