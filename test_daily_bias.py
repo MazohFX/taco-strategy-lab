@@ -55,7 +55,7 @@ def test_driver_change_units():
 
 def test_headline_tags():
     t = db.tag_headline("Russian forces escalate attacks in Donetsk")
-    assert t["effect"] == {"NQ": -1, "ES": -1, "GC": 1}
+    assert {k: t["effect"][k] for k in ("NQ", "ES", "GC")} == {"NQ": -1, "ES": -1, "GC": 1}
     t2 = db.tag_headline("Ceasefire agreed after weeks of attacks")
     assert t2["effect"]["GC"] == -1 and "Entspannung" in t2["labels"]
     assert db.tag_headline("Apple unveils new iPhone colours")["labels"] == []
@@ -121,6 +121,79 @@ def test_asset_bias_end_to_end():
     fomc = pd.DataFrame({"event_code": ["fed-interest-rate-decision"]})
     r2 = db.asset_bias("GC", df, now_ny, 0.5, "m", {}, None, fomc, "Normal")
     assert r2["confidence"] == "NIEDRIG" and r2["notes"]
+
+
+def test_weekly_bars_and_running():
+    df = _ohlc(300)
+    wk = db.to_weekly(df)
+    assert (wk.index.dayofweek == 4).all() and wk["High"].iloc[-1] >= wk["Close"].iloc[-1]
+    # Mittwoch 10:00 NY in der letzten Woche -> laufende Woche wird abgetrennt
+    last_fri = wk.index[-1]
+    done, price = db.split_running(wk, _ny(last_fri - pd.Timedelta(days=2) + pd.Timedelta(hours=10)))
+    assert len(done) == len(wk) - 1 and price == wk["Close"].iloc[-1]
+    st = db.structure_state(done, price, "Weekly")
+    assert st is not None and "Vorwochen" in st["reason"]
+
+
+def test_fx_tape_and_news():
+    # Risk-off: VIX hoch, Aktien runter -> Yen bull, Aussie bear
+    ch = {"VIX": 20.0, "SPX": -2.0, "US10Y": -6.0, "GOLD": 0.0}
+    assert db.tape_score("6J", ch)["score"] > 0.5
+    assert db.tape_score("6A", ch)["score"] < 0
+    assert db.tape_score("6C", {"OIL": 4.0})["score"] > 0.5
+    assert db.tape_score("DXY", {"US10Y": 8.0})["score"] > 0.5
+    # Weekly-Skalen sind breiter -> gleicher Move wirkt schwaecher
+    assert abs(db.tape_score("6J", ch, "Weekly")["score"]) < abs(db.tape_score("6J", ch)["score"])
+    t = db.tag_headline("Missile attack escalates conflict")
+    assert t["effect"]["6J"] == 1 and t["effect"]["6A"] == -1 and t["effect"]["GC"] == 1
+    t2 = db.tag_headline("Fed signals rate cut in December")
+    assert t2["effect"]["DXY"] == -1 and t2["effect"]["6E"] == 1
+
+
+def test_horizon_end_and_weekly_events():
+    now = pd.Timestamp("2026-11-18 12:00")   # Mittwoch
+    end = db.horizon_end(now, "Weekly")
+    assert end.weekday() == 4 and end.hour == 17
+    sat = db.horizon_end(pd.Timestamp("2026-11-21 12:00"), "Weekly")
+    assert sat.day == 27                       # naechster Freitag
+    cal = pd.DataFrame({"event_code": ["boj-interest-rate-decision", "nonfarm-payrolls", "x"],
+                        "event": ["BoJ", "NFP", "x"], "currency": ["JPY", "USD", "EUR"],
+                        "importance": ["High", "High", "Low"],
+                        "time_utc": pd.to_datetime(["2026-11-19 03:00", "2026-11-20 13:30", "2026-11-19 10:00"]),
+                        "actual": [np.nan] * 3, "forecast": [np.nan] * 3})
+    ev = db.relevant_events(cal, now, ["USD", "JPY", "EUR"], "Weekly")
+    assert len(ev) == 2 and ev["notenbank"].sum() == 1
+
+
+def test_seasonality_week():
+    idx = pd.bdate_range("2010-01-01", "2026-11-13")
+    rng = np.random.default_rng(7)
+    c = 100 * np.exp(np.cumsum(rng.normal(0, .005, len(idx))))
+    df = pd.DataFrame({"Open": c, "High": c * 1.002, "Low": c * .998, "Close": c}, index=idx)
+    s = db.seasonality_week(df, _ny("2026-11-18 10:00"))
+    assert s["week"] == 47 and s["n"] >= 10 and 0 <= s["up"] <= 1 and 2026 not in s["years"]
+
+
+def test_compute_bias_groups_and_horizons():
+    idx = pd.bdate_range(end="2026-11-18", periods=900)
+    def ohlc(sym, years=15):
+        rng = np.random.default_rng(abs(hash(sym)) % 997)
+        c = 1.1 * np.exp(np.cumsum(rng.normal(0, .006, len(idx))))
+        o = np.r_[c[0], c[:-1]]
+        return pd.DataFrame({"Open": o, "High": np.maximum(o, c) * 1.002, "Low": np.minimum(o, c) * .998, "Close": c}, index=idx)
+    def close(sym, period):
+        rng = np.random.default_rng(len(sym))
+        return pd.Series(10 * np.exp(np.cumsum(rng.normal(0, .01, len(idx)))), index=idx)
+    data = {"now": pd.Timestamp("2026-11-18 14:00"), "calendar": pd.DataFrame(), "results": {},
+            "plan": {"regime": {"effective": "Normal"}, "intervention": {"level": "hoch"}}}
+    for group in db.GROUPS:
+        for hz in db.HORIZONS:
+            res = db.compute_bias(data, group, hz, fetch_ohlc=ohlc, fetch_close=close, fetch_news=False)
+            assert set(res["assets"]) == set(db.GROUPS[group])
+            r = next(iter(res["assets"].values()))
+            assert r["label"] in ("LONG", "SHORT", "NEUTRAL") and r["history"] is not None
+            if hz == "Weekly":
+                assert "Vorwochen" in r["flip"] or r["flip"] == "–"
 
 
 if __name__ == "__main__":
