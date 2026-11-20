@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-295334,554070001,westpac-mcdermott-miller-consumer-confidence,NZD,NZ,Westpac McDermott Miller Verbrauchervertrauen,Medium,none,2026-09-21 21:00,2026-07-01,89.5,84.8,80.4,,positive
 320097,276050006,bbk-vice-president-balz-speech,EUR,DE,Vorstandsmitglied Balz der BBk spricht,Medium,none,2026-09-22 08:30,1970-01-01,,,,,
 320189,999010029,ecb-president-lagarde-speech,EUR,EU,EZB Präsident Lagarde spricht,High,none,2026-09-22 11:00,1970-01-01,,,,,
 320101,840050030,fed-governor-jefferson-speech,USD,US,Fed Gouverneur Jefferson spricht,Medium,none,2026-09-22 14:20,1970-01-01,,,,,
