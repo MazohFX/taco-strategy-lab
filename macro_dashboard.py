@@ -1565,6 +1565,12 @@ def render_macro_dashboard(deps: dict) -> None:
     except Exception as exc:  # Carry-Ampel darf die Seite nie blockieren
         st.warning(f"Carry-Ampel konnte nicht geladen werden: {exc}")
 
+    try:
+        from daily_bias import render_daily_bias
+        render_daily_bias(data)
+    except Exception as exc:  # Daily Bias darf die Seite nie blockieren
+        st.warning(f"Daily Bias konnte nicht geladen werden: {exc}")
+
     st.markdown("### 🔎 Details je Markt")
     mode = st.radio("Ansicht", ["Forex-Paare", "Futures"], horizontal=True, key="macro_dash_mode")
     if mode == "Forex-Paare":
