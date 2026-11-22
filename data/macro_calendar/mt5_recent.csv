@@ -1,14 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-316208,250500001,markit-manufacturing-pmi,EUR,FR,S&P Global PMI der Hersteller,Medium,none,2026-09-23 07:15,2026-09-01,,50.9,51.1,,
-316209,250500002,markit-services-pmi,EUR,FR,S&P Global PMI der Dienstleister,Medium,none,2026-09-23 07:15,2026-09-01,,49.1,48.0,,
-316211,276500001,markit-manufacturing-pmi,EUR,DE,S&P Global PMI der Hersteller,Medium,none,2026-09-23 07:30,2026-09-01,,54.5,54.3,,
-316212,276500002,markit-services-pmi,EUR,DE,S&P Global PMI der Dienstleister,Medium,none,2026-09-23 07:30,2026-09-01,,50.6,49.7,,
-316217,999500001,markit-manufacturing-pmi,EUR,EU,S&P Global PMI der Hersteller,Medium,none,2026-09-23 08:00,2026-09-01,,53.0,52.7,,
-316218,999500002,markit-services-pmi,EUR,EU,S&P Global PMI der Dienstleister,Medium,none,2026-09-23 08:00,2026-09-01,,51.1,51.6,,
-316219,999500003,markit-composite-pmi,EUR,EU,S&P Global zusammengesetzter Einkaufsmanagerindex (PMI),Medium,none,2026-09-23 08:00,2026-09-01,,51.1,52.0,,
-316214,826500001,markit-manufacturing-pmi,GBP,GB,S&P Global/CIPS PMI der Hersteller,Medium,none,2026-09-23 08:30,2026-09-01,,52.1,51.7,,
-316215,826500002,markit-services-pmi,GBP,GB,S&P Global/CIPS PMI der Dienstleister,Medium,none,2026-09-23 08:30,2026-09-01,,53.2,52.5,,
-316216,826500005,markit-composite-pmi,GBP,GB,S&P Global/CIPS Zusammengesetzter PMI,Medium,none,2026-09-23 08:30,2026-09-01,,,52.5,,
 320191,999010036,ecb-supervisory-board-member-tuominen-speech,EUR,EU,Das EZB-Aufsichtsratsmitglied Tuominen spricht,Medium,none,2026-09-23 09:20,1970-01-01,,,,,
 320102,840050032,fed-vice-chair-for-supervision-barr-speech,USD,US,Rede des Vizevorsitzenden für Aufsicht der Fed Barr,Medium,none,2026-09-23 14:05,1970-01-01,,,,,
 312146,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-09-23 14:30,2026-09-18,2.969,0.895,-0.64,,negative
