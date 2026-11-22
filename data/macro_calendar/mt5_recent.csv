@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-312146,840200001,eia-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermenge,High,barrel,2026-09-23 14:30,2026-09-18,2.969,0.895,-0.64,,negative
-312147,840200002,eia-cushing-crude-oil-stocks-change,USD,US,EIA Rohöl Änderung der Speichermengen in Cushing Oklahoma,Medium,barrel,2026-09-23 14:30,2026-09-18,2.266,-0.018,-0.342,,negative
 320098,276050007,bbk-vice-president-mauderer-speech,EUR,DE,Vorstandsmitglied Mauderer der BBk spricht,Medium,none,2026-09-23 15:45,1970-01-01,,,,,
 320186,999010020,ecb-executive-board-member-lane-speech,EUR,EU,ECB Vorstandsmitglied Lane spricht,Medium,none,2026-09-23 16:30,1970-01-01,,,,,
 301593,840220012,5-year-note-auction,USD,US,5-jährige Schatzanweisung Auktion,Medium,percent,2026-09-23 17:00,1970-01-01,5.033,,,,
