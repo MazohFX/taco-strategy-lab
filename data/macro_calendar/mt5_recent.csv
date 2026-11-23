@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-321029,392500002,nikkei-services-pmi,JPY,JP,au Jibun Bank Japan Einkaufsmanagerindex (PMI) Dienstleistungen,Medium,none,2026-09-24 00:30,2026-09-01,51.6,51.7,52.5,52.5,negative
 302094,36010003,employment-change,AUD,AU,Beschäftigungsentwicklung,Medium,job,2026-09-24 01:30,2026-08-01,39.5,29.2,-15.8,-15.9,positive
 302095,36010004,full-employment-change,AUD,AU,Beschäftigungsentwicklung Vollzeit,Medium,job,2026-09-24 01:30,2026-08-01,-6.3,,16.3,14.9,
 302097,36010006,unemployment-rate,AUD,AU,Arbeitslosenrate,Medium,percent,2026-09-24 01:30,2026-08-01,4.6,4.5,4.5,,negative
