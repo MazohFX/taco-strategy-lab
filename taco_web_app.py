@@ -8280,10 +8280,296 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
     # ════════════════════════════════════════════════════════════════════════
     # WALK-FORWARD ANALYSE
     # ════════════════════════════════════════════════════════════════════════
+    # ════════════════════════════════════════════════════════════════════════
+    # IS-TOP-N WALK-FORWARD — saubere Auswahl (nur IS) → unveränderter OOS-Test
+    # ════════════════════════════════════════════════════════════════════════
+    import dax_topn_wfa as _topn
+
+    st.markdown("---")
+    st.subheader("🧪 IS-Top-N Walk-Forward (empfohlenes Verfahren)")
+    with st.expander("ℹ️ Wie funktioniert das — und warum ist das sauberer als die klassische WFA unten?", expanded=False):
+        st.markdown("""
+**Ablauf je Fold:**
+1. **Alle Varianten** des Grid-Suchraums (SL-Stufen inkl. „aus“, Trail inkl. „aus“, MA, Filter, Fill-Modus …)
+   werden **nur auf dem In-Sample-Fenster** bewertet und nach dem Optimierungsziel sortiert.
+2. Die **Top-N** (z.B. 10) werden **unverändert** auf das folgende Out-of-Sample-Fenster angewendet.
+3. OOS-Daten werden **nie** zur Auswahl benutzt — nur gemessen.
+
+**Endtest (Holdout):** Alles ab dem Holdout-Datum fehlt in der WFA komplett. Erst wenn du dein finales Setup
+festgelegt hast, testest du es **einmal** darauf. Jeder weitere Blick „verbraucht“ den Endtest.
+
+**IS-Fenster „wachsend“:** IS beginnt immer am Datenstart und wächst pro Fold mit → mehr Trades pro Ranking,
+stabilere Auswahl (bei 18 Monaten IS hätte man nur ~75 Trades — die Rangliste wäre fast Zufall).
+
+**Overfitting-Diagnose:**
+- **OOS-Perzentil des IS-Siegers:** Wo landet die IS-beste Variante OOS unter ALLEN Varianten? Ø nahe 50 % = Auswahl bringt nichts.
+- **PBO** (Bailey/López de Prado, CSCV): Anteil der Zeit-Splits, in denen der IS-Sieger OOS in der unteren Hälfte landet. < 20 % gut, > 50 % = Overfitting.
+- **Deflated Sharpe:** Wahrscheinlichkeit, dass die Sharpe der besten Variante echt > 0 ist, **nachdem** man für die Anzahl getesteter Varianten korrigiert. > 95 % = signifikant.
+
+Grid, Optimierungsziel und Min. IS-Trades kommen aus „Walk-Forward Konfiguration“ / „Grid-Suchraum“ oben.
+        """)
+
+    tn1, tn2, tn3, tn4 = st.columns(4)
+    with tn1:
+        _tn_mode_lbl = st.selectbox("IS-Fenster", ["Wachsend (ab Datenstart)", "Rollierend (feste Länge)"], key="dax_tn_mode")
+        _tn_mode = "anchored" if _tn_mode_lbl.startswith("Wachsend") else "rolling"
+        _tn_is = st.number_input("Erstes / festes IS-Fenster (Monate)", 12, 120, 36, step=6, key="dax_tn_is")
+    with tn2:
+        _tn_oos = st.number_input("OOS-Fenster (Monate)", 3, 24, 12, key="dax_tn_oos")
+        _tn_top = st.number_input("Top-N aus In-Sample", 3, 25, 10, key="dax_tn_top")
+    with tn3:
+        _tn_hold = st.date_input("Endtest (Holdout) ab", _dt.date(2024, 1, 1), key="dax_tn_hold",
+                                 help="Ab diesem Datum sieht die WFA KEINE Daten. Nur für den einmaligen Endtest.")
+        _tn_fill_both = st.checkbox("Fill-Modus als Variante mittesten", True, key="dax_tn_fill",
+                                    help="Montag Close UND Dienstag Open als zusätzliche Grid-Dimension.")
+    with tn4:
+        _tn_blocks = st.selectbox("PBO-Blöcke (CSCV)", [8, 10, 12], index=1, key="dax_tn_blocks",
+                                  help="Zeitraum wird in S Blöcke geteilt, alle C(S, S/2) IS/OOS-Aufteilungen getestet.")
+        st.caption(f"Ziel: **{ {'pf':'Profit Factor','sharpe':'Sharpe','wr':'Win-Rate'}[opt_metric] }** · "
+                   f"Min. IS-Trades: **{int(min_trades)}**")
+
+    _tn_fills = ["close", "next_open"] if _tn_fill_both else [fill_mode]
+    _tn_adx = list(g_adx) if use_adx else [float(adx_thresh)]
+    _tn_combos = _topn.build_combos(g_sl, g_tt, g_to, g_ma, g_fm, _tn_fills, _tn_adx, g_entry_dows, g_exit_dows)
+    _tn_hold_ts = pd.Timestamp(_tn_hold)
+    _df_pre = df_raw[df_raw.index < _tn_hold_ts]
+    _tn_folds = (_topn.build_folds(_df_pre.index[0], _df_pre.index[-1], int(_tn_oos), _tn_mode, int(_tn_is))
+                 if len(_df_pre) > 100 else [])
+    st.caption(f"**{len(_tn_combos)} Varianten** (ohne Duplikate) · **{len(_tn_folds)} Folds** · "
+               f"WFA-Daten: {_df_pre.index[0].date() if len(_df_pre) else '–'} → {_tn_hold_ts.date()} · "
+               f"Endtest: {_tn_hold_ts.date()} → {df_raw.index[-1].date()}")
+
+    def _tn_label(k) -> str:
+        sl_, tt_, to_, ma_, fm_, fill_, adx_, ed_, xd_ = k
+        _dn = {0: "Mo", 1: "Di", 2: "Mi", 3: "Do", 4: "Fr", 5: "Sa", 6: "So"}
+        parts = [f"SL {_fmt_sl(sl_)}", f"Trail {_fmt_trail(tt_, to_)}"]
+        parts.append(fm_ if fm_ == _topn.NO_FILTER else f"{ma_type} {int(ma_)} · {fm_}")
+        parts.append("Mo-Close" if fill_ == "close" else "Di-Open")
+        if use_adx:
+            parts.append(f"ADX>{adx_:g}")
+        if _opt_days:
+            parts.append(f"{_dn.get(int(ed_), '?')}→{_dn.get(int(xd_), '?')}")
+        return " · ".join(parts)
+
+    def _tn_params(k) -> dict:
+        sl_, tt_, to_, ma_, fm_, fill_, adx_, ed_, xd_ = k
+        return {**base_params, "sl_pct": float(sl_), "trail_trig": float(tt_), "trail_off": float(to_),
+                "use_trail": True, "ma_period": int(ma_), "filter_mode": fm_, "fill_mode": fill_,
+                "adx_thresh": float(adx_), "entry_dow": int(ed_), "exit_dow": int(xd_)}
+
+    _tn_cfg_key = (f"v{_DAX_ENGINE_VERSION}|{_tn_mode}|{_tn_is}|{_tn_oos}|{_tn_top}|{_tn_hold}|{_tn_fills}|{_tn_blocks}|"
+                   f"{opt_metric}|{min_trades}|{g_sl}|{g_tt}|{g_to}|{g_ma}|{g_fm}|{_tn_adx}|{g_entry_dows}|{g_exit_dows}|"
+                   f"{ma_type}|{use_adx}|{spread_pts}|{commission_pct}|{swap_pts_per_night}|{risk_pct}|{sizing_ref_pct}|"
+                   f"{use_vol_target}|{dax_start}")
+
+    # Einmal pro Session gespeichertes Ergebnis aus dem Gist laden
+    if "dax_topn_result" not in st.session_state and not st.session_state.get("dax_topn_gist_tried"):
+        st.session_state["dax_topn_gist_tried"] = True
+        _tn_rest = _load_wfa_result("dax_topn")
+        if _tn_rest is not None and _tn_rest.get("engine_version") == _DAX_ENGINE_VERSION:
+            st.session_state["dax_topn_result"] = _tn_rest
+
+    _tn_run = st.button("🧪 IS-Top-N WFA starten", type="primary", key="dax_tn_run",
+                        disabled=len(_tn_folds) < 2 or not _tn_combos)
+    if len(_tn_folds) < 2:
+        st.warning("Zu wenig Folds — Holdout-Datum später setzen oder IS/OOS-Fenster verkleinern.")
+
+    if _tn_run:
+        _tn_prog = st.progress(0.0, text="Backtest aller Varianten …")
+        _tbk = _topn.run_all_combos(_df_pre, base_params, _tn_combos, _momi_backtest_engine,
+                                    progress_cb=lambda f, t: _tn_prog.progress(min(0.85, f * 0.85), text=t))
+        _tn_prog.progress(0.88, text="Walk-Forward: IS-Ranking → Top-N → OOS …")
+        _wf = _topn.topn_walk_forward(_tbk, _tn_folds, opt_metric, int(min_trades), int(_tn_top))
+        _agg = _topn.aggregate_setups(_wf["details"], float(_tn_oos) / 12.0)
+        _tn_prog.progress(0.94, text="PBO (CSCV) + Deflated Sharpe …")
+        _M = _topn.monthly_matrix(_tbk, _df_pre.index[0], _tn_hold_ts)
+        _pbo = _topn.cscv_pbo(_M, int(_tn_blocks))
+        _srs = (_M.mean() / _M.std(ddof=1)).replace([np.inf, -np.inf], np.nan)
+        _best_full_key = _srs.idxmax() if _srs.notna().any() else None
+        _dsr = (_topn.deflated_sharpe(_M[_best_full_key].to_numpy(), _srs.to_numpy(), _M.shape[1])
+                if _best_full_key is not None else {"dsr": np.nan, "sr": np.nan, "sr0": np.nan})
+        _tn_prog.progress(1.0, text="IS-Top-N WFA fertig ✓")
+
+        _folds_out = []
+        for _f in _wf["folds"]:
+            _fo = {k: v for k, v in _f.items() if k != "winner_oos_rets"}
+            _fo["winner_oos_rets"] = [float(x) for x in _f.get("winner_oos_rets", [])]
+            _folds_out.append(_fo)
+        _details_out = [[{"rank": d["rank"], "key": d["key"], "is": d["is"], "oos": d["oos"]} for d in det]
+                        for det in _wf["details"]]
+        _agg_out = []
+        if not _agg.empty:
+            for _, _r in _agg.head(30).iterrows():
+                _row = {c: _r[c] for c in _agg.columns if c != "pooled_rets"}
+                _row["pooled_rets"] = [float(x) for x in _r["pooled_rets"]]
+                _agg_out.append(_row)
+        _tn_result = {
+            "engine_version": _DAX_ENGINE_VERSION, "cfg_key": _tn_cfg_key,
+            "created": str(pd.Timestamp.now(tz="Europe/Berlin").strftime("%Y-%m-%d %H:%M")),
+            "n_variants": len(_tn_combos), "folds": _folds_out, "details": _details_out, "agg": _agg_out,
+            "pbo": {"pbo": _pbo["pbo"], "n_splits": _pbo["n_splits"], "logits": [float(x) for x in _pbo["logits"]]},
+            "dsr": {**_dsr, "best_key": _best_full_key}, "hold": str(_tn_hold), "risk_pct": float(risk_pct),
+            "opt_metric": opt_metric, "top_n": int(_tn_top), "mode": _tn_mode_lbl, "oos_months": int(_tn_oos),
+        }
+        st.session_state["dax_topn_result"] = _tn_result
+        _ok_s, _why_s = _save_wfa_result("dax_topn", _tn_result)
+        st.caption("☁️ IS-Top-N-Ergebnis dauerhaft gespeichert." if _ok_s else f"⚠️ Nur für diese Session gespeichert — {_why_s}")
+
+    _tnr = st.session_state.get("dax_topn_result")
+    if _tnr is not None:
+        if _tnr.get("cfg_key") != _tn_cfg_key:
+            st.warning(f"⚠️ Angezeigt wird das Ergebnis vom {_tnr.get('created', '?')} mit ANDEREN Einstellungen "
+                       f"als oben eingestellt — '🧪 IS-Top-N WFA starten' klicken, um neu zu rechnen.")
+        _tf = [f for f in _tnr["folds"] if not f.get("empty")]
+        if not _tf:
+            st.error("Keine Folds mit genug IS-Trades — Min. IS-Trades senken oder IS-Fenster verlängern.")
+        else:
+            # ── Kennzahlen des VERFAHRENS "immer den IS-Sieger handeln" ──
+            _proc_rets = np.concatenate([np.asarray(f["winner_oos_rets"], dtype=float) for f in _tf])
+            _proc_m = _topn.metrics_from_rets(_proc_rets, len(_tf) * _tnr["oos_months"] / 12.0)
+            _pct = [f["winner_oos_pct"] for f in _tf if f.get("winner_oos_pct") is not None and not pd.isna(f["winner_oos_pct"])]
+            _pbo_v = _tnr["pbo"]["pbo"]
+            _dsr_v = _tnr["dsr"].get("dsr")
+
+            st.markdown(f"**Ergebnis vom {_tnr.get('created', '?')}** · {_tnr['n_variants']} Varianten · "
+                        f"{len(_tf)} Folds · {_tnr['mode']} · Top-{_tnr['top_n']} · Endtest ab {_tnr['hold']}")
+            k1, k2, k3, k4, k5 = st.columns(5)
+            k1.metric("OOS PF (IS-Sieger je Fold)", f"{_proc_m['pf']:.2f}")
+            k2.metric("OOS Rendite gesamt", f"{_proc_m['total_ret']:+.1f}%")
+            k3.metric("OOS Sharpe", f"{_proc_m['sharpe']:.2f}")
+            k4.metric("Folds OOS profitabel", f"{sum(f['winner_oos']['total_ret'] > 0 for f in _tf)}/{len(_tf)}")
+            k5.metric("Max DD (OOS)", f"{_proc_m['max_dd']:.1f}%")
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Ø OOS-Perzentil IS-Sieger", f"{np.mean(_pct)*100:.0f}%" if _pct else "–",
+                      help="50 % = IS-Auswahl ist OOS nicht besser als eine zufällige Variante.")
+            d2.metric("PBO (CSCV)", f"{_pbo_v*100:.0f}%" if _pbo_v is not None and not pd.isna(_pbo_v) else "–",
+                      help="Wahrscheinlichkeit, dass die IS-beste Variante OOS unterdurchschnittlich ist.")
+            d3.metric("Deflated Sharpe", f"{_dsr_v*100:.0f}%" if _dsr_v is not None and not pd.isna(_dsr_v) else "–",
+                      help="P(echte Sharpe > 0) nach Korrektur für die Anzahl getesteter Varianten.")
+            d4.metric("Ø OOS PF der Top-N", f"{np.mean([f['top_avg_oos_pf'] for f in _tf]):.2f}")
+
+            _verdicts = []
+            if _pbo_v is not None and not pd.isna(_pbo_v):
+                _verdicts.append("✅ PBO niedrig — IS-Auswahl überträgt sich auf OOS" if _pbo_v < 0.2 else
+                                 ("⚠️ PBO mittel" if _pbo_v < 0.5 else "❌ PBO hoch — Overfitting wahrscheinlich"))
+            if _dsr_v is not None and not pd.isna(_dsr_v):
+                _verdicts.append("✅ Deflated Sharpe signifikant (>95 %)" if _dsr_v > 0.95 else
+                                 f"⚠️ Deflated Sharpe nur {_dsr_v*100:.0f}% — nach Korrektur für {_tnr['n_variants']} "
+                                 f"Varianten nicht sicher von Zufall unterscheidbar")
+            if _verdicts:
+                st.info(" · ".join(_verdicts))
+
+            # ── Fold-Tabelle ──
+            st.markdown("#### Fold-Ergebnisse (IS-Sieger → OOS)")
+            _fold_tbl = pd.DataFrame([{
+                "Fold": f["fold"],
+                "IS": f"{pd.Timestamp(f['is_start']).date()} – {pd.Timestamp(f['is_end']).date()}",
+                "OOS": f"{pd.Timestamp(f['oos_start']).date()} – {pd.Timestamp(f['oos_end']).date()}",
+                "IS-Sieger": _tn_label(f["winner"]),
+                "IS PF": f["winner_is"]["pf"], "IS Trades": f["winner_is"]["n"],
+                "OOS PF": f["winner_oos"]["pf"], "OOS Ret %": f["winner_oos"]["total_ret"],
+                "OOS Trades": f["winner_oos"]["n"],
+                "OOS-Perzentil": round(f["winner_oos_pct"] * 100) if not pd.isna(f["winner_oos_pct"]) else None,
+                f"Ø OOS Ret % Top-{_tnr['top_n']}": round(f["top_avg_oos_ret"], 2),
+                f"Top-{_tnr['top_n']} OOS profitabel": f"{f['top_share_profitable']*100:.0f}%",
+            } for f in _tf])
+            st.dataframe(_fold_tbl.style.map(
+                lambda v: ("color:#22c55e" if v > 0 else "color:#ef5350") if isinstance(v, (int, float)) else "",
+                subset=["OOS Ret %"]), use_container_width=True, hide_index=True)
+
+            # ── OOS-Equity des Verfahrens ──
+            _eq = np.cumprod(1 + _proc_rets / 100) * 10_000
+            _fig_tn = go.Figure(go.Scatter(y=_eq, mode="lines", line=dict(color="#22c55e", width=2), name="OOS"))
+            _fig_tn.add_hline(y=10_000, line_dash="dash", line_color="white", line_width=1)
+            _fig_tn.update_layout(title=f"OOS-Equity: immer den IS-Sieger handeln (nur blinde Trades, {len(_proc_rets)} Trades)",
+                                  height=300, template="plotly_dark", xaxis_title="Trade #", yaxis_title="Kapital",
+                                  margin=dict(t=45, b=30, l=60, r=20))
+            st.plotly_chart(_fig_tn, use_container_width=True)
+
+            # ── Aggregation: welche Setups sind IMMER WIEDER in den IS-Top-N? ──
+            st.markdown(f"#### 🏆 Setups, die am häufigsten in den IS-Top-{_tnr['top_n']} waren")
+            st.caption("OOS-Spalten = NUR die Folds, in denen das Setup per In-Sample ausgewählt wurde — also ehrliche, "
+                       "blinde Performance dieser Auswahl. Sortiert nach Häufigkeit in den Top-N (nicht nach OOS!).")
+            _agg_rows = _tnr["agg"]
+            if _agg_rows:
+                _agg_tbl = pd.DataFrame([{
+                    "#": i + 1, "Setup": _tn_label(r["key"]),
+                    f"× in Top-{_tnr['top_n']}": f"{r['n_top']}/{len(_tf)}",
+                    "Ø IS-Rang": round(r["avg_rank"], 1), "Ø IS PF": round(r["is_pf"], 2),
+                    "OOS PF": round(r["oos_pf"], 2), "OOS Trades": r["oos_n"], "OOS WR %": r["oos_wr"],
+                    "OOS Ret %": round(r["oos_total_ret"], 1), "OOS Sharpe": round(r["oos_sharpe"], 2),
+                    "OOS-Folds +": f"{r['oos_folds_pos']}/{r['oos_folds']}",
+                    "PF OOS/IS": round(r["pf_decay"], 2) if r["pf_decay"] is not None and not pd.isna(r["pf_decay"]) else None,
+                } for i, r in enumerate(_agg_rows[:15])])
+                st.dataframe(_agg_tbl, use_container_width=True, hide_index=True)
+                st.download_button("⬇️ IS-Top-N Aggregation als CSV", _agg_tbl.to_csv(index=False).encode(),
+                                   file_name="dax_is_topn.csv", mime="text/csv", key="dax_tn_dl")
+
+            with st.expander("Top-N je Fold im Detail"):
+                for _fi, det in enumerate(_tnr["details"]):
+                    if not det:
+                        continue
+                    st.markdown(f"**Fold {_tnr['folds'][_fi]['fold']}** · OOS "
+                                f"{pd.Timestamp(_tnr['folds'][_fi]['oos_start']).date()} – {pd.Timestamp(_tnr['folds'][_fi]['oos_end']).date()}")
+                    st.dataframe(pd.DataFrame([{
+                        "IS-Rang": d["rank"], "Setup": _tn_label(d["key"]),
+                        "IS PF": d["is"]["pf"], "IS Trades": d["is"]["n"], "IS Ret %": d["is"]["total_ret"],
+                        "OOS PF": d["oos"]["pf"], "OOS Trades": d["oos"]["n"], "OOS Ret %": d["oos"]["total_ret"],
+                    } for d in det]), use_container_width=True, hide_index=True)
+
+            # ════════════════════════════════════════════════════════════════
+            # ENDTEST (Holdout) — einmalig, nachdem das finale Setup feststeht
+            # ════════════════════════════════════════════════════════════════
+            st.markdown("#### 🔒 Endtest (Holdout)")
+            if "dax_holdout_log" not in st.session_state:
+                st.session_state["dax_holdout_log"] = (_load_wfa_result("dax_holdout_log") or {}).get("runs", [])
+            _hlog = st.session_state["dax_holdout_log"]
+            _hold_this = [h for h in _hlog if h.get("hold") == _tnr["hold"]]
+            if _hold_this:
+                st.warning(f"⚠️ Der Endtest ab {_tnr['hold']} wurde bereits **{len(_hold_this)}×** angesehen "
+                           f"(zuletzt {_hold_this[-1]['ts']}: {_hold_this[-1]['setup']}). Jeder weitere Blick + "
+                           f"Anpassung macht ihn weniger aussagekräftig.")
+            if _agg_rows:
+                _cand = [r["key"] for r in _agg_rows[:15]]
+                _sel = st.selectbox("Finales Setup", range(len(_cand)), format_func=lambda i: f"#{i+1} · {_tn_label(_cand[i])}",
+                                    key="dax_tn_hold_sel")
+                _unlock = st.checkbox("Ich habe dieses Setup final festgelegt und werde es nach dem Endtest NICHT mehr anpassen",
+                                      key="dax_tn_unlock")
+                if st.button("🔒 Endtest einmalig ausführen", disabled=not _unlock, key="dax_tn_hold_run"):
+                    _hk = _cand[_sel]
+                    _tr_h, _ = _momi_backtest_engine(df_raw.copy(), _tn_params(_hk))
+                    _tr_h = _tr_h[_tr_h["Zeit"] >= pd.Timestamp(_tnr["hold"])] if not _tr_h.empty else _tr_h
+                    _yrs_h = max((df_raw.index[-1] - pd.Timestamp(_tnr["hold"])).days / 365.25, 0.01)
+                    _mh = _topn.metrics_from_rets(_tr_h["Ret %"].to_numpy() if not _tr_h.empty else [], _yrs_h)
+                    _entry = {"ts": str(pd.Timestamp.now(tz="Europe/Berlin").strftime("%Y-%m-%d %H:%M")),
+                              "hold": _tnr["hold"], "setup": _tn_label(_hk), "key": _hk, "metrics": _mh}
+                    _hlog.append(_entry)
+                    _save_wfa_result("dax_holdout_log", {"runs": _hlog})
+                    st.session_state["dax_holdout_last"] = {"entry": _entry, "oos": _agg_rows[_sel],
+                                                            "rets": _tr_h["Ret %"].tolist() if not _tr_h.empty else []}
+                _hl = st.session_state.get("dax_holdout_last")
+                if _hl is not None:
+                    _m, _o = _hl["entry"]["metrics"], _hl["oos"]
+                    st.markdown(f"**Endtest-Ergebnis** ({_hl['entry']['ts']}): {_hl['entry']['setup']}")
+                    _cmp = pd.DataFrame([
+                        {"": "WFA-OOS (gepoolt)", "PF": round(_o["oos_pf"], 2), "Trades": _o["oos_n"], "WR %": _o["oos_wr"],
+                         "Sharpe": round(_o["oos_sharpe"], 2), "Max DD %": _o["oos_max_dd"]},
+                        {"": "Endtest (Holdout)", "PF": _m["pf"], "Trades": _m["n"], "WR %": _m["wr"],
+                         "Sharpe": _m["sharpe"], "Max DD %": _m["max_dd"], "Rendite %": _m["total_ret"]},
+                    ])
+                    st.dataframe(_cmp, use_container_width=True, hide_index=True)
+                    if _m["n"] >= 20:
+                        if _m["pf"] >= 1.0 and _m["pf"] >= 0.7 * _o["oos_pf"]:
+                            st.success("✅ Endtest bestätigt die WFA-OOS-Performance im Rahmen der üblichen Streuung.")
+                        else:
+                            st.error("❌ Endtest deutlich schlechter als WFA-OOS — Edge im neuesten Zeitraum nicht bestätigt.")
+                    else:
+                        st.caption("ℹ️ Unter 20 Trades im Endtest — Ergebnis nur grob aussagekräftig.")
+
     _wfa_enabled = st.session_state.get("dax_wfa_ran", False)
 
     st.markdown("---")
-    st.subheader("Walk-Forward Analyse")
+    st.subheader("Klassische Walk-Forward Analyse (nur IS-Sieger je Fold)")
 
     if not _wfa_enabled:
         n_months_total = (dax_end.year - dax_start.year) * 12 + (dax_end.month - dax_start.month)
@@ -8663,14 +8949,14 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 f"""<div style="background:#052e1655;border:2px solid #22c55e;border-radius:10px;
                 padding:16px 22px;margin:10px 0 18px 0;">
                   <div style="color:#4ade80;font-weight:800;font-size:.8rem;letter-spacing:.05em;
-                    text-transform:uppercase;margin-bottom:6px;">🏆 Empfohlenes Setup ({_wfa_fill_label})</div>
+                    text-transform:uppercase;margin-bottom:6px;">Stabilstes Setup — OOS-gewählt, nur Info ({_wfa_fill_label})</div>
                   <div style="color:#e2e8f0;font-weight:800;font-size:1.15rem;">{_wfa_recommended['label']}</div>
                 </div>""",
                 unsafe_allow_html=True,
             )
-            st.caption("Das ist die walk-forward-validierte Empfehlung (robustestes Setup über alle Folds) — "
-                       "nicht zu verwechseln mit dem 'Globalen Benchmark' oben, der bewusst überoptimiert ist "
-                       "und nur als Vergleichswert für den Überanpassungs-Check dient, nicht als Empfehlung.")
+            st.caption("⚠️ Dieses Setup wurde anhand seiner OOS-Konsistenz ausgewählt — die OOS-Daten waren also NICHT "
+                       "mehr blind, die Zahlen sind optimistisch. Für eine saubere Auswahl die "
+                       "'🧪 IS-Top-N Walk-Forward' oben verwenden (Auswahl nur nach In-Sample).")
         else:
             st.info("Noch kein robustes Setup ermittelbar — Parameter-Stabilitätsanalyse weiter unten prüfen.")
 
@@ -8855,7 +9141,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         # ════════════════════════════════════════════════════════════════════════
         st.markdown("---")
         st.subheader("Parameter-Stabilitätsanalyse")
-        st.caption("Welche SL / Trailing-Kombinationen liefern konsistent über ALLE Folds gute OOS-Ergebnisse?")
+        st.caption("Welche SL / Trailing-Kombinationen liefern konsistent über ALLE Folds gute OOS-Ergebnisse? "
+                   "⚠️ Nur zur Info: Sortierung nach OOS = Auswahl mit Blick auf die Testdaten (nicht blind).")
 
         if param_stability:
             stab_rows = []
@@ -9377,8 +9664,24 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
             _mc_best_oos_trades = pd.concat(_psl_trades, ignore_index=True)
 
     _mc_source_options = []
+    # IS-Top-N Walk-Forward (saubere Auswahl) — unabhängig vom Fill-Radio, der Fill-Modus ist dort Teil des Setups
+    _mc_tn = st.session_state.get("dax_topn_result")
+    _mc_tn_proc, _mc_tn_best = None, None
+    if _mc_tn is not None:
+        _tn_f_ok = [f for f in _mc_tn["folds"] if not f.get("empty")]
+        _tn_r = np.concatenate([np.asarray(f["winner_oos_rets"], dtype=float) for f in _tn_f_ok]) if _tn_f_ok else np.array([])
+        _tn_risk = float(_mc_tn.get("risk_pct", 1.0))
+        def _tn_df(_r):
+            _r = np.asarray(_r, dtype=float)
+            return pd.DataFrame({"PnL $": _r * 100.0, "Ret %": _r, "Risiko %": _tn_risk})
+        if len(_tn_r):
+            _mc_tn_proc = _tn_df(_tn_r)
+            _mc_source_options.append("IS-Top-N: immer den IS-Sieger handeln — OOS-Trades (empfohlen)")
+        if _mc_tn.get("agg") and len(_mc_tn["agg"][0]["pooled_rets"]):
+            _mc_tn_best = (_tn_df(_mc_tn["agg"][0]["pooled_rets"]), _tn_label(_mc_tn["agg"][0]["key"]))
+            _mc_source_options.append("IS-Top-N: häufigstes Top-Setup — seine OOS-Trades")
     if _mc_best_oos_trades is not None and not _mc_best_oos_trades.empty:
-        _mc_source_options.append("WFA robustestes Setup — nur seine OOS-Trades (empfohlen)")
+        _mc_source_options.append("WFA robustestes Setup — nur seine OOS-Trades (OOS-gewählt)")
     if _mc_wfa_best is not None:
         _mc_source_options.append("WFA robustestes Setup — Full-Sample")
     if _mc_oos_trades is not None and not _mc_oos_trades.empty:
@@ -9405,7 +9708,13 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
 
         _base_for_mc = {**base_params, "fill_mode": _mc_fm}
 
-        if mc_source == "WFA robustestes Setup — nur seine OOS-Trades (empfohlen)":
+        if mc_source == "IS-Top-N: immer den IS-Sieger handeln — OOS-Trades (empfohlen)":
+            mc_trades_raw = _mc_tn_proc
+            _mc_source_label = "IS-Top-N-Verfahren: OOS-Trades des jeweiligen IS-Siegers (blind, Fill-Modus je Setup)"
+        elif mc_source == "IS-Top-N: häufigstes Top-Setup — seine OOS-Trades":
+            mc_trades_raw = _mc_tn_best[0]
+            _mc_source_label = f"IS-Top-N, häufigstes Top-Setup (nur OOS-Folds, in denen es IS-gewählt war) — {_mc_tn_best[1]}"
+        elif mc_source == "WFA robustestes Setup — nur seine OOS-Trades (OOS-gewählt)":
             mc_trades_raw = _mc_best_oos_trades
             _mc_source_label = f"WFA robustestes Setup, nur OOS-Trades ({mc_fill_choice}) — {_mc_wfa_best['label']}"
         elif mc_source == "WFA robustestes Setup — Full-Sample":
@@ -9439,7 +9748,7 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
                    f"Win-Rate: {(real_rets > 0).mean()*100:.1f}% · "
                    f"Ø Trade: {real_rets.mean():.2f}$ · "
                    f"Trades/Jahr: ~{n_real / max(1, (df_raw.index[-1]-df_raw.index[0]).days / 365):.0f}")
-        if mc_source == "WFA robustestes Setup — nur seine OOS-Trades (empfohlen)":
+        if mc_source == "WFA robustestes Setup — nur seine OOS-Trades (OOS-gewählt)":
             st.markdown(
                 '<div style="background:#1e293b55;border:1px solid rgba(148,163,184,.25);border-radius:8px;'
                 'padding:10px 16px;font-size:.85rem;color:#94a3b8;margin:8px 0 12px 0;">'
