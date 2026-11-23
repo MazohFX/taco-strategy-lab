@@ -9697,111 +9697,159 @@ Simuliert **1.000 mögliche Zukunften** deiner Strategie durch zufälliges Misch
 Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — bevor du echtes Geld riskierst.
     """)
 
-        # ── Trade-Quelle für Monte Carlo auswählen (NUR WFA/Ensemble-Ergebnisse) ──
-        _dow_label = {"Montag":"Mo","Dienstag":"Di","Mittwoch":"Mi","Donnerstag":"Do","Freitag":"Fr","Samstag":"Sa","Sonntag":"So"}
-
-        mc_fill_choice = st.radio("Fill-Modus für Monte Carlo", ["Montag Close", "Dienstag Open"],
-                                   key="dax_mc_fill", horizontal=True,
-                                   help="Unabhängig vom Fill-Modus oben in den Strategie-Parametern — lädt direkt die "
-                                        "WFA/Ensemble-Ergebnisse, die für DIESEN Fill-Modus gespeichert wurden.")
-        _mc_fm = "close" if mc_fill_choice == "Montag Close" else "next_open"
-
-        _mc_wfa_cache = st.session_state.get(_dax_wfa_cache_key(_mc_fm))
-        _mc_ens_cache = st.session_state.get(_dax_ens_cache_key(_mc_fm))
-        _mc_wfa_best  = _dax_stability_best(_mc_wfa_cache["param_stability"]) if _mc_wfa_cache else None
-        _mc_oos_trades = _mc_wfa_cache.get("oos_trades") if _mc_wfa_cache else None
-
-        # Reine OOS-Trades NUR des robustesten Setups (exakt bekannte Parameter + keine Full-Sample-Verzerrung)
-        _mc_best_oos_trades = None
-        if _mc_wfa_best is not None and _mc_wfa_cache is not None:
-            _psl_trades = _mc_wfa_cache.get("param_stability_trades", {}).get(_mc_wfa_best["key"])
-            if _psl_trades:
-                _mc_best_oos_trades = pd.concat(_psl_trades, ignore_index=True)
-
-        _mc_source_options = []
-        # IS-Top-N Walk-Forward (saubere Auswahl) — unabhängig vom Fill-Radio, der Fill-Modus ist dort Teil des Setups
-        _mc_tn = st.session_state.get("dax_topn_result")
-        _mc_tn_proc, _mc_tn_best, _mc_sp_df = None, None, None
-        if _mc_tn is not None:
-            _tn_f_ok = [f for f in _mc_tn["folds"] if not f.get("empty")]
-            _tn_r = np.concatenate([np.asarray(f["winner_oos_rets"], dtype=float) for f in _tn_f_ok]) if _tn_f_ok else np.array([])
-            _tn_risk = float(_mc_tn.get("risk_pct", 1.0))
-            def _tn_df(_r):
-                _r = np.asarray(_r, dtype=float)
-                return pd.DataFrame({"PnL $": _r * 100.0, "Ret %": _r, "Risiko %": _tn_risk})
-            _mc_sp_top = (_mc_tn.get("split") or {}).get("top") or []
-            if _mc_sp_top and _mc_sp_top[0]["trades"]:
-                _sp_oos0, _sp_h0 = pd.Timestamp(_mc_tn["split"]["oos_start"]), pd.Timestamp(_mc_tn["split"]["hold"])
-                _sp_r = [x[1] for x in _mc_sp_top[0]["trades"] if _sp_oos0 <= pd.Timestamp(x[0]) < _sp_h0]
-                if _sp_r:
-                    _mc_sp_df = (_tn_df(_sp_r), _tn_label(_mc_sp_top[0]["key"]))
-                    _mc_source_options.append("Top-N-Split: Rang-1-Setup — nur seine OOS-Trades")
-            if len(_tn_r):
-                _mc_tn_proc = _tn_df(_tn_r)
-                _mc_source_options.append("IS-Top-N: immer den IS-Sieger handeln — OOS-Trades (empfohlen)")
-            if _mc_tn.get("agg") and len(_mc_tn["agg"][0]["pooled_rets"]):
-                _mc_tn_best = (_tn_df(_mc_tn["agg"][0]["pooled_rets"]), _tn_label(_mc_tn["agg"][0]["key"]))
-                _mc_source_options.append("IS-Top-N: häufigstes Top-Setup — seine OOS-Trades")
-        if _mc_best_oos_trades is not None and not _mc_best_oos_trades.empty:
-            _mc_source_options.append("WFA robustestes Setup — nur seine OOS-Trades (OOS-gewählt)")
-        if _mc_wfa_best is not None:
-            _mc_source_options.append("WFA robustestes Setup — Full-Sample")
-        if _mc_oos_trades is not None and not _mc_oos_trades.empty:
-            _mc_source_options.append("WFA kombinierte OOS-Trades (alle Folds, wechselnde Setups)")
-        if _mc_ens_cache is not None and not _mc_ens_cache["df_ens"].empty:
-            _mc_source_options.append("Ensemble robustestes Setup — Full-Sample")
-
-        if not _mc_source_options:
-            st.warning(f"Für **{mc_fill_choice}** liegen noch keine WFA/Ensemble-Ergebnisse vor. Bitte oben zuerst "
-                       f"'🔄 WFA starten' bzw. '⚡ Ensemble WFA starten' ausführen — mit aktivierter Checkbox "
-                       f"'Beide Fill-Modi automatisch testen' bekommst du beide Modi in einem Durchgang.")
-            mc_trades_raw = None
+        # ── Quelle wählen: Setup aus der Top-N-Tabelle (Überblick) oder ältere Quellen ──
+        _mc_years = None
+        _mc_tn0 = st.session_state.get("dax_topn_result")
+        _mc_sp0 = (_mc_tn0 or {}).get("split") or {}
+        _mc_has_split = bool(_mc_sp0.get("top"))
+        _MC_SPLIT = "Setup aus der Top-N-Tabelle (📊 Überblick)"
+        _mc_mode = st.radio("Was simulieren?", [_MC_SPLIT, "Andere Quellen (rollierend / klassische WFA)"],
+                            horizontal=True, key="dax_mc_mode") if _mc_has_split else "andere"
+        if not _mc_has_split:
+            st.caption("💡 Tipp: Im Tab 📊 Überblick **▶ Test starten** — danach kannst du hier jedes Setup aus der "
+                       "Top-N-Tabelle (Rang 1, 2, …) direkt simulieren.")
+        _mc_use_split = _mc_mode == _MC_SPLIT
+        if _mc_use_split:
+            _sp_top = _mc_sp0["top"]
+            _sp_s0, _sp_s1, _sp_s2, _sp_s3 = (pd.Timestamp(_mc_sp0[k]) for k in ("start", "oos_start", "hold", "end"))
+            _mc_sel = st.selectbox(
+                "Setup", range(len(_sp_top)), key="dax_mc_split_sel",
+                format_func=lambda i: (f"Rang {_sp_top[i]['rank']} · " + " · ".join(
+                    f"{k}: {v}" for k, v in _tn_param_cols(_sp_top[i]["key"]).items())))
+            _hold_shown = bool(st.session_state.get("dax_split_show_hold"))
+            _per_opts = ["Nur Out-of-Sample (empfohlen)", "In-Sample + Out-of-Sample"]
+            if _hold_shown:
+                _per_opts.append("Out-of-Sample + Holdout")
+            _mc_per = st.radio("Welche Trades?", _per_opts, horizontal=True, key="dax_mc_split_per",
+                               help="Nur Out-of-Sample = ehrlichste Basis (blinde Trades). In-Sample-Trades sind die, "
+                                    "nach denen das Setup ausgewählt wurde → leicht zu optimistisch. "
+                                    "Holdout erscheint nur, wenn er im Überblick aufgedeckt ist.")
+            _a, _b = {"Nur Out-of-Sample (empfohlen)": (_sp_s1, _sp_s2),
+                      "In-Sample + Out-of-Sample": (_sp_s0, _sp_s2),
+                      "Out-of-Sample + Holdout": (_sp_s1, _sp_s3 + pd.Timedelta(days=1))}[_mc_per]
+            _t_sel = _sp_top[_mc_sel]
+            _r_sel = np.array([x[1] for x in _t_sel["trades"] if _a <= pd.Timestamp(x[0]) < _b], dtype=float)
+            _risk0 = float(_mc_tn0.get("risk_pct", 1.0))
+            mc_trades_raw = pd.DataFrame({"PnL $": _r_sel * 100.0, "Ret %": _r_sel, "Risiko %": _risk0})
+            _mc_years = max((min(_b, _sp_s3) - _a).days / 365.25, 0.01)
+            _pc = _tn_param_cols(_t_sel["key"])
+            _m_sel = _topn.metrics_from_rets(_r_sel, _mc_years)
+            st.dataframe(pd.DataFrame([{"Rang": _t_sel["rank"], **_pc, "Zeitraum": f"{_a.date()} – {min(_b, _sp_s3).date()}",
+                                        "Trades": _m_sel["n"], "PF": _m_sel["pf"], "Win-Rate %": _m_sel["wr"],
+                                        "Rendite %": _m_sel["total_ret"], "Max DD %": _m_sel["max_dd"]}]),
+                         use_container_width=True, hide_index=True)
+            _mc_source_label = f"Rang {_t_sel['rank']} · {_tn_label(_t_sel['key'])} · {_mc_per}"
+            mc_source, _mc_source_options = "__split__", ["__split__"]
+            mc_fill_choice = _pc["Entry"]
+            if _risk0 != float(risk_pct):
+                st.caption(f"ℹ️ Trades wurden mit {_risk0:g} % Risiko gerechnet — Monte Carlo skaliert auf das "
+                           f"unten eingestellte Risiko pro Trade.")
         else:
-            mc_source = st.radio(
-                "Trade-Quelle für Monte Carlo", _mc_source_options, index=0, key="dax_mc_source",
-                help="WFA robustestes Setup — nur seine OOS-Trades: EIN festes, bekanntes Setup (SL/Trail/MA/Filter), "
-                     "aber nur dessen echte blinde Out-of-Sample-Trades über die Folds, in denen es getestet wurde. "
-                     "Beste Kombination aus 'weiß ich, was ich trade' + 'ehrlich getestet'.\n"
-                     "WFA robustestes Setup — Full-Sample: dasselbe Setup, aber über den KOMPLETTEN Zeitraum "
-                     "nachbacktestet (einfacher, aber leicht optimistisch).\n"
-                     "WFA kombinierte OOS-Trades: alle Folds mit ihren jeweils EIGENEN besten (ggf. unterschiedlichen) "
-                     "Setups — du weißt am Ende nicht mehr genau, welche Parameter das waren.\n"
-                     "Ensemble robustestes Setup: über 5 versetzte Läufe konsistentestes Setup, Full-Sample nachbacktestet.")
+            # ── Trade-Quelle für Monte Carlo auswählen (NUR WFA/Ensemble-Ergebnisse) ──
+            _dow_label = {"Montag":"Mo","Dienstag":"Di","Mittwoch":"Mi","Donnerstag":"Do","Freitag":"Fr","Samstag":"Sa","Sonntag":"So"}
 
-            _base_for_mc = {**base_params, "fill_mode": _mc_fm}
+            mc_fill_choice = st.radio("Fill-Modus für Monte Carlo", ["Montag Close", "Dienstag Open"],
+                                       key="dax_mc_fill", horizontal=True,
+                                       help="Unabhängig vom Fill-Modus oben in den Strategie-Parametern — lädt direkt die "
+                                            "WFA/Ensemble-Ergebnisse, die für DIESEN Fill-Modus gespeichert wurden.")
+            _mc_fm = "close" if mc_fill_choice == "Montag Close" else "next_open"
 
-            if mc_source == "Top-N-Split: Rang-1-Setup — nur seine OOS-Trades":
-                mc_trades_raw = _mc_sp_df[0]
-                _mc_source_label = f"Top-N-Split, Rang 1 nach In-Sample, nur Out-of-Sample-Trades — {_mc_sp_df[1]}"
-            elif mc_source == "IS-Top-N: immer den IS-Sieger handeln — OOS-Trades (empfohlen)":
-                mc_trades_raw = _mc_tn_proc
-                _mc_source_label = "IS-Top-N-Verfahren: OOS-Trades des jeweiligen IS-Siegers (blind, Fill-Modus je Setup)"
-            elif mc_source == "IS-Top-N: häufigstes Top-Setup — seine OOS-Trades":
-                mc_trades_raw = _mc_tn_best[0]
-                _mc_source_label = f"IS-Top-N, häufigstes Top-Setup (nur OOS-Folds, in denen es IS-gewählt war) — {_mc_tn_best[1]}"
-            elif mc_source == "WFA robustestes Setup — nur seine OOS-Trades (OOS-gewählt)":
-                mc_trades_raw = _mc_best_oos_trades
-                _mc_source_label = f"WFA robustestes Setup, nur OOS-Trades ({mc_fill_choice}) — {_mc_wfa_best['label']}"
-            elif mc_source == "WFA robustestes Setup — Full-Sample":
-                _p_best = {**_base_for_mc, **{k: v for k, v in _mc_wfa_best.items() if k not in ("label", "key")}}
-                mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), _p_best)
-                _mc_source_label = f"WFA robustestes Setup ({mc_fill_choice}) — {_mc_wfa_best['label']}"
-            elif mc_source == "WFA kombinierte OOS-Trades (alle Folds, wechselnde Setups)":
-                mc_trades_raw = _mc_oos_trades
-                _mc_source_label = f"WFA kombinierte OOS-Trades ({mc_fill_choice}, alle Folds, blind getestet)"
+            _mc_wfa_cache = st.session_state.get(_dax_wfa_cache_key(_mc_fm))
+            _mc_ens_cache = st.session_state.get(_dax_ens_cache_key(_mc_fm))
+            _mc_wfa_best  = _dax_stability_best(_mc_wfa_cache["param_stability"]) if _mc_wfa_cache else None
+            _mc_oos_trades = _mc_wfa_cache.get("oos_trades") if _mc_wfa_cache else None
+
+            # Reine OOS-Trades NUR des robustesten Setups (exakt bekannte Parameter + keine Full-Sample-Verzerrung)
+            _mc_best_oos_trades = None
+            if _mc_wfa_best is not None and _mc_wfa_cache is not None:
+                _psl_trades = _mc_wfa_cache.get("param_stability_trades", {}).get(_mc_wfa_best["key"])
+                if _psl_trades:
+                    _mc_best_oos_trades = pd.concat(_psl_trades, ignore_index=True)
+
+            _mc_source_options = []
+            # IS-Top-N Walk-Forward (saubere Auswahl) — unabhängig vom Fill-Radio, der Fill-Modus ist dort Teil des Setups
+            _mc_tn = st.session_state.get("dax_topn_result")
+            _mc_tn_proc, _mc_tn_best, _mc_sp_df = None, None, None
+            if _mc_tn is not None:
+                _tn_f_ok = [f for f in _mc_tn["folds"] if not f.get("empty")]
+                _tn_r = np.concatenate([np.asarray(f["winner_oos_rets"], dtype=float) for f in _tn_f_ok]) if _tn_f_ok else np.array([])
+                _tn_risk = float(_mc_tn.get("risk_pct", 1.0))
+                def _tn_df(_r):
+                    _r = np.asarray(_r, dtype=float)
+                    return pd.DataFrame({"PnL $": _r * 100.0, "Ret %": _r, "Risiko %": _tn_risk})
+                _mc_sp_top = (_mc_tn.get("split") or {}).get("top") or []
+                if _mc_sp_top and _mc_sp_top[0]["trades"]:
+                    _sp_oos0, _sp_h0 = pd.Timestamp(_mc_tn["split"]["oos_start"]), pd.Timestamp(_mc_tn["split"]["hold"])
+                    _sp_r = [x[1] for x in _mc_sp_top[0]["trades"] if _sp_oos0 <= pd.Timestamp(x[0]) < _sp_h0]
+                    if _sp_r:
+                        _mc_sp_df = (_tn_df(_sp_r), _tn_label(_mc_sp_top[0]["key"]))
+                        _mc_source_options.append("Top-N-Split: Rang-1-Setup — nur seine OOS-Trades")
+                if len(_tn_r):
+                    _mc_tn_proc = _tn_df(_tn_r)
+                    _mc_source_options.append("IS-Top-N: immer den IS-Sieger handeln — OOS-Trades (empfohlen)")
+                if _mc_tn.get("agg") and len(_mc_tn["agg"][0]["pooled_rets"]):
+                    _mc_tn_best = (_tn_df(_mc_tn["agg"][0]["pooled_rets"]), _tn_label(_mc_tn["agg"][0]["key"]))
+                    _mc_source_options.append("IS-Top-N: häufigstes Top-Setup — seine OOS-Trades")
+            if _mc_best_oos_trades is not None and not _mc_best_oos_trades.empty:
+                _mc_source_options.append("WFA robustestes Setup — nur seine OOS-Trades (OOS-gewählt)")
+            if _mc_wfa_best is not None:
+                _mc_source_options.append("WFA robustestes Setup — Full-Sample")
+            if _mc_oos_trades is not None and not _mc_oos_trades.empty:
+                _mc_source_options.append("WFA kombinierte OOS-Trades (alle Folds, wechselnde Setups)")
+            if _mc_ens_cache is not None and not _mc_ens_cache["df_ens"].empty:
+                _mc_source_options.append("Ensemble robustestes Setup — Full-Sample")
+
+            if not _mc_source_options:
+                st.warning(f"Für **{mc_fill_choice}** liegen noch keine WFA/Ensemble-Ergebnisse vor. Bitte oben zuerst "
+                           f"'🔄 WFA starten' bzw. '⚡ Ensemble WFA starten' ausführen — mit aktivierter Checkbox "
+                           f"'Beide Fill-Modi automatisch testen' bekommst du beide Modi in einem Durchgang.")
+                mc_trades_raw = None
             else:
-                _best_ens_row = _mc_ens_cache["df_ens"].iloc[0]
-                _p_ens = {**_base_for_mc,
-                          "sl_pct":      float(_best_ens_row["_sl"]),
-                          "ma_period":   int(_best_ens_row["_ma"]),
-                          "filter_mode": _best_ens_row["_fm"],
-                          "trail_trig":  float(_best_ens_row["_tt"]),
-                          "trail_off":   float(_best_ens_row["_to"])}
-                mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), _p_ens)
-                _mc_source_label = (f"Ensemble robustestes Setup ({mc_fill_choice}) — "
-                                    f"SL {_best_ens_row['SL %']} · Trail {_fmt_trail(_best_ens_row['_tt'], _best_ens_row['_to'])} · "
-                                    f"MA {_best_ens_row['MA']} · {_best_ens_row['Filter']} "
-                                    f"({int(_best_ens_row['Konsistenz %'])}% Konsistenz)")
+                mc_source = st.radio(
+                    "Trade-Quelle für Monte Carlo", _mc_source_options, index=0, key="dax_mc_source",
+                    help="WFA robustestes Setup — nur seine OOS-Trades: EIN festes, bekanntes Setup (SL/Trail/MA/Filter), "
+                         "aber nur dessen echte blinde Out-of-Sample-Trades über die Folds, in denen es getestet wurde. "
+                         "Beste Kombination aus 'weiß ich, was ich trade' + 'ehrlich getestet'.\n"
+                         "WFA robustestes Setup — Full-Sample: dasselbe Setup, aber über den KOMPLETTEN Zeitraum "
+                         "nachbacktestet (einfacher, aber leicht optimistisch).\n"
+                         "WFA kombinierte OOS-Trades: alle Folds mit ihren jeweils EIGENEN besten (ggf. unterschiedlichen) "
+                         "Setups — du weißt am Ende nicht mehr genau, welche Parameter das waren.\n"
+                         "Ensemble robustestes Setup: über 5 versetzte Läufe konsistentestes Setup, Full-Sample nachbacktestet.")
+
+                _base_for_mc = {**base_params, "fill_mode": _mc_fm}
+
+                if mc_source == "Top-N-Split: Rang-1-Setup — nur seine OOS-Trades":
+                    mc_trades_raw = _mc_sp_df[0]
+                    _mc_source_label = f"Top-N-Split, Rang 1 nach In-Sample, nur Out-of-Sample-Trades — {_mc_sp_df[1]}"
+                elif mc_source == "IS-Top-N: immer den IS-Sieger handeln — OOS-Trades (empfohlen)":
+                    mc_trades_raw = _mc_tn_proc
+                    _mc_source_label = "IS-Top-N-Verfahren: OOS-Trades des jeweiligen IS-Siegers (blind, Fill-Modus je Setup)"
+                elif mc_source == "IS-Top-N: häufigstes Top-Setup — seine OOS-Trades":
+                    mc_trades_raw = _mc_tn_best[0]
+                    _mc_source_label = f"IS-Top-N, häufigstes Top-Setup (nur OOS-Folds, in denen es IS-gewählt war) — {_mc_tn_best[1]}"
+                elif mc_source == "WFA robustestes Setup — nur seine OOS-Trades (OOS-gewählt)":
+                    mc_trades_raw = _mc_best_oos_trades
+                    _mc_source_label = f"WFA robustestes Setup, nur OOS-Trades ({mc_fill_choice}) — {_mc_wfa_best['label']}"
+                elif mc_source == "WFA robustestes Setup — Full-Sample":
+                    _p_best = {**_base_for_mc, **{k: v for k, v in _mc_wfa_best.items() if k not in ("label", "key")}}
+                    mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), _p_best)
+                    _mc_source_label = f"WFA robustestes Setup ({mc_fill_choice}) — {_mc_wfa_best['label']}"
+                elif mc_source == "WFA kombinierte OOS-Trades (alle Folds, wechselnde Setups)":
+                    mc_trades_raw = _mc_oos_trades
+                    _mc_source_label = f"WFA kombinierte OOS-Trades ({mc_fill_choice}, alle Folds, blind getestet)"
+                else:
+                    _best_ens_row = _mc_ens_cache["df_ens"].iloc[0]
+                    _p_ens = {**_base_for_mc,
+                              "sl_pct":      float(_best_ens_row["_sl"]),
+                              "ma_period":   int(_best_ens_row["_ma"]),
+                              "filter_mode": _best_ens_row["_fm"],
+                              "trail_trig":  float(_best_ens_row["_tt"]),
+                              "trail_off":   float(_best_ens_row["_to"])}
+                    mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), _p_ens)
+                    _mc_source_label = (f"Ensemble robustestes Setup ({mc_fill_choice}) — "
+                                        f"SL {_best_ens_row['SL %']} · Trail {_fmt_trail(_best_ens_row['_tt'], _best_ens_row['_to'])} · "
+                                        f"MA {_best_ens_row['MA']} · {_best_ens_row['Filter']} "
+                                        f"({int(_best_ens_row['Konsistenz %'])}% Konsistenz)")
 
         if mc_trades_raw is None or mc_trades_raw.empty:
             if _mc_source_options:
@@ -9812,7 +9860,7 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
             st.success(f"**{n_real} echte Trades** geladen ({_mc_source_label}) · "
                        f"Win-Rate: {(real_rets > 0).mean()*100:.1f}% · "
                        f"Ø Trade: {real_rets.mean():.2f}$ · "
-                       f"Trades/Jahr: ~{n_real / max(1, (df_raw.index[-1]-df_raw.index[0]).days / 365):.0f}")
+                       f"Trades/Jahr: ~{n_real / (_mc_years if _mc_years else max(1, (df_raw.index[-1]-df_raw.index[0]).days / 365)):.0f}")
             if mc_source == "WFA robustestes Setup — nur seine OOS-Trades (OOS-gewählt)":
                 st.markdown(
                     '<div style="background:#1e293b55;border:1px solid rgba(148,163,184,.25);border-radius:8px;'
