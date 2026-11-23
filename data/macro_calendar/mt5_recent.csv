@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-319065,826020035,boe-mpc-member-dhingra-speech,GBP,GB,Rede des MPC-Mitglieds der BoE Dhingra,Medium,none,2026-09-24 09:30,1970-01-01,,,,,
 278031,124010007,retail-sales-mm,CAD,CA,Einzelhandelsumsatz m/m,Medium,percent,2026-09-24 12:30,2026-07-01,-0.7,0.0,0.6,,negative
 278043,124010008,core-retail-sales-mm,CAD,CA,Kern Verbraucherpreise m/m,Medium,percent,2026-09-24 12:30,2026-07-01,-0.7,0.0,0.5,,negative
 287174,840010015,current-account,USD,US,Leistungsbilanz,Medium,currency,2026-09-24 12:30,2026-04-01,-246.023,-290.928,-226.828,-212.597,positive
