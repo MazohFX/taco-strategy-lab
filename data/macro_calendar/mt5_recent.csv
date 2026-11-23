@@ -1,8 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-284176,756010009,snb-news-conference,CHF,CH,SNB Pressekonferenz,High,none,2026-09-24 08:30,1970-01-01,,,,,
-312993,276030001,ifo-business-expectations,EUR,DE,Ifo Konjunkturperspektiven,Medium,none,2026-09-24 08:30,2026-09-01,90.4,91.2,89.1,89.0,negative
-312998,276030002,ifo-current-business-situation,EUR,DE,Ifo aktuelles Geschäftsklima,Medium,none,2026-09-24 08:30,2026-09-01,89.5,88.3,88.5,,positive
-313003,276030003,ifo-business-climate-indicator,EUR,DE,Ifo Geschäftsklima,Medium,none,2026-09-24 08:30,2026-09-01,89.9,88.6,88.8,,positive
 320187,999010020,ecb-executive-board-member-lane-speech,EUR,EU,ECB Vorstandsmitglied Lane spricht,Medium,none,2026-09-24 09:00,1970-01-01,,,,,
 319065,826020035,boe-mpc-member-dhingra-speech,GBP,GB,Rede des MPC-Mitglieds der BoE Dhingra,Medium,none,2026-09-24 09:30,1970-01-01,,,,,
 278031,124010007,retail-sales-mm,CAD,CA,Einzelhandelsumsatz m/m,Medium,percent,2026-09-24 12:30,2026-07-01,-0.7,0.0,0.6,,negative
