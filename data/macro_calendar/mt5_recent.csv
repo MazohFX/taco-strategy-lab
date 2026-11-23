@@ -1,9 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-278031,124010007,retail-sales-mm,CAD,CA,Einzelhandelsumsatz m/m,Medium,percent,2026-09-24 12:30,2026-07-01,-0.7,0.0,0.6,,negative
-278043,124010008,core-retail-sales-mm,CAD,CA,Kern Verbraucherpreise m/m,Medium,percent,2026-09-24 12:30,2026-07-01,-0.7,0.0,0.5,,negative
-287174,840010015,current-account,USD,US,Leistungsbilanz,Medium,currency,2026-09-24 12:30,2026-04-01,-246.023,-290.928,-226.828,-212.597,positive
-313649,840140001,initial-jobless-claims,USD,US,Erstanträge auf Arbeitslosenhilfe,High,none,2026-09-24 12:30,2026-09-19,197.0,189.0,196.0,198.0,negative
-313653,840140002,continuing-jobless-claims,USD,US,Folgeanträge auf Arbeitslosenhilfe,Medium,none,2026-09-24 12:30,2026-09-12,1.719,1.724,1.73,1.717,positive
 270259,840020008,new-home-sales,USD,US,Verkäufe von Neubauten,High,none,2026-09-24 14:00,2026-08-01,0.684,0.584,0.607,0.643,positive
 270271,840020009,new-home-sales-mm,USD,US,Verkäufe von Neubauten m/m,Medium,percent,2026-09-24 14:00,2026-08-01,6.4,-2.2,-10.5,-4.3,positive
 301596,840220013,7-year-note-auction,USD,US,7-jährige Schatzanweisung Auktion,Medium,percent,2026-09-24 17:00,1970-01-01,5.085,,,,
