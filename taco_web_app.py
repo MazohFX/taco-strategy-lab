@@ -5525,10 +5525,19 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     pending_entry, entry_ts = False, None
     trades, equity_curve = [], []
 
-    sl_pct    = params["sl_pct"]
-    use_trail = params["use_trail"]
-    trail_trig = params["trail_trig"]
-    trail_off  = params["trail_off"]
+    # Stop-Loss ist aktiv, wenn 0 < sl_pct < 100. 0 (neu) oder 999 (alter Sentinel) = KEIN Stop-Loss.
+    sl_pct    = float(params["sl_pct"] or 0.0)
+    use_sl    = 0.0 < sl_pct < 100.0
+    trail_trig = float(params["trail_trig"] or 0.0)
+    trail_off  = float(params["trail_off"] or 0.0)
+    # Trailing ist nur aktiv, wenn eingeschaltet UND beide Werte > 0 (0/0 = "ohne Trail" im Grid)
+    use_trail = bool(params["use_trail"]) and trail_trig > 0 and trail_off > 0
+    # Positionsgröße ohne Stop-Loss: "Risiko pro Trade" bezieht sich dann auf diesen Referenz-Abstand
+    # (Default 2 % → gleiche Positionsgröße wie ein Setup mit 2 % SL). Vorher: SL-Sentinel 999 % →
+    # winzige Position (≈0,1× Hebel), wodurch "ohne SL" nie vergleichbar war.
+    sizing_ref_pct = float(params.get("sizing_ref_pct", 2.0) or 2.0)
+    risk_dist_pct  = sl_pct if use_sl else sizing_ref_pct
+    risk_pct_param = float(params.get("risk_pct", 1.0))
     half_spread    = params.get("spread_pts", 0.0) / 2.0
     commission_pct = params.get("commission_pct", 0.0)
     # Swap/Übernacht-Finanzierung: einmal pro KALENDER-Nacht zwischen Entry- und Exit-Datum,
@@ -5551,35 +5560,48 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
     vol_scalar_arr   = df["vol_scalar"].to_numpy(dtype=float)
     idx              = df.index
 
+    def _open_position(fill_px: float, i_: int):
+        _entry = fill_px + half_spread
+        _sl    = _entry * (1 - sl_pct / 100) if use_sl else 0.0   # 0.0 = kein Stop
+        _risk_per_unit = _entry * risk_dist_pct / 100
+        _qty   = (capital * risk_pct_param / 100) / _risk_per_unit * vol_scalar_arr[i_] if _risk_per_unit > 0 else 0
+        return _entry, _sl, _qty
+
     for i in range(len(df)):
         c, h, l, o = close_arr[i], high_arr[i], low_arr[i], open_arr[i]
+        entered_this_bar = False
 
         # Entry vom Vortag fällig (next_open-Modus): jetzt zum Open dieses Bars füllen
         if pending_entry and position == 0:
-            entry_price    = o + half_spread
-            sl_price       = entry_price * (1 - sl_pct / 100)
-            risk_per_trade = capital * (params.get("risk_pct", 1.0) / 100)
-            risk_per_unit  = entry_price - sl_price
-            qty            = (risk_per_trade / risk_per_unit) * vol_scalar_arr[i] if risk_per_unit > 0 else 0
-            trail_high     = o
+            entry_price, sl_price, qty = _open_position(o, i)
+            trail_high     = entry_price
             trail_active   = False
             position       = 1
             pending_entry  = False
             entry_ts       = idx[i]
+            entered_this_bar = True
 
         if position == 1:
-            if use_trail and trail_active:
-                trail_high = max(trail_high, h)
-                sl_price   = max(sl_price, trail_high * (1 - trail_off / 100))
-            elif use_trail and h >= entry_price * (1 + trail_trig / 100):
-                trail_active = True
-                trail_high   = h
-
+            # PESSIMISTISCHE Intrabar-Reihenfolge (Long: erst Low, dann High):
+            # 1) Stop, der VOR diesem Bar feststand, gegen Open (Gap) und Low prüfen
+            # 2) erst danach Trailing mit dem High dieses Bars nachziehen — wirkt ab dem NÄCHSTEN Bar
+            # Vorher wurde der Trail mit dem High desselben Bars nachgezogen und dann gegen dessen
+            # Low geprüft → Exit "kurz unter dem Tageshoch" fast garantiert (Look-ahead auf Daily-Bars).
             exit_price, reason = None, None
-            if l <= sl_price:
-                exit_price, reason = sl_price, "SL"
+            _stop_lbl = "Trail" if trail_active else "SL"
+            if sl_price > 0 and not entered_this_bar and o <= sl_price:
+                exit_price, reason = o, f"{_stop_lbl} (Gap)"   # Gap unter den Stop → Fill zum Open
+            elif sl_price > 0 and l <= sl_price:
+                exit_price, reason = sl_price, _stop_lbl
             elif exit_time_arr[i]:
                 exit_price, reason = c, "Time Exit"
+
+            if exit_price is None and use_trail:
+                if not trail_active and h >= entry_price * (1 + trail_trig / 100):
+                    trail_active = True
+                if trail_active:
+                    trail_high = max(trail_high, h)
+                    sl_price   = max(sl_price, trail_high * (1 - trail_off / 100))
 
             if exit_price is not None:
                 # Verkauf zum Bid (Close/Stop minus halber Spread) + optionale Kommission
@@ -5591,10 +5613,15 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
                 swap_cost = nights_held * swap_pts_per_night * qty
                 if swap_cost:
                     pnl -= swap_cost
+                _cap_before = capital
                 capital += pnl
                 trades.append({"Zeit": idx[i], "Entry": entry_price, "Exit": exit_price_net,
                                 "PnL $": round(pnl, 2), "Grund": reason,
-                                "Naechte": nights_held, "Swap $": round(swap_cost, 2)})
+                                "Naechte": nights_held, "Swap $": round(swap_cost, 2),
+                                # Rendite des Trades in % des Kontos + das dabei verwendete Risiko —
+                                # Monte Carlo rechnet damit R-Multiples (Gewinn/Verlust-Verhältnis bleibt erhalten)
+                                "Ret %": round(pnl / _cap_before * 100, 4) if _cap_before > 0 else 0.0,
+                                "Risiko %": risk_pct_param})
                 position, trail_active = 0, False
 
         if position == 0 and not pending_entry and entry_signal_arr[i]:
@@ -5603,12 +5630,8 @@ def _momi_backtest_engine(df: pd.DataFrame, params: dict) -> tuple[pd.DataFrame,
                 pending_entry = True
             else:
                 # Kauf zum Ask (Close plus halber Spread) — Fill im selben Bar
-                entry_price    = c + half_spread
-                sl_price       = entry_price * (1 - sl_pct / 100)
-                risk_per_trade = capital * (params.get("risk_pct", 1.0) / 100)
-                risk_per_unit  = entry_price - sl_price
-                qty            = (risk_per_trade / risk_per_unit) * vol_scalar_arr[i] if risk_per_unit > 0 else 0
-                trail_high     = c
+                entry_price, sl_price, qty = _open_position(c, i)
+                trail_high     = entry_price
                 trail_active   = False
                 position       = 1
                 entry_ts       = idx[i]
@@ -5630,7 +5653,11 @@ def _momi_metrics(df_trades: pd.DataFrame, equity: pd.Series) -> dict:
     pf  = gp / gl if gl > 0 else 9.99
     dd  = (equity - equity.cummax()) / equity.cummax() * 100
     ps  = df_trades["PnL $"]
-    sharpe = (ps.mean() / ps.std() * np.sqrt(252)) if ps.std() > 0 else 0
+    # Annualisierung mit der TATSÄCHLICHEN Trade-Frequenz (Trades pro Jahr), nicht pauschal √252 —
+    # bei ~50 Wochen-Trades/Jahr hat √252 die Sharpe um Faktor ≈2,2 aufgebläht.
+    _years = (equity.index[-1] - equity.index[0]).days / 365.25 if len(equity) > 1 else 0
+    _tpy   = n / _years if _years > 0.25 else n
+    sharpe = (ps.mean() / ps.std() * np.sqrt(_tpy)) if ps.std() > 0 else 0
     total_ret = (equity.iloc[-1] - equity.iloc[0]) / equity.iloc[0] * 100
     avg_ret   = df_trades["PnL $"].mean() / equity.iloc[0] * 100 if n > 0 else 0
     return {"n": n, "wr": round(wr,1), "pf": round(pf,3),
@@ -7853,6 +7880,31 @@ def render_dax_ema_wfa() -> None:
     _dax_ticker = "GER40"
     selected_name = "DAX — Germany 40 (GER40)"
 
+    # Version der Backtest-Logik. v2 (2026-11-23): pessimistische Intrabar-Reihenfolge, Gap-Fills,
+    # "ohne SL / ohne Trail" im Grid, Sizing ohne SL, Sharpe mit echter Trade-Frequenz.
+    # Ältere gespeicherte WFA/Ensemble-Ergebnisse (v1, mit Trail-Look-ahead) werden NICHT mehr geladen.
+    _DAX_ENGINE_VERSION = 2
+
+    def _fmt_sl(v) -> str:
+        v = float(v or 0)
+        return f"{v:.2f}%" if 0 < v < 100 else "aus"
+
+    def _fmt_tt(v) -> str:
+        v = float(v or 0)
+        return f"{v:.2f}%" if v > 0 else "aus"
+
+    def _fmt_trail(tt, to) -> str:
+        tt, to = float(tt or 0), float(to or 0)
+        return f"{tt:.2f}%/{to:.2f}%" if (tt > 0 and to > 0) else "aus"
+
+    def _trail_combo_ok(tt, to) -> bool:
+        # "ohne Trail" ist genau die Kombination 0/0 — halbe Kombis (0/x, x/0) wären doppelte "ohne"-Läufe
+        return (float(tt) > 0) == (float(to) > 0)
+
+    def _n_combos(_gsl, _gma, _gfm, _gtt, _gto) -> int:
+        _n_tr = sum(1 for _a in _gtt for _b in _gto if _trail_combo_ok(_a, _b))
+        return len(_gsl) * len(_gma) * len(_gfm) * _n_tr
+
     if not st.session_state.get("dax_wfa_ran") and f"dax_mc_trades_{_dax_ticker}" in st.session_state:
         st.session_state["dax_wfa_ran"] = True
 
@@ -7904,9 +7956,11 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
     st.markdown(
         '<div style="background:#1e293b55;border:1px solid rgba(148,163,184,.25);border-radius:8px;'
         'padding:10px 16px;font-size:.85rem;color:#94a3b8;margin:4px 0 16px 0;">'
-        '📌 <b>Referenz-Ergebnis (WFA vom 2026-07-02, enger Standard-Suchraum SL 1.0–2.0% / MA 100–200 / Trail 0.1–0.2%):</b><br>'
-        'Robustestes Setup: SL 2.00% · Trail-Trigger 0.10% · Trail-Abstand 0.10% · MA 100 · Filter: Kein Filter (nur Zeit) '
-        '→ 100% Konsistenz · Ø OOS PF 4.63 · Ø OOS Ret 21.62% — mit Spread 1,5 Pkt / 0% Kommission gerechnet.'
+        '⚠️ <b>Alte Referenz-Ergebnisse (WFA vom 2026-07-02 / 2026-11, PF 4–5, Sharpe > 8) sind ungültig.</b><br>'
+        'Die alte Backtest-Logik hat den Trailing-Stop auf Tageskerzen mit dem High DESSELBEN Bars nachgezogen und '
+        'dann gegen dessen Low geprüft — ein enger Trail (0,1 %) hat so fast immer "kurz unter dem Tageshoch" verkauft '
+        '(Look-ahead). Seit 2026-11-23 rechnet die Engine pessimistisch (erst Low, dann High; Gap-Fills zum Open). '
+        'Außerdem kann die WFA jetzt komplett <b>ohne SL / ohne Trail</b> laufen.'
         '</div>', unsafe_allow_html=True)
 
     # ════════════════════════════════════════════════════════════════════════
@@ -7964,14 +8018,24 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         adx_thresh  = st.number_input("ADX-Schwelle", 5, 50, 20, key="dax_adxt")
     with pc3:
         st.markdown("**Risk Management**")
-        use_sl     = st.checkbox("Stop-Loss", True, key="dax_sl")
-        sl_pct     = st.number_input("SL %", 0.1, 20.0, 1.5, step=0.1, key="dax_slp")
-        use_trail  = st.checkbox("Trailing Stop", True, key="dax_tr")
-        trail_trig = st.number_input("Trail-Trigger %", 0.1, 10.0, 0.1, step=0.1, key="dax_tt")
-        trail_off  = st.number_input("Trail-Abstand %", 0.1, 10.0, 0.1, step=0.1, key="dax_to")
+        use_sl     = st.checkbox("Stop-Loss", True, key="dax_sl",
+                                 help="Aus = Full-Sample UND WFA/Ensemble/Monte Carlo laufen komplett ohne Stop-Loss "
+                                      "(der SL-Grid wird dann ignoriert).")
+        sl_pct     = st.number_input("SL %", 0.1, 20.0, 1.5, step=0.1, key="dax_slp", disabled=not use_sl)
+        use_trail  = st.checkbox("Trailing Stop", False, key="dax_tr",
+                                 help="Aus = Full-Sample UND WFA/Ensemble/Monte Carlo laufen komplett ohne Trailing "
+                                      "(die Trail-Grids werden dann ignoriert).")
+        trail_trig = st.number_input("Trail-Trigger %", 0.1, 10.0, 0.5, step=0.1, key="dax_tt", disabled=not use_trail)
+        trail_off  = st.number_input("Trail-Abstand %", 0.1, 10.0, 0.4, step=0.1, key="dax_to", disabled=not use_trail)
         st.markdown("---")
         risk_pct   = st.number_input("Risiko pro Trade %", 0.1, 5.0, 1.0, step=0.1, key="dax_risk",
-                                     help="1% = bei 100.000€ Konto riskierst du 1.000€ pro Trade (basierend auf SL-Abstand)")
+                                     help="1% = bei 100.000€ Konto riskierst du 1.000€ pro Trade (basierend auf SL-Abstand). "
+                                          "Ohne SL bezieht sich das auf die Sizing-Referenz darunter.")
+        sizing_ref_pct = st.number_input(
+            "Sizing-Referenz ohne SL (%)", 0.5, 10.0, 2.0, step=0.5, key="dax_sizeref",
+            help="Nur relevant für Läufe OHNE Stop-Loss: Positionsgröße so, als läge ein Stop in diesem Abstand. "
+                 "2 % = gleiche Positionsgröße wie ein Setup mit 2 % SL (bei 1 % Risiko ≈ 0,5× Hebel). "
+                 "Das ist KEIN Stop — der echte Verlust pro Trade kann größer sein.")
         st.markdown("---")
         use_vol_target = st.checkbox("Volatility Targeting", False, key="dax_voltarget",
                                      help="Skaliert die Positionsgröße zusätzlich zur SL-basierten Risikogröße nach "
@@ -8034,8 +8098,32 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         with gc3:
             g_tt   = st.multiselect("Trail-Trigger %",[0.1,0.2,0.3,0.5,0.75,1.0],     default=[0.1,0.3,0.5,1.0],  key="dax_gtt")
             g_to   = st.multiselect("Trail-Abstand %",[0.1,0.2,0.3,0.4,0.75,1.0],     default=[0.1,0.3,0.4,1.0],  key="dax_gto")
-        n_grid_combos = len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)
-        st.caption(f"Aktueller Suchraum: {n_grid_combos} Kombinationen je Fold — bei vielen Folds kann ein Lauf mehrere Minuten dauern.")
+        gx1, gx2 = st.columns(2)
+        g_sl_none = gx1.checkbox("„Ohne SL“ zusätzlich testen", value=False, key="dax_g_slnone", disabled=not use_sl,
+                                 help="Nimmt 'kein Stop-Loss' als weitere Option in den SL-Grid auf — die WFA kann "
+                                      "dann selbst entscheiden, ob ein SL überhaupt hilft.")
+        g_tr_none = gx2.checkbox("„Ohne Trailing“ zusätzlich testen", value=True, key="dax_g_trnone", disabled=not use_trail,
+                                 help="Nimmt 'kein Trailing' als weitere Option in den Trail-Grid auf.")
+
+        # ── Effektiver Grid: respektiert die Checkboxen Stop-Loss / Trailing Stop oben ──
+        # (vorher wurden SL- und Trail-Grid IMMER getestet, egal ob die Checkbox aus war)
+        if not use_sl:
+            g_sl = [0.0]                                   # 0 = kein Stop-Loss
+        elif g_sl_none:
+            g_sl = [0.0] + [v for v in g_sl if v > 0]
+        if not use_trail:
+            g_tt, g_to = [0.0], [0.0]                      # 0/0 = kein Trailing
+        elif g_tr_none:
+            g_tt = [0.0] + [v for v in g_tt if v > 0]
+            g_to = [0.0] + [v for v in g_to if v > 0]
+        if not g_sl or not g_ma or not g_fm or not g_tt or not g_to:
+            st.warning("Mindestens ein Grid-Feld ist leer → 0 Kombinationen.")
+
+        n_grid_combos = _n_combos(g_sl, g_ma, g_fm, g_tt, g_to)
+        _sl_lbl = "ohne SL" if not use_sl else ", ".join(_fmt_sl(v) for v in g_sl)
+        _tr_lbl = "ohne Trail" if not use_trail else f"{sum(v > 0 for v in g_tt)}×{sum(v > 0 for v in g_to)} Trail-Werte" + (" + ohne" if g_tr_none else "")
+        st.caption(f"Aktueller Suchraum: **{n_grid_combos} Kombinationen je Fold** (SL: {_sl_lbl} · Trail: {_tr_lbl}) "
+                   f"— bei vielen Folds kann ein Lauf mehrere Minuten dauern.")
 
         st.markdown("---")
         _opt_days = st.checkbox("Entry/Exit-Tag mit optimieren", value=False, key="dax_opt_days",
@@ -8052,7 +8140,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             g_entry_dows = [_dow_opts[d] for d in g_entry_days]
             g_exit_dows  = [_dow_opts[d] for d in g_exit_days]
             n_day_combos = len(g_entry_dows) * len(g_exit_dows)
-            n_total = len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)*n_day_combos
+            n_total = n_grid_combos*n_day_combos
             st.caption(f"⚠️ {n_day_combos} Tag-Kombinationen × Grid = **{n_total} Kombinationen je Fold** — kann mehrere Minuten dauern")
         else:
             g_entry_dows = [day_map_full[entry_day]]
@@ -8121,11 +8209,12 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         "filter_mode": filter_mode,
         "use_adx":     use_adx,
         "adx_thresh":  float(adx_thresh),
-        "sl_pct":      float(sl_pct)  if use_sl    else 999.0,
+        "sl_pct":      float(sl_pct)     if use_sl    else 0.0,   # 0 = kein Stop-Loss
         "use_trail":   use_trail,
-        "trail_trig":  float(trail_trig),
-        "trail_off":   float(trail_off),
+        "trail_trig":  float(trail_trig) if use_trail else 0.0,   # 0/0 = kein Trailing
+        "trail_off":   float(trail_off)  if use_trail else 0.0,
         "risk_pct":    float(risk_pct),
+        "sizing_ref_pct": float(sizing_ref_pct),
         "spread_pts":     float(spread_pts),
         "commission_pct": float(commission_pct),
         "swap_pts_per_night": float(swap_pts_per_night),
@@ -8220,13 +8309,14 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             _wfa_enabled = False
         else:
             st.info(f"**{len(folds)} Folds** · IS {is_months}M / OOS {oos_months}M  "
-                    f"· Grid-Größe: {len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)} Kombinationen je Fold")
+                    f"· Grid-Größe: {_n_combos(g_sl, g_ma, g_fm, g_tt, g_to)} Kombinationen je Fold")
 
     def _dax_wfa_cache_key(_fm: str) -> str:
         return (f"dax_wfa_results_{_dax_ticker}_{dax_start}_{dax_end}"
                 f"_{is_months}_{oos_months}_{entry_day}_{exit_day}"
-                f"_{ma_type}_{sl_pct}_{use_trail}_{trail_trig}_{trail_off}"
-                f"_{_fm}_{spread_pts}_{commission_pct}")
+                f"_{ma_type}_{use_sl}_{sl_pct}_{use_trail}_{trail_trig}_{trail_off}"
+                f"_{_fm}_{spread_pts}_{commission_pct}_{sizing_ref_pct}"
+                f"_{g_sl}_{g_ma}_{g_fm}_{g_tt}_{g_to}_v{_DAX_ENGINE_VERSION}")
 
     def _dax_ens_cache_key(_fm: str) -> str:
         return f"dax_ens_results_{_dax_ticker}_{_fm}"
@@ -8258,7 +8348,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             "sl_pct": float(_b["_sl"]), "ma_period": int(_b["_ma"]), "filter_mode": _b["_fm"],
             "trail_trig": float(_b["_tt"]), "trail_off": float(_b["_to"]),
             "key": (_b["_sl"], _b["_tt"], _b["_to"], _b["_ma"], _b["_fm"]),
-            "label": (f"SL {_b['_sl']:.2f}% · Trail {_b['_tt']:.2f}%/{_b['_to']:.2f}% · "
+            "label": (f"SL {_fmt_sl(_b['_sl'])} · Trail {_fmt_trail(_b['_tt'], _b['_to'])} · "
                       f"MA {int(_b['_ma'])} · {_b['_fm']} ({int(_b['_konsistenz'])}% Konsistenz)"),
         }
 
@@ -8272,6 +8362,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             _k = _dax_wfa_cache_key(_fm)
             if _k not in st.session_state:
                 _restored = _load_wfa_result(f"dax_wfa_{_fm}")
+                if _restored is not None and _restored.get("engine_version") != _DAX_ENGINE_VERSION:
+                    _restored = None   # altes Ergebnis mit Trail-Look-ahead → verwerfen, neu rechnen
                 if _restored is not None:
                     # param_stability wurde fürs Gist auf reine Zahlenlisten komprimiert
                     # (siehe _dax_wfa_persist_blob) — hier wieder in die Dict-Form zurück,
@@ -8303,6 +8395,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         vielen Grid-Kombinationen × Folds sparen die wegfallenden Schlüsselnamen genug Platz,
         um sicher unter GitHubs 1MB-Trunkierungsgrenze für Gist-Dateien zu bleiben."""
         _blob = {k: v for k, v in _full_result.items() if k != "param_stability_trades"}
+        _blob["engine_version"] = _DAX_ENGINE_VERSION
         _blob["param_stability"] = {
             key: [[r.get(f, 0) for f in _PARAM_STAB_FIELDS] for r in results]
             for key, results in _full_result["param_stability"].items()
@@ -8338,6 +8431,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     g_sl, g_ma, g_fm, adx_grid, g_tt, g_to, g_entry_dows, g_exit_dows):
                 if ed_ == xd_:
                     continue  # Entry- und Exit-Tag müssen verschieden sein
+                if not _trail_combo_ok(tt_, to_):
+                    continue  # nur 0/0 = "ohne Trail", keine halben Kombis
                 p = {**_base_params_variant,
                      "sl_pct":      sl_,
                      "ma_period":   ma_,
@@ -8376,7 +8471,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 wfa_rows.append({"Fold": fi+1,
                                  "IS": f"{fold['is_start'].date()} – {fold['is_end'].date()}",
                                  "OOS": f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
-                                 "Bester SL":"–","Bestes MA":"–","Bester FM":"–",
+                                 "Bester SL":"–","Bester Trail":"–","Bestes MA":"–","Bester FM":"–",
                                  "IS Trades":0,"IS PF":"–","IS Sharpe":"–",
                                  "OOS Trades":0,"OOS PF":"–","OOS Ret %":"–","Ø Ret/Trade %":"–","OOS Sharpe":"–",
                                  "Status":"⚠️ Kein IS-Ergebnis"})
@@ -8397,7 +8492,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 "Fold":       fi+1,
                 "IS":         f"{fold['is_start'].date()} – {fold['is_end'].date()}",
                 "OOS":        f"{fold['oos_start'].date()} – {fold['oos_end'].date()}",
-                "Bester SL":  f"{best_p['sl_pct']}%",
+                "Bester SL":  _fmt_sl(best_p['sl_pct']),
+                "Bester Trail": _fmt_trail(best_p['trail_trig'], best_p['trail_off']),
                 "Bestes MA":  f"{best_p['ma_type']} {best_p['ma_period']}",
                 "Bester FM":  best_p['filter_mode'],
                 "Entry→Exit": f"{_dow_names.get(best_p['entry_dow'],'?')}→{_dow_names.get(best_p['exit_dow'],'?')}",
@@ -8435,7 +8531,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         adx_grid = g_adx if use_adx else [float(adx_thresh)]
         for sl_, ma_, fm_, adx_, tt_, to_, ed_, xd_ in _prod(
                 g_sl, g_ma, g_fm, adx_grid, g_tt, g_to, g_entry_dows, g_exit_dows):
-            if ed_ == xd_:
+            if ed_ == xd_ or not _trail_combo_ok(tt_, to_):
                 continue
             p = {**_base_params_variant, "sl_pct": sl_, "ma_period": ma_, "filter_mode": fm_,
                  "adx_thresh": adx_, "trail_trig": tt_, "trail_off": to_, "entry_dow": ed_, "exit_dow": xd_}
@@ -8473,6 +8569,10 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                            f"Bleibt nur für diese Browser-Session erhalten.")
         # Trades auch direkt unter Ticker-Key speichern — MC findet sie ohne exakten Cache-Key
         st.session_state[f"dax_mc_trades_{_dax_ticker}"] = tr_full
+
+    # Aktuellen UI-Grid merken — Ensemble nutzt IMMER den aktuellen Grid (inkl. ohne SL/Trail),
+    # nicht den Grid des zuletzt gecachten WFA-Laufs
+    _g_sl_now, _g_ma_now, _g_fm_now, _g_tt_now, _g_to_now = g_sl, g_ma, g_fm, g_tt, g_to
 
     # Ergebnisse aus Cache laden
     if not _wfa_enabled or wfa_cache_key not in st.session_state:
@@ -8546,7 +8646,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     padding:4px 12px;color:{_sig_color};font-weight:800;font-size:.95rem;">{_sig_label}</span>
                   <span style="color:#9fb0c7;font-size:.85rem;margin-left:12px;">
                     OOS-Trades gepoolt: n={_sig['n_trades']} · Wilcoxon p={_sig_p}
-                    · Sharpe OOS={_sig_sharpe} · Wilson-CI Winrate=[{_sig_wlo*100:.1f}%, {_sig_whi*100:.1f}%]
+                    · t-Wert (Sharpe/Trade×√n)={_sig_sharpe} · Wilson-CI Winrate=[{_sig_wlo*100:.1f}%, {_sig_whi*100:.1f}%]
                   </span>
                 </div>""",
                 unsafe_allow_html=True,
@@ -8716,7 +8816,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 gc3.metric("Überanpassungs-Gap", f"{_gap:+.1f}%", delta_color="inverse")
                 _gp = _wfa_global_benchmark["params"]
                 st.caption(f"⚠️ Setup im globalen Benchmark (NICHT die Empfehlung — nur Vergleichswert): "
-                           f"SL {_gp['sl_pct']}% · Trail {_gp['trail_trig']}%/{_gp['trail_off']}% · "
+                           f"SL {_fmt_sl(_gp['sl_pct'])} · Trail {_fmt_trail(_gp['trail_trig'], _gp['trail_off'])} · "
                            f"MA {_gp['ma_type']} {_gp['ma_period']} · Filter: {_gp['filter_mode']} — "
                            f"auf dem GESAMTEN Zeitraum ohne OOS-Trennung gefunden, deshalb strukturell zu gut. "
                            f"Die tatsächliche Empfehlung steht im grünen Kasten '🏆 Empfohlenes Setup' weiter oben. "
@@ -8774,9 +8874,9 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
                 stab_rows.append({
                     "_sl": sl_, "_tt": tt_, "_to": to_, "_ma": ma_, "_fm": fm_,
-                    "SL %":             f"{sl_:.2f}%",
-                    "Trail-Trig %":     f"{tt_:.2f}%",
-                    "Trail-Off %":      f"{to_:.2f}%",
+                    "SL %":             _fmt_sl(sl_),
+                    "Trail-Trig %":     _fmt_tt(tt_),
+                    "Trail-Off %":      _fmt_tt(to_),
                     "MA":               f"{ma_}",
                     "Filter":           fm_,
                     "Folds getestet":   n_folds,
@@ -8860,7 +8960,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     "filter_mode": best["_fm"],
                     "trail_trig":  float(best["_tt"]),
                     "trail_off":   float(best["_to"]),
-                    "label":       (f"SL {best['SL %']} · Trail {best['Trail-Trig %']}/{best['Trail-Off %']} · "
+                    "label":       (f"SL {best['SL %']} · Trail {_fmt_trail(best['_tt'], best['_to'])} · "
                                     f"MA {best['MA']} · {best['Filter']} ({int(best['Konsistenz %'])}% Konsistenz)"),
                 }
 
@@ -8891,6 +8991,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 _k = _dax_ens_cache_key(_fm)
                 if _k not in st.session_state:
                     _restored_ens = _load_wfa_result(f"dax_ens_{_fm}")
+                    if _restored_ens is not None and _restored_ens.get("engine_version") != _DAX_ENGINE_VERSION:
+                        _restored_ens = None   # altes Ergebnis mit Trail-Look-ahead → verwerfen
                     if _restored_ens is not None:
                         st.session_state[_k] = _restored_ens
                         st.session_state.setdefault("dax_ens_restored_modes", []).append(_fm)
@@ -8913,7 +9015,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         n_runs = ec1.number_input("Anzahl Läufe", min_value=3, max_value=10, value=5, step=1, key="dax_ens_runs")
         if ec2.button("▶ Ensemble WFA starten", type="primary", key="dax_ens_run_btn"):
             st.session_state["dax_ens_running"] = True
-        _ens_n_combos = len(g_sl)*len(g_ma)*len(g_fm)*len(g_tt)*len(g_to)
+        _ens_n_combos = _n_combos(_g_sl_now, _g_ma_now, _g_fm_now, _g_tt_now, _g_to_now)
         _ens_modes_factor = 2 if test_both_fills else 1
         st.caption(f"⏱️ Grober Richtwert: {_ens_n_combos} Kombinationen × ~{n_runs} Läufe × {_ens_modes_factor} Fill-Modus/-Modi — "
                    f"bei breitem Suchraum kann das **mehrere Dutzend Minuten** dauern. Die Fortschrittsanzeige aktualisiert sich "
@@ -8967,7 +9069,9 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                         if len(df_is_r) < 30 or len(df_oos_r) < 5:
                             continue
 
-                        for sl_, ma_, fm_, adx_, tt_, to_ in _prod(g_sl, g_ma, g_fm, adx_grid_r, g_tt, g_to):
+                        for sl_, ma_, fm_, adx_, tt_, to_ in _prod(_g_sl_now, _g_ma_now, _g_fm_now, adx_grid_r, _g_tt_now, _g_to_now):
+                            if not _trail_combo_ok(tt_, to_):
+                                continue
                             p = {**_variant_params,
                                  "sl_pct":      sl_,
                                  "ma_period":   ma_,
@@ -9018,9 +9122,9 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     n_tot = len(results)
                     ens_rows.append({
                         "_sl": sl_, "_tt": tt_, "_to": to_, "_ma": ma_, "_fm": fm_,
-                        "SL %":             f"{sl_:.2f}%",
-                        "Trail-Trig %":     f"{tt_:.2f}%",
-                        "Trail-Off %":      f"{to_:.2f}%",
+                        "SL %":             _fmt_sl(sl_),
+                        "Trail-Trig %":     _fmt_tt(tt_),
+                        "Trail-Off %":      _fmt_tt(to_),
                         "MA":               f"{ma_}",
                         "Filter":           fm_,
                         "Konsistenz %":     round(n_pos / n_tot * 100, 0),
@@ -9050,6 +9154,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                     "n_runs":       int(n_runs),
                     "display_cols": display_cols_ens,
                     "fill_mode_label": _mode_label,
+                    "engine_version":  _DAX_ENGINE_VERSION,
                 }
                 st.session_state[_dax_ens_cache_key(_fm)] = _ens_result
                 _ens_saved, _ens_save_reason = _save_wfa_result(f"dax_ens_{_fm}", _ens_result)
@@ -9114,7 +9219,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                         continue
 
                     total_ret_f = m_f["total_ret"]
-                    label = (f"#{rank+1} · SL {row['SL %']} · Trail {row['Trail-Trig %']} · "
+                    label = (f"#{rank+1} · SL {row['SL %']} · Trail {_fmt_trail(row['_tt'], row['_to'])} · "
                              f"MA {row['MA']} · {row['Filter']}")
 
                     with st.expander(f"#{rank+1} — Rendite: {total_ret_f:+.1f}% vs Buy&Hold: {bh_total_ret:+.1f}% · {label}"):
@@ -9156,14 +9261,14 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 # ── Heatmap ───────────────────────────────────────────────────
                 st.markdown("### Heatmap: SL% × Trail-Trigger% → Konsistenz %")
                 pivot_ens = df_ens.copy()
-                pivot_ens["SL_num"] = pivot_ens["SL %"].str.replace("%","").astype(float)
-                pivot_ens["TT_num"] = pivot_ens["Trail-Trig %"].str.replace("%","").astype(float)
+                pivot_ens["SL_num"] = pivot_ens["_sl"].astype(float)
+                pivot_ens["TT_num"] = pivot_ens["_tt"].astype(float)
                 heat_ens = pivot_ens.pivot_table(
                     values="Konsistenz %", index="SL_num", columns="TT_num", aggfunc="mean").round(0)
                 fig_heat_ens = go.Figure(go.Heatmap(
                     z=heat_ens.values,
-                    x=[f"Trail {c}%" for c in heat_ens.columns],
-                    y=[f"SL {r}%"    for r in heat_ens.index],
+                    x=[f"Trail {_fmt_tt(c)}" for c in heat_ens.columns],
+                    y=[f"SL {_fmt_sl(r)}"    for r in heat_ens.index],
                     colorscale="RdYlGn", zmin=0, zmax=100,
                     text=heat_ens.values.round(0).astype(str),
                     texttemplate="%{text}%", showscale=True,
@@ -9320,7 +9425,7 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
                       "trail_off":   float(_best_ens_row["_to"])}
             mc_trades_raw, _ = _momi_backtest_engine(df_raw.copy(), _p_ens)
             _mc_source_label = (f"Ensemble robustestes Setup ({mc_fill_choice}) — "
-                                f"SL {_best_ens_row['SL %']} · Trail {_best_ens_row['Trail-Trig %']}/{_best_ens_row['Trail-Off %']} · "
+                                f"SL {_best_ens_row['SL %']} · Trail {_fmt_trail(_best_ens_row['_tt'], _best_ens_row['_to'])} · "
                                 f"MA {_best_ens_row['MA']} · {_best_ens_row['Filter']} "
                                 f"({int(_best_ens_row['Konsistenz %'])}% Konsistenz)")
 
@@ -9412,13 +9517,19 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
 
             mc_progress = st.progress(0, text="Monte Carlo läuft …")
 
-            # Trade-Returns normieren
-            win_mask  = real_rets > 0
-            avg_win   = real_rets[win_mask].mean()  if win_mask.any()   else 1
-            avg_loss  = real_rets[~win_mask].mean() if (~win_mask).any() else -1
-            norm_rets = np.where(real_rets > 0,
-                                  real_rets / avg_win,
-                                 -real_rets / avg_loss)
+            # Trade-Returns als R-Multiples normieren (Vielfache des Risikos pro Trade).
+            # Vorher: Gewinne auf Ø +1, Verluste auf Ø −1 normiert → das Gewinn/Verlust-Verhältnis ging
+            # verloren und nur noch die Trefferquote zählte (bei Trail-Setups mit hoher Win-Rate viel zu gut).
+            if {"Ret %", "Risiko %"}.issubset(mc_trades_raw.columns):
+                # exakt: Rendite des Trades in % des Kontos / dabei verwendetes Risiko-% → R
+                # (funktioniert auch OHNE Stop-Loss: R ist dann relativ zur Sizing-Referenz)
+                _risk_used = mc_trades_raw["Risiko %"].astype(float).replace(0, np.nan)
+                norm_rets  = (mc_trades_raw["Ret %"].astype(float) / _risk_used).fillna(0).to_numpy()
+            else:
+                # Fallback für ältere Trades ohne Ret%-Spalte: 1R = Ø Verlust
+                _loss_mask = real_rets < 0
+                _avg_loss_abs = abs(real_rets[_loss_mask].mean()) if _loss_mask.any() else max(abs(real_rets).mean(), 1e-9)
+                norm_rets = real_rets / _avg_loss_abs
 
             n_sims_int = int(n_sims)
             results, all_paths_p1 = [], []
