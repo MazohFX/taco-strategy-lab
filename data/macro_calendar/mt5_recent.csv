@@ -1,7 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-284159,756010001,snb-interest-rate-decision,CHF,CH,SNB Zinsentscheid,High,percent,2026-09-24 08:00,1970-01-01,0.0,,0.0,,
-284167,756010002,snb-monetary-policy-assessment,CHF,CH,SNB Geldpolitischer Bericht,Medium,none,2026-09-24 08:00,1970-01-01,,,,,
-314268,999010008,ecb-economic-bulletin,EUR,EU,ECB Wirtschatsbericht,Medium,none,2026-09-24 08:00,1970-01-01,,,,,
 284176,756010009,snb-news-conference,CHF,CH,SNB Pressekonferenz,High,none,2026-09-24 08:30,1970-01-01,,,,,
 312993,276030001,ifo-business-expectations,EUR,DE,Ifo Konjunkturperspektiven,Medium,none,2026-09-24 08:30,2026-09-01,90.4,91.2,89.1,89.0,negative
 312998,276030002,ifo-current-business-situation,EUR,DE,Ifo aktuelles Geschäftsklima,Medium,none,2026-09-24 08:30,2026-09-01,89.5,88.3,88.5,,positive
