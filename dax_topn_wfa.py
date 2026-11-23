@@ -261,3 +261,39 @@ def build_combos(g_sl, g_tt, g_to, g_ma, g_fm, g_fill, g_adx, g_ed, g_xd) -> lis
                                            "ma_period": int(ma), "filter_mode": fm, "fill_mode": fill,
                                            "adx_thresh": float(adx), "entry_dow": int(ed), "exit_dow": int(xd)}})
     return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Einfacher Split-Test: Top-N nach In-Sample → unverändert OOS → Holdout
+# ════════════════════════════════════════════════════════════════════════════
+def split_topn(trades_by_key: dict, start: pd.Timestamp, oos_start: pd.Timestamp, hold: pd.Timestamp,
+               end: pd.Timestamp, opt_metric: str, min_trades: int, top_n: int) -> dict:
+    """IS = [start, oos_start) · OOS = [oos_start, hold) · Holdout = [hold, end].
+    Ranking ausschließlich nach IS. Für die Top-N werden OOS- und Holdout-Kennzahlen sowie die
+    Trade-Liste (Datum, Ret %) über den GESAMTEN Zeitraum zurückgegeben (für die Equity-Kurve)."""
+    end_x = end + pd.Timedelta(days=1)
+    y_is = max((oos_start - start).days / 365.25, 0.01)
+    y_oos = max((hold - oos_start).days / 365.25, 0.01)
+    y_h = max((end_x - hold).days / 365.25, 0.01)
+    all_is = []
+    for key, tr in trades_by_key.items():
+        r_is = _slice(tr, start, oos_start)
+        m_is = metrics_from_rets(r_is, y_is)
+        all_is.append({"key": key, "is": m_is, "eligible": len(r_is) >= int(min_trades)})
+    ranked = sorted([a for a in all_is if a["eligible"]],
+                    key=lambda a: (a["is"][opt_metric], a["is"]["n"]), reverse=True)
+    for i, a in enumerate(ranked):
+        a["rank"] = i + 1
+    top = []
+    for a in ranked[:int(top_n)]:
+        tr = trades_by_key[a["key"]]
+        t = tr[(tr["Zeit"] >= start) & (tr["Zeit"] < end_x)] if not tr.empty else tr
+        top.append({
+            "rank": a["rank"], "key": a["key"], "is": a["is"],
+            "oos": metrics_from_rets(_slice(tr, oos_start, hold), y_oos),
+            "hold": metrics_from_rets(_slice(tr, hold, end_x), y_h),
+            "trades": [[pd.Timestamp(z).isoformat(), float(r)] for z, r in zip(t["Zeit"], t["Ret %"])] if not t.empty else [],
+        })
+    all_rows = sorted(all_is, key=lambda a: a.get("rank", 10**9))
+    return {"start": start, "oos_start": oos_start, "hold": hold, "end": end, "top": top,
+            "all": [{"key": a["key"], "rank": a.get("rank"), "is": a["is"]} for a in all_rows]}

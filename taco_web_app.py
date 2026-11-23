@@ -7986,8 +7986,8 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
     # ════════════════════════════════════════════════════════════════════════
     # TABS — kompakte Seite: Ergebnis zuerst, alles andere dahinter
     # ════════════════════════════════════════════════════════════════════════
-    t_over, t_set, t_det, t_hold, t_mc, t_more = st.tabs(
-        ["📊 Überblick", "⚙️ Einstellungen", "🔍 Details", "🔒 Endtest", "🎲 Monte Carlo", "🧰 Weitere Analysen"])
+    t_over, t_set, t_det, t_mc, t_more = st.tabs(
+        ["📊 Überblick", "⚙️ Einstellungen", "🔍 Robustheit (rollierend)", "🎲 Monte Carlo", "🧰 Weitere Analysen"])
 
     with t_set:
         # ── Strategie-Parameter ──────────────────────────────────────────────
@@ -8147,7 +8147,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
         # ── IS-Top-N Walk-Forward & Endtest ────────────────────────────────
         st.markdown("---")
-        st.markdown("**IS-Top-N Walk-Forward & Endtest** (Haupttest im Tab 📊 Überblick)")
+        st.markdown("**Top-N-Test, Holdout & rollierender Robustheits-Check**")
         tn1, tn2, tn3, tn4 = st.columns(4)
         with tn1:
             _tn_mode_lbl = st.selectbox("IS-Fenster", ["Wachsend (ab Datenstart)", "Rollierend (feste Länge)"], key="dax_tn_mode",
@@ -8156,9 +8156,12 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             _tn_is = st.number_input("Erstes / festes IS-Fenster (Monate)", 12, 120, 36, step=6, key="dax_tn_is")
         with tn2:
             _tn_oos = st.number_input("OOS-Fenster (Monate)", 3, 24, 12, key="dax_tn_oos")
-            _tn_top = st.number_input("Top-N aus In-Sample", 3, 25, 10, key="dax_tn_top")
+            _tn_top = st.number_input("Top-N (beste In-Sample-Setups)", 3, 15, 10, key="dax_tn_top")
+            _tn_split = st.date_input("Out-of-Sample ab (Split-Test)", _dt.date(2018, 1, 1), key="dax_tn_split",
+                                      help="Split-Test im Überblick: In-Sample = Datenstart bis hier, "
+                                           "Out-of-Sample = hier bis Holdout, danach Holdout.")
         with tn3:
-            _tn_hold = st.date_input("Endtest (Holdout) ab", _dt.date(2024, 1, 1), key="dax_tn_hold",
+            _tn_hold = st.date_input("Holdout ab", _dt.date(2024, 1, 1), key="dax_tn_hold",
                                      help="Ab diesem Datum sieht die WFA KEINE Daten. Nur für den einmaligen Endtest.")
             _tn_fill_both = st.checkbox("Fill-Modus als Variante mittesten", True, key="dax_tn_fill",
                                         help="Montag Close UND Dienstag Open als zusätzliche Grid-Dimension.")
@@ -8314,7 +8317,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
                 "use_trail": True, "ma_period": int(ma_), "filter_mode": fm_, "fill_mode": fill_,
                 "adx_thresh": float(adx_), "entry_dow": int(ed_), "exit_dow": int(xd_)}
 
-    _tn_cfg_key = (f"v{_DAX_ENGINE_VERSION}|{_tn_mode}|{_tn_is}|{_tn_oos}|{_tn_top}|{_tn_hold}|{_tn_fills}|{_tn_blocks}|"
+    _tn_cfg_key = (f"v{_DAX_ENGINE_VERSION}|{_tn_split}|{_tn_mode}|{_tn_is}|{_tn_oos}|{_tn_top}|{_tn_hold}|{_tn_fills}|{_tn_blocks}|"
                    f"{opt_metric}|{min_trades}|{g_sl}|{g_tt}|{g_to}|{g_ma}|{g_fm}|{_tn_adx}|{g_entry_dows}|{g_exit_dows}|"
                    f"{ma_type}|{use_adx}|{spread_pts}|{commission_pct}|{swap_pts_per_night}|{risk_pct}|{sizing_ref_pct}|"
                    f"{use_vol_target}|{dax_start}")
@@ -8328,9 +8331,14 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 
     def _tn_compute() -> None:
         _tn_prog = st.progress(0.0, text="Backtest aller Varianten …")
-        _tbk = _topn.run_all_combos(_df_pre, base_params, _tn_combos, _momi_backtest_engine,
+        # EIN Backtest je Variante über den GESAMTEN Zeitraum — IS/OOS/Holdout entstehen durch Zerschneiden
+        # der Trade-Liste nach Datum (Signale nutzen nur Vergangenheit → kein Leck aus dem Holdout).
+        _tbk = _topn.run_all_combos(df_raw, base_params, _tn_combos, _momi_backtest_engine,
                                     progress_cb=lambda f, t: _tn_prog.progress(min(0.85, f * 0.85), text=t))
-        _tn_prog.progress(0.88, text="Walk-Forward: IS-Ranking → Top-N → OOS …")
+        _tn_prog.progress(0.86, text="Split-Test: Top-N nach In-Sample → OOS → Holdout …")
+        _split = _topn.split_topn(_tbk, df_raw.index[0], pd.Timestamp(_tn_split), _tn_hold_ts, df_raw.index[-1],
+                                  opt_metric, int(min_trades), int(_tn_top))
+        _tn_prog.progress(0.88, text="Rollierender Check: IS-Ranking → Top-N → OOS …")
         _wf = _topn.topn_walk_forward(_tbk, _tn_folds, opt_metric, int(min_trades), int(_tn_top))
         _agg = _topn.aggregate_setups(_wf["details"], float(_tn_oos) / 12.0)
         _tn_prog.progress(0.94, text="Overfitting-Check (PBO + Deflated Sharpe) …")
@@ -8362,6 +8370,7 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
             "pbo": {"pbo": _pbo["pbo"], "n_splits": _pbo["n_splits"], "logits": [float(x) for x in _pbo["logits"]]},
             "dsr": {**_dsr, "best_key": _best_full_key}, "hold": str(_tn_hold), "risk_pct": float(risk_pct),
             "opt_metric": opt_metric, "top_n": int(_tn_top), "mode": _tn_mode_lbl, "oos_months": int(_tn_oos),
+            "split": _split,
         }
         st.session_state["dax_topn_result"] = _res
         _ok_s, _why_s = _save_wfa_result("dax_topn", _res)
@@ -8372,86 +8381,166 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
         return v is not None and not (isinstance(v, float) and math.isnan(v))
 
     # ════════════════════════════ 📊 ÜBERBLICK ════════════════════════════
+    _DN = {0: "Mo", 1: "Di", 2: "Mi", 3: "Do", 4: "Fr", 5: "Sa", 6: "So"}
+
+    def _tn_param_cols(k) -> dict:
+        """Exakte Parameter eines Setups als Tabellen-Spalten."""
+        sl_, tt_, to_, ma_, fm_, fill_, adx_, ed_, xd_ = k
+        _entry_txt = f"{_DN.get(int(ed_), '?')} Close" if fill_ == "close" else f"{_DN.get((int(ed_) + 1) % 7, '?')} Open"
+        cols = {"Entry": _entry_txt, "Exit": f"{_DN.get(int(xd_), '?')} Close",
+                "Stop-Loss": _fmt_sl(sl_), "Trail-Trigger": _fmt_tt(tt_), "Trail-Abstand": _fmt_tt(to_),
+                "MA-Filter": "kein" if fm_ == _topn.NO_FILTER else f"{ma_type} {int(ma_)} · {fm_}"}
+        if use_adx:
+            cols["ADX >"] = f"{adx_:g}"
+        return cols
+
     with t_over:
         st.caption(f"**Aktuelle Einstellungen:** {entry_day[:2]}→{exit_day[:2]} · "
                    f"SL {'Raster ' + ', '.join(_fmt_sl(v) for v in g_sl) if use_sl else 'aus'} · "
                    f"Trail {'Raster' if use_trail else 'aus'} · Spread {spread_pts:g} Pkt · Risiko {risk_pct:g} % · "
-                   f"{len(_tn_combos)} Varianten · {len(_tn_folds)} Folds · Endtest ab {_tn_hold_ts.date()} "
+                   f"{len(_tn_combos)} Varianten · Top-{int(_tn_top)} · OOS ab {_tn_split} · Holdout ab {_tn_hold_ts.date()} "
                    f"— ändern unter ⚙️ Einstellungen")
         _c_btn, _c_info = st.columns([1, 2])
         with _c_btn:
             _tn_run = st.button("▶ Test starten", type="primary", key="dax_tn_run", use_container_width=True,
-                                disabled=len(_tn_folds) < 2 or not _tn_combos)
+                                disabled=len(_tn_folds) < 2 or not _tn_combos or pd.Timestamp(_tn_split) >= _tn_hold_ts)
         with _c_info:
-            st.caption("Alle Varianten werden nur In-Sample bewertet, die Top-N unverändert Out-of-Sample getestet. "
-                       "Dauer: ca. 1 Minute je 1.000 Varianten.")
-        if len(_tn_folds) < 2:
-            st.warning("Zu wenig Folds — Endtest-Datum später setzen oder IS/OOS-Fenster verkleinern (⚙️ Einstellungen).")
+            st.caption("Alle Varianten werden nur In-Sample bewertet; die besten Top-N laufen unverändert "
+                       "Out-of-Sample und im Holdout. Dauer: ca. 1 Minute je 1.000 Varianten.")
+        if pd.Timestamp(_tn_split) >= _tn_hold_ts:
+            st.warning("„Out-of-Sample ab“ muss vor „Holdout ab“ liegen (⚙️ Einstellungen).")
         if _tn_run:
             _tn_compute()
 
         _tnr = st.session_state.get("dax_topn_result")
-        _tf = [f for f in _tnr["folds"] if not f.get("empty")] if _tnr else []
-        if _tnr is None:
+        if _tnr is None or "split" not in _tnr:
             st.info("Noch kein Ergebnis — **▶ Test starten** klicken.")
-        elif not _tf:
-            st.error("Keine Folds mit genug IS-Trades — Min. IS-Trades senken oder IS-Fenster verlängern.")
         else:
             if _tnr.get("cfg_key") != _tn_cfg_key:
                 st.warning(f"Angezeigt: Ergebnis vom {_tnr.get('created', '?')} mit **anderen Einstellungen** — "
                            f"▶ Test starten, um mit den aktuellen neu zu rechnen.")
-            _proc_rets = np.concatenate([np.asarray(f["winner_oos_rets"], dtype=float) for f in _tf])
-            _oos_years = len(_tf) * _tnr["oos_months"] / 12.0
-            _pm = _topn.metrics_from_rets(_proc_rets, _oos_years)
-            _cagr = ((1 + _pm["total_ret"] / 100) ** (1 / _oos_years) - 1) * 100 if _oos_years > 0 else 0
-            _n_pos = sum(f["winner_oos"]["total_ret"] > 0 for f in _tf)
-            _pbo_v, _dsr_v = _tnr["pbo"]["pbo"], _tnr["dsr"].get("dsr")
+            _sp = _tnr["split"]
+            _s0, _s1, _s2, _s3 = (pd.Timestamp(_sp[k]) for k in ("start", "oos_start", "hold", "end"))
 
-            # ── Ampel ──
-            _ok_pf, _ok_folds = _pm["pf"] >= 1.15, _n_pos / len(_tf) >= 2 / 3
-            _ok_pbo = (not _is_num(_pbo_v)) or _pbo_v < 0.3
-            _ok_dsr = _is_num(_dsr_v) and _dsr_v >= 0.95
-            if _ok_pf and _ok_folds and _ok_pbo and _ok_dsr:
-                _vc, _vt, _vs = "#22c55e", "🟢 Robuster Edge", "Hält Out-of-Sample, kein Overfitting, statistisch signifikant."
-            elif _pm["pf"] >= 1.05 and _n_pos / len(_tf) >= 0.5 and ((not _is_num(_pbo_v)) or _pbo_v < 0.5):
-                _vc, _vt = "#f0c040", "🟡 Schwacher Edge"
-                _vs = "Out-of-Sample positiv, aber " + ("nicht signifikant nach Korrektur für die vielen getesteten Varianten"
-                                                      if not _ok_dsr else "knapp") + " — nur mit kleinem Risiko / Forward-Test."
-            else:
-                _vc, _vt, _vs = "#ef5350", "🔴 Kein belastbarer Edge", "Out-of-Sample nicht stabil profitabel."
-            _best_lbl = _tn_label(_tnr["agg"][0]["key"]) if _tnr["agg"] else "–"
-            st.markdown(
-                f'<div style="border:2px solid {_vc};background:{_vc}18;border-radius:12px;padding:14px 20px;margin:6px 0 14px 0;">'
-                f'<div style="font-size:1.35rem;font-weight:800;color:{_vc};">{_vt}</div>'
-                f'<div style="color:#cbd5e1;margin-top:2px;">{_vs}</div>'
-                f'<div style="color:#94a3b8;font-size:.85rem;margin-top:8px;">Robustestes Setup (am häufigsten in den IS-Top-{_tnr["top_n"]}): '
-                f'<b style="color:#e2e8f0;">{_best_lbl}</b></div></div>', unsafe_allow_html=True)
+            # ══ 1 · Top-N: In-Sample → Out-of-Sample → Holdout ══
+            st.markdown(f"### Top-{len(_sp['top'])} Setups: In-Sample → Out-of-Sample → Holdout")
+            st.caption(f"🟦 **In-Sample** {_s0.date()} – {_s1.date()} (nur hier wird sortiert, nach "
+                       f"{ {'pf':'Profit Factor','sharpe':'Sharpe','wr':'Win-Rate'}[_tnr['opt_metric']] }) · "
+                       f"🟩 **Out-of-Sample** {_s1.date()} – {_s2.date()} · 🟧 **Holdout** {_s2.date()} – {_s3.date()} · "
+                       f"{_tnr['n_variants']} Varianten getestet · Ergebnis vom {_tnr.get('created', '?')}")
 
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Profit Factor (OOS)", f"{_pm['pf']:.2f}", help="Nur blinde Out-of-Sample-Trades des jeweiligen IS-Siegers.")
-            k2.metric("Rendite p.a. (OOS)", f"{_cagr:+.1f}%", help=f"Bei {risk_pct:g} % Risiko pro Trade.")
-            k3.metric("Max Drawdown (OOS)", f"{_pm['max_dd']:.1f}%")
-            k4.metric("Profitable Jahre (OOS)", f"{_n_pos}/{len(_tf)}")
+            _show_h = st.checkbox("🟧 Holdout-Ergebnisse anzeigen", key="dax_split_show_hold",
+                                  help="Der Holdout ist dein letzter unberührter Test. Wählst du anhand dieser Spalten "
+                                       "ein Setup aus oder änderst danach Regeln, ist er kein echter Test mehr.")
+            if _show_h and not st.session_state.get("dax_split_hold_logged") == _tnr.get("created"):
+                st.session_state["dax_split_hold_logged"] = _tnr.get("created")
+                if "dax_holdout_log" not in st.session_state:
+                    st.session_state["dax_holdout_log"] = (_load_wfa_result("dax_holdout_log") or {}).get("runs", [])
+                st.session_state["dax_holdout_log"].append(
+                    {"ts": str(pd.Timestamp.now(tz="Europe/Berlin").strftime("%d.%m.%Y %H:%M")),
+                     "hold": str(_s2.date()), "setup": f"Top-{len(_sp['top'])} angezeigt"})
+                _save_wfa_result("dax_holdout_log", {"runs": st.session_state["dax_holdout_log"]})
+            _n_views = sum(1 for h in st.session_state.get("dax_holdout_log", []) if h.get("hold") == str(_s2.date()))
+            if _show_h and _n_views > 1:
+                st.caption(f"⚠️ Holdout ab {_s2.date()} wurde bereits {_n_views}× angesehen.")
 
-            _eq = np.cumprod(1 + _proc_rets / 100) * 10_000
-            _fig_tn = go.Figure(go.Scatter(y=_eq, mode="lines", line=dict(color=_vc, width=2), fill="tozeroy",
-                                           fillcolor="rgba(148,163,184,0.06)"))
-            _fig_tn.add_hline(y=10_000, line_dash="dash", line_color="#64748b", line_width=1)
-            _fig_tn.update_layout(title=f"Out-of-Sample-Equity ({len(_proc_rets)} blinde Trades, {pd.Timestamp(_tf[0]['oos_start']).year}–{_tnr['hold'][:4]})",
-                                  height=260, template="plotly_dark", showlegend=False,
-                                  xaxis_title="Trade #", yaxis=dict(range=[min(_eq.min(), 10_000) * 0.97, _eq.max() * 1.02]),
-                                  margin=dict(t=40, b=30, l=50, r=10))
-            st.plotly_chart(_fig_tn, use_container_width=True)
+            _rows = []
+            for t in _sp["top"]:
+                r = {"Rang": t["rank"], **_tn_param_cols(t["key"]),
+                     "IS PF": round(t["is"]["pf"], 2), "IS Trades": t["is"]["n"], "IS Rend. %": round(t["is"]["total_ret"], 1),
+                     "OOS PF": round(t["oos"]["pf"], 2), "OOS Trades": t["oos"]["n"],
+                     "OOS Rend. %": round(t["oos"]["total_ret"], 1), "OOS MaxDD %": round(t["oos"]["max_dd"], 1)}
+                if _show_h:
+                    r.update({"Holdout PF": round(t["hold"]["pf"], 2), "Holdout Trades": t["hold"]["n"],
+                              "Holdout Rend. %": round(t["hold"]["total_ret"], 1)})
+                _rows.append(r)
+            _top_df = pd.DataFrame(_rows)
+            _pf_cols = [c for c in ("IS PF", "OOS PF", "Holdout PF") if c in _top_df.columns]
+            st.dataframe(_top_df.style.map(
+                lambda v: ("color:#22c55e" if v >= 1.1 else ("color:#f0c040" if v >= 1.0 else "color:#ef5350"))
+                if isinstance(v, (int, float)) else "", subset=_pf_cols),
+                use_container_width=True, hide_index=True)
 
-            if _tnr["agg"]:
-                st.markdown(f"**Top-5 Setups** (am häufigsten in den IS-Top-{_tnr['top_n']}, OOS = nur blinde Folds)")
-                st.dataframe(pd.DataFrame([{
-                    "Setup": _tn_label(r["key"]), f"× Top-{_tnr['top_n']}": f"{r['n_top']}/{len(_tf)}",
-                    "OOS PF": round(r["oos_pf"], 2), "OOS Rendite %": round(r["oos_total_ret"], 1),
-                    "OOS Max DD %": round(r["oos_max_dd"], 1),
-                } for r in _tnr["agg"][:5]]), use_container_width=True, hide_index=True)
-            st.caption(f"Ergebnis vom {_tnr.get('created', '?')} · Details & Overfitting-Check → 🔍 Details · "
-                       f"Endtest → 🔒 Endtest · Prop-Challenge → 🎲 Monte Carlo")
+            # ── Equity-Kurve IS → OOS → Holdout ──
+            ec1, ec2 = st.columns([3, 1])
+            with ec1:
+                _eq_sel = st.selectbox("Equity-Kurve für", range(len(_sp["top"])), key="dax_split_eq_sel",
+                                       format_func=lambda i: f"Rang {_sp['top'][i]['rank']} · {_tn_label(_sp['top'][i]['key'])}")
+            with ec2:
+                _eq_all = st.checkbox(f"Alle Top-{len(_sp['top'])} einblenden", key="dax_split_eq_all")
+            _fig_sp = go.Figure()
+            _y_min, _y_max = 10_000, 10_000
+            for _i, t in enumerate(_sp["top"]):
+                if not (_eq_all or _i == _eq_sel) or not t["trades"]:
+                    continue
+                _d = pd.to_datetime([x[0] for x in t["trades"]])
+                _r = np.array([x[1] for x in t["trades"]], dtype=float)
+                if not _show_h:
+                    _m = _d < _s2
+                    _d, _r = _d[_m], _r[_m]
+                _e = np.cumprod(1 + _r / 100) * 10_000
+                _d = _d.insert(0, _s0)
+                _e = np.insert(_e, 0, 10_000)
+                _y_min, _y_max = min(_y_min, _e.min()), max(_y_max, _e.max())
+                _sel = _i == _eq_sel
+                _fig_sp.add_trace(go.Scatter(x=_d, y=_e, mode="lines", name=f"Rang {t['rank']}",
+                                             line=dict(width=2.6 if _sel else 1, color="#f8fafc" if _sel else None),
+                                             opacity=1.0 if _sel else 0.45, line_shape="hv"))
+            for _a, _b, _c, _lbl in [(_s0, _s1, "rgba(59,130,246,0.10)", "In-Sample"),
+                                     (_s1, _s2, "rgba(34,197,94,0.10)", "Out-of-Sample"),
+                                     (_s2, _s3, "rgba(249,115,22,0.12)" if _show_h else "rgba(100,116,139,0.10)",
+                                      "Holdout" if _show_h else "Holdout (verdeckt)")]:
+                _fig_sp.add_vrect(x0=_a, x1=_b, fillcolor=_c, line_width=0, layer="below",
+                                  annotation_text=_lbl, annotation_position="top left",
+                                  annotation_font=dict(size=11, color="#94a3b8"))
+            _fig_sp.add_hline(y=10_000, line_dash="dash", line_color="#64748b", line_width=1)
+            _fig_sp.update_layout(height=340, template="plotly_dark", showlegend=_eq_all,
+                                  yaxis=dict(title="Kapital (Start 10.000)", range=[_y_min * 0.97, _y_max * 1.03]),
+                                  margin=dict(t=30, b=30, l=60, r=10), legend=dict(orientation="h", y=-0.15))
+            st.plotly_chart(_fig_sp, use_container_width=True)
+
+            with st.expander(f"📋 Alle {_tnr['n_variants']} getesteten Varianten (In-Sample-Rangliste)"):
+                _all_df = pd.DataFrame([{
+                    "IS-Rang": a["rank"] if a["rank"] is not None else "– (zu wenig Trades)", **_tn_param_cols(a["key"]),
+                    "IS PF": round(a["is"]["pf"], 2), "IS Trades": a["is"]["n"], "IS WR %": a["is"]["wr"],
+                    "IS Rend. %": round(a["is"]["total_ret"], 1), "IS MaxDD %": round(a["is"]["max_dd"], 1),
+                } for a in _sp["all"]])
+                st.dataframe(_all_df, use_container_width=True, hide_index=True, height=360)
+                st.download_button("⬇️ Alle Varianten als CSV", _all_df.to_csv(index=False).encode(),
+                                   file_name="dax_alle_varianten_is.csv", mime="text/csv", key="dax_split_dl")
+
+            # ══ 2 · Robustheits-Check (rollierend) — Ampel ══
+            _tf = [f for f in _tnr["folds"] if not f.get("empty")]
+            if _tf:
+                _proc_rets = np.concatenate([np.asarray(f["winner_oos_rets"], dtype=float) for f in _tf])
+                _oos_years = len(_tf) * _tnr["oos_months"] / 12.0
+                _pm = _topn.metrics_from_rets(_proc_rets, _oos_years)
+                _cagr = ((1 + _pm["total_ret"] / 100) ** (1 / _oos_years) - 1) * 100 if _oos_years > 0 else 0
+                _n_pos = sum(f["winner_oos"]["total_ret"] > 0 for f in _tf)
+                _pbo_v, _dsr_v = _tnr["pbo"]["pbo"], _tnr["dsr"].get("dsr")
+                _ok_pf, _ok_folds = _pm["pf"] >= 1.15, _n_pos / len(_tf) >= 2 / 3
+                _ok_pbo = (not _is_num(_pbo_v)) or _pbo_v < 0.3
+                _ok_dsr = _is_num(_dsr_v) and _dsr_v >= 0.95
+                if _ok_pf and _ok_folds and _ok_pbo and _ok_dsr:
+                    _vc, _vt, _vs = "#22c55e", "🟢 Robuster Edge", "Hält Out-of-Sample, kein Overfitting, statistisch signifikant."
+                elif _pm["pf"] >= 1.05 and _n_pos / len(_tf) >= 0.5 and ((not _is_num(_pbo_v)) or _pbo_v < 0.5):
+                    _vc, _vt = "#f0c040", "🟡 Schwacher Edge"
+                    _vs = ("OOS positiv, aber nach Korrektur für die vielen getesteten Varianten nicht signifikant"
+                           if not _ok_dsr else "OOS positiv, aber knapp") + " — nur mit kleinem Risiko / Forward-Test."
+                else:
+                    _vc, _vt, _vs = "#ef5350", "🔴 Kein belastbarer Edge", "Out-of-Sample nicht stabil profitabel."
+                st.markdown("### Robustheits-Check (rollierend, ohne Holdout)")
+                st.markdown(
+                    f'<div style="border:2px solid {_vc};background:{_vc}18;border-radius:12px;padding:12px 18px;margin:4px 0 10px 0;">'
+                    f'<span style="font-size:1.2rem;font-weight:800;color:{_vc};">{_vt}</span>'
+                    f'<span style="color:#cbd5e1;margin-left:12px;">{_vs}</span></div>', unsafe_allow_html=True)
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("PF (OOS, jährlich neu gewählt)", f"{_pm['pf']:.2f}",
+                          help="Jedes Jahr wird der IS-Sieger neu bestimmt und im Folgejahr blind gehandelt.")
+                k2.metric("Rendite p.a. (OOS)", f"{_cagr:+.1f}%")
+                k3.metric("Max Drawdown (OOS)", f"{_pm['max_dd']:.1f}%")
+                k4.metric("Profitable Jahre", f"{_n_pos}/{len(_tf)}")
+                st.caption("Details (je Jahr, PBO, Deflated Sharpe) → Tab 🔍 Robustheit · Prop-Challenge → 🎲 Monte Carlo")
 
     # ════════════════════════════ 🔍 DETAILS ════════════════════════════
     with t_det:
@@ -8518,52 +8607,6 @@ Fold 2: [IS-Fenster optimieren] → [OOS-Fenster blind testen]
 4. **Überblick** zeigt das Verfahren „immer den IS-Sieger handeln“; die **Rangliste** zeigt, welche Setups immer
    wieder vorne landen — deren OOS-Zahlen stammen nur aus Folds, in denen sie per IS gewählt wurden.
                 """)
-
-    # ════════════════════════════ 🔒 ENDTEST ════════════════════════════
-    with t_hold:
-        _tnr = st.session_state.get("dax_topn_result")
-        if not _tnr or not _tnr.get("agg"):
-            st.info("Erst den Test im Tab 📊 Überblick starten.")
-        else:
-            st.caption(f"Endtest-Zeitraum: **{_tnr['hold']} → {df_raw.index[-1].date()}** — war in keinem Test enthalten. "
-                       f"Nur **einmal** ausführen, wenn das Setup final feststeht; jeder weitere Blick + Anpassung macht ihn wertlos.")
-            if "dax_holdout_log" not in st.session_state:
-                st.session_state["dax_holdout_log"] = (_load_wfa_result("dax_holdout_log") or {}).get("runs", [])
-            _hlog = st.session_state["dax_holdout_log"]
-            _hold_this = [h for h in _hlog if h.get("hold") == _tnr["hold"]]
-            if _hold_this:
-                st.warning(f"Dieser Endtest wurde bereits **{len(_hold_this)}×** angesehen "
-                           f"(zuletzt {_hold_this[-1]['ts']}: {_hold_this[-1]['setup']}).")
-            _cand = [r["key"] for r in _tnr["agg"][:15]]
-            _sel = st.selectbox("Finales Setup", range(len(_cand)), format_func=lambda i: f"#{i+1} · {_tn_label(_cand[i])}",
-                                key="dax_tn_hold_sel")
-            _unlock = st.checkbox("Setup ist final — ich passe es nach dem Endtest nicht mehr an", key="dax_tn_unlock")
-            if st.button("🔒 Endtest ausführen", disabled=not _unlock, key="dax_tn_hold_run", type="primary"):
-                _hk = _cand[_sel]
-                _tr_h, _ = _momi_backtest_engine(df_raw.copy(), _tn_params(_hk))
-                _tr_h = _tr_h[_tr_h["Zeit"] >= pd.Timestamp(_tnr["hold"])] if not _tr_h.empty else _tr_h
-                _yrs_h = max((df_raw.index[-1] - pd.Timestamp(_tnr["hold"])).days / 365.25, 0.01)
-                _mh = _topn.metrics_from_rets(_tr_h["Ret %"].to_numpy() if not _tr_h.empty else [], _yrs_h)
-                _entry = {"ts": str(pd.Timestamp.now(tz="Europe/Berlin").strftime("%d.%m.%Y %H:%M")),
-                          "hold": _tnr["hold"], "setup": _tn_label(_hk), "key": _hk, "metrics": _mh}
-                _hlog.append(_entry)
-                _save_wfa_result("dax_holdout_log", {"runs": _hlog})
-                st.session_state["dax_holdout_last"] = {"entry": _entry, "oos": _tnr["agg"][_sel]}
-            _hl = st.session_state.get("dax_holdout_last")
-            if _hl is not None:
-                _m, _o = _hl["entry"]["metrics"], _hl["oos"]
-                st.markdown(f"**Ergebnis** ({_hl['entry']['ts']}) · {_hl['entry']['setup']}")
-                h1, h2, h3, h4 = st.columns(4)
-                h1.metric("PF Endtest", f"{_m['pf']:.2f}", f"{_m['pf'] - _o['oos_pf']:+.2f} vs. WFA-OOS")
-                h2.metric("Rendite Endtest", f"{_m['total_ret']:+.1f}%")
-                h3.metric("Max DD Endtest", f"{_m['max_dd']:.1f}%")
-                h4.metric("Trades", _m["n"])
-                if _m["n"] < 20:
-                    st.caption("ℹ️ Unter 20 Trades — nur grob aussagekräftig.")
-                elif _m["pf"] >= 1.0 and _m["pf"] >= 0.7 * _o["oos_pf"]:
-                    st.success("✅ Endtest bestätigt die Out-of-Sample-Performance.")
-                else:
-                    st.error("❌ Endtest deutlich schlechter als Out-of-Sample — Edge im neuesten Zeitraum nicht bestätigt.")
 
     with t_more:
         st.markdown("---")
@@ -9678,7 +9721,7 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
         _mc_source_options = []
         # IS-Top-N Walk-Forward (saubere Auswahl) — unabhängig vom Fill-Radio, der Fill-Modus ist dort Teil des Setups
         _mc_tn = st.session_state.get("dax_topn_result")
-        _mc_tn_proc, _mc_tn_best = None, None
+        _mc_tn_proc, _mc_tn_best, _mc_sp_df = None, None, None
         if _mc_tn is not None:
             _tn_f_ok = [f for f in _mc_tn["folds"] if not f.get("empty")]
             _tn_r = np.concatenate([np.asarray(f["winner_oos_rets"], dtype=float) for f in _tn_f_ok]) if _tn_f_ok else np.array([])
@@ -9686,6 +9729,13 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
             def _tn_df(_r):
                 _r = np.asarray(_r, dtype=float)
                 return pd.DataFrame({"PnL $": _r * 100.0, "Ret %": _r, "Risiko %": _tn_risk})
+            _mc_sp_top = (_mc_tn.get("split") or {}).get("top") or []
+            if _mc_sp_top and _mc_sp_top[0]["trades"]:
+                _sp_oos0, _sp_h0 = pd.Timestamp(_mc_tn["split"]["oos_start"]), pd.Timestamp(_mc_tn["split"]["hold"])
+                _sp_r = [x[1] for x in _mc_sp_top[0]["trades"] if _sp_oos0 <= pd.Timestamp(x[0]) < _sp_h0]
+                if _sp_r:
+                    _mc_sp_df = (_tn_df(_sp_r), _tn_label(_mc_sp_top[0]["key"]))
+                    _mc_source_options.append("Top-N-Split: Rang-1-Setup — nur seine OOS-Trades")
             if len(_tn_r):
                 _mc_tn_proc = _tn_df(_tn_r)
                 _mc_source_options.append("IS-Top-N: immer den IS-Sieger handeln — OOS-Trades (empfohlen)")
@@ -9720,7 +9770,10 @@ Zeigt dir wie wahrscheinlich es ist, eine Prop-Firm Challenge zu bestehen — be
 
             _base_for_mc = {**base_params, "fill_mode": _mc_fm}
 
-            if mc_source == "IS-Top-N: immer den IS-Sieger handeln — OOS-Trades (empfohlen)":
+            if mc_source == "Top-N-Split: Rang-1-Setup — nur seine OOS-Trades":
+                mc_trades_raw = _mc_sp_df[0]
+                _mc_source_label = f"Top-N-Split, Rang 1 nach In-Sample, nur Out-of-Sample-Trades — {_mc_sp_df[1]}"
+            elif mc_source == "IS-Top-N: immer den IS-Sieger handeln — OOS-Trades (empfohlen)":
                 mc_trades_raw = _mc_tn_proc
                 _mc_source_label = "IS-Top-N-Verfahren: OOS-Trades des jeweiligen IS-Siegers (blind, Fill-Modus je Setup)"
             elif mc_source == "IS-Top-N: häufigstes Top-Setup — seine OOS-Trades":
