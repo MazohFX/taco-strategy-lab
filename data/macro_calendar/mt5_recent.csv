@@ -1,12 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-287367,36520001,cftc-aud-non-commercial-net-positions,AUD,AU,CFTC AUD nichtkommerzielle Nettopositionen,Medium,position,2026-09-25 19:30,2026-09-22,-46.8,,-38.9,,
-287508,392520001,cftc-jpy-non-commercial-net-positions,JPY,JP,CFTC JPY nichtkommerzielle Nettopositionen,Medium,position,2026-09-25 19:30,2026-09-22,72.0,,120.4,,
-287743,826520001,cftc-gbp-non-commercial-net-positions,GBP,GB,CFTC GBP nichtkommerzielle Nettopositionen,Medium,position,2026-09-25 19:30,2026-09-22,-82.6,,-58.7,,
-287884,840520003,cftc-gold-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-09-25 19:30,2026-09-22,225.9,,230.3,,
-287931,840520004,cftc-crude-oil-non-commercial-net-positions,USD,US,CFTC Rohöl nichtkommerzielle Nettopositionen,Medium,position,2026-09-25 19:30,2026-09-22,141.1,,135.9,,
-287978,840520005,cftc-sp-500-non-commercial-net-positions,USD,US,CFTC Gold nichtkommerzielle Nettopositionen,Medium,position,2026-09-25 19:30,2026-09-22,-133.2,,-100.5,,
-288260,840520011,cftc-nasdaq-100-non-commercial-net-positions,USD,US,CFTC Nasdaq 100 Nichtkommerzielle Nettopositionen,Medium,position,2026-09-25 19:30,2026-09-22,56.2,,33.7,,
-288307,999520001,cftc-eur-non-commercial-net-positions,EUR,EU,CFTC EUR nichtkommerzielle Nettopositionen,Medium,position,2026-09-25 19:30,2026-09-22,-52.3,,-27.0,,
 264448,392060019,boj-monetary-policy-meeting-minutes,JPY,JP,BoJ Protokoll der geldpolitischen Sitzung,Medium,none,2026-09-27 23:50,1970-01-01,,,,,
 321073,999010035,ecb-executive-board-member-elderson-speech,EUR,EU,EZB Direktoriumsmitglied Elderson spricht,Medium,none,2026-09-28 09:30,1970-01-01,,,,,
 320549,826020025,boe-deputy-governor-markets-and-banking-ramsden-speech,GBP,GB,Rede des stellvertretenden Gouverneurs für Märkte und Banken der BoE Ramsden,Medium,none,2026-09-28 09:40,1970-01-01,,,,,
