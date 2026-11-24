@@ -1,5 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-320867,826020032,boe-governor-bailey-speech,GBP,GB,BoE Gouverneur Bailey spricht,High,none,2026-09-25 09:15,1970-01-01,,,,,
 270319,840020013,durable-goods-orders,USD,US,Auftragseingänge für langlebige Güter m/m,High,percent,2026-09-25 12:30,2026-08-01,0.0,-3.4,1.1,0.9,positive
 270331,840020014,durable-goods-orders-ex-transportation,USD,US,Kern Auftragseingänge langlebiger Güter m/m,Medium,percent,2026-09-25 12:30,2026-08-01,0.3,0.9,0.4,0.7,negative
 268714,840210001,michigan-consumer-sentiment,USD,US,Michigan Konsumklima,Medium,none,2026-09-25 14:00,2026-09-01,48.1,47.8,47.8,,positive
