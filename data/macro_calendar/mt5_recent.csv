@@ -1,6 +1,4 @@
 value_id,event_id,event_code,currency,country,event,importance,unit,time_utc,period,actual,forecast,previous,revised_previous,impact
-314654,724010005,gdp-qq,EUR,ES,Bruttoinlandsprodukt q/q,Medium,percent,2026-09-25 07:00,2026-04-01,0.7,0.7,0.7,,
-314656,724010006,gdp-yy,EUR,ES,Bruttoinlandsprodukt y/y,Low,percent,2026-09-25 07:00,2026-04-01,2.6,2.7,2.7,,negative
 278382,999010019,ecb-households-loans-yy,EUR,EU,EZB Kredite an private Haushalte y/y,Medium,percent,2026-09-25 08:00,2026-08-01,3.1,3.0,3.1,,positive
 320867,826020032,boe-governor-bailey-speech,GBP,GB,BoE Gouverneur Bailey spricht,High,none,2026-09-25 09:15,1970-01-01,,,,,
 270319,840020013,durable-goods-orders,USD,US,Auftragseingänge für langlebige Güter m/m,High,percent,2026-09-25 12:30,2026-08-01,0.0,-3.4,1.1,0.9,positive
