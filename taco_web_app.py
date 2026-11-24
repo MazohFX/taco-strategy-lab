@@ -13144,7 +13144,7 @@ def render_extra_fib618_bos() -> None:
     )
 
 
-test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "DAX Freitag Short", "Extra: Makro & Sentiment", "Extra: Makro & Sentiment (alt)", "Makro + Technik", "Extra: COT Commercials vs. Spekulanten", "Extra: Fib 0.618 + BOS Backtest", "BOS + Fib + Opens Setup", "⏰ Opening Range Strategie", "📓 Trading-Journal"], horizontal=False, label_visibility="collapsed")
+test_mode = st.sidebar.radio("", ["Manual Backtest", "TACO Edge Discovery", "Cycle Scanner", "SL Scanner", "TACO Radar", "Walk Forward Analysis", "Seasonality Lab", "Seasonality Muster", "Muster Analyse", "Yen Mo-Mi Strategie", "Crypto WeekdayMA WFA", "DAX EMA Strategie", "DAX Freitag Short", "Zig Zag Strategie Test", "Extra: Makro & Sentiment", "Extra: Makro & Sentiment (alt)", "Makro + Technik", "Extra: COT Commercials vs. Spekulanten", "Extra: Fib 0.618 + BOS Backtest", "BOS + Fib + Opens Setup", "⏰ Opening Range Strategie", "📓 Trading-Journal"], horizontal=False, label_visibility="collapsed")
 
 if test_mode == "⏰ Opening Range Strategie":
     from taco_orb import render_orb_strategy
@@ -13202,6 +13202,11 @@ if test_mode == "DAX EMA Strategie":
 
 if test_mode == "DAX Freitag Short":
     render_dax_friday_short(save_fn=_save_wfa_result, load_fn=_load_wfa_result, evaluate_edge_fn=evaluate_edge)
+    st.stop()
+
+if test_mode == "Zig Zag Strategie Test":
+    from zigzag_strategy import render_zigzag_strategy
+    render_zigzag_strategy(save_fn=_save_wfa_result, load_fn=_load_wfa_result)
     st.stop()
 
 def _macro_dashboard_deps() -> dict:
