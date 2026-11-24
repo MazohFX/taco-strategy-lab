@@ -64,10 +64,22 @@ def available_symbols(tf: str) -> list[str]:
     if tf == "D1":
         files = sorted(DATA_D1.glob("*.csv"))
         return [f.stem for f in files]
+    finer = {"H4": ["H4", "H1", "M15"], "H1": ["H1", "M15"], "M15": ["M15"]}[tf]
     out = set()
-    for f in DATA_ID.glob(f"*_{tf}.csv*"):
-        out.add(f.name.split("_")[0])
+    for t in finer:            # fehlt z.B. XAUUSD_H4, wird aus M15 zusammengefasst
+        for f in DATA_ID.glob(f"*_{t}.csv*"):
+            out.add(f.name.split("_")[0])
     return sorted(s for s in out if len(s) == 6 and s.isalpha())
+
+
+def _read_intraday(symbol: str, tf: str) -> pd.DataFrame | None:
+    for ext in (".csv.gz", ".csv"):
+        p = DATA_ID / f"{symbol}_{tf}{ext}"
+        if p.exists():
+            df = pd.read_csv(p)
+            df.index = pd.to_datetime(df["datetime"])
+            return df[["open", "high", "low", "close"]].astype(float)
+    return None
 
 
 def load_bars(symbol: str, tf: str) -> pd.DataFrame:
@@ -79,13 +91,16 @@ def load_bars(symbol: str, tf: str) -> pd.DataFrame:
         df = pd.read_csv(p)
         df.index = pd.to_datetime(df["date"], format="%Y.%m.%d")
     else:
-        p = DATA_ID / f"{symbol}_{tf}.csv.gz"
-        if not p.exists():
-            p = DATA_ID / f"{symbol}_{tf}.csv"
-        if not p.exists():
-            return pd.DataFrame()
-        df = pd.read_csv(p)
-        df.index = pd.to_datetime(df["datetime"])
+        df = _read_intraday(symbol, tf)
+        if df is None:
+            src = next((t for t in {"H4": ["H1", "M15"], "H1": ["M15"]}.get(tf, [])
+                        if _read_intraday(symbol, t) is not None), None)
+            if src is None:
+                return pd.DataFrame()
+            fine = _read_intraday(symbol, src)
+            fine = fine[~fine.index.duplicated(keep="last")].sort_index()
+            df = fine.resample({"H4": "4h", "H1": "1h"}[tf]).agg(
+                {"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
     df = df[["open", "high", "low", "close"]].astype(float)
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df = df[(df["high"] >= df["low"]) & (df["close"] > 0)]

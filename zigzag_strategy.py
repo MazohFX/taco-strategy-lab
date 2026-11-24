@@ -25,6 +25,7 @@ ENGINE_VERSION = 1
 _GIST_SLOT = "zigzag_topn"
 _DEV_DEFAULTS = {"D1": [1.5, 2.5, 3.5], "H4": [1.0, 1.5, 2.5], "H1": [0.5, 1.0, 1.5], "M15": [0.3, 0.5, 1.0]}
 _DEV_OPTIONS = [0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 5.0]
+ZZ_SYMBOLS = ["USDJPY", "XAUUSD", "XAGUSD"]   # Paare, für die die Pine-Strategie gedacht ist
 _OPT_LBL = {"pf": "Profit Factor", "sharpe": "Sharpe", "wr": "Win-Rate"}
 
 
@@ -354,7 +355,7 @@ def render_zigzag_strategy(save_fn=None, load_fn=None) -> None:
 **Unterschiede zu TradingView:** SL und TP im selben Bar → SL zählt zuerst (pessimistisch). Gap über SL/TP → Fill zum Open.
 Die Python-Engine wurde Trade für Trade gegen eine wörtliche Bar-für-Bar-Übersetzung des Pine-Codes geprüft.
 
-**Daten:** D1 = Pepperstone-MT5 (`data/mt5`), H4/H1/M15 = Dukascopy (`data/dukascopy_intraday`, ab 2015, UTC).
+**Paare:** USDJPY, XAUUSD, XAGUSD (vorausgewählt). **Daten:** D1 = Pepperstone-MT5 (`data/mt5`), H4/H1/M15 = Dukascopy (`data/dukascopy_intraday`, ab 2015, UTC). Fehlt ein Timeframe (z.B. XAUUSD H4), wird er aus M15 zusammengefasst. XAGUSD gibt es bisher nur auf D1.
 **Kosten:** Kommission % je Order (Entry + Exit) aus dem Pine-Kommentar: FX-Majors 0,004 %, FX-Minors 0,020 %, Metalle 0,0075 %, plus optionaler Spread.
         """)
 
@@ -369,9 +370,12 @@ Die Python-Engine wurde Trade für Trade gegen eine wörtliche Bar-für-Bar-Übe
             tf = st.selectbox("Timeframe", ze.TIMEFRAMES, index=1, key="zz_tf")
         syms_all = ze.available_symbols(tf)
         with m2:
-            _def = [s for s in ["USDJPY"] if s in syms_all] or syms_all[:1]
+            _def = [s for s in ZZ_SYMBOLS if s in syms_all] or syms_all[:1]
+            _miss = [s for s in ZZ_SYMBOLS if s not in syms_all]
             syms = st.multiselect("Paare (je Paar eigene 3 Slots, Trades werden gepoolt)", syms_all, default=_def,
                                   key=f"zz_syms_{tf}")
+            if _miss:
+                st.caption(f"⚠️ Keine {tf}-Daten für {', '.join(_miss)} — nur auf D1 (Pepperstone) verfügbar.")
         with m3:
             d_start = st.date_input("Daten ab", _dt.date(2006, 1, 1) if tf == "D1" else _dt.date(2015, 1, 1),
                                     key=f"zz_start_{tf}")
