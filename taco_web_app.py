@@ -13205,8 +13205,17 @@ if test_mode == "DAX Freitag Short":
     st.stop()
 
 if test_mode == "Zig Zag Strategie Test":
-    from zigzag_strategy import render_zigzag_strategy
-    render_zigzag_strategy(save_fn=_save_wfa_result, load_fn=_load_wfa_result)
+    import importlib
+    import zigzag_engine as _zz_eng
+    import zigzag_strategy as _zz_page
+    # Streamlit Cloud lädt geänderte Zusatzmodule nach einem Push nicht automatisch neu → bei neuer Datei-Version neu laden
+    for _zz_mod in (_zz_eng, _zz_page):
+        _zz_mt = Path(_zz_mod.__file__).stat().st_mtime
+        if getattr(_zz_mod, "_loaded_mtime", None) != _zz_mt:
+            _zz_mod = importlib.reload(_zz_mod)
+            _zz_mod._loaded_mtime = _zz_mt
+    import zigzag_strategy as _zz_page
+    _zz_page.render_zigzag_strategy(save_fn=_save_wfa_result, load_fn=_load_wfa_result)
     st.stop()
 
 def _macro_dashboard_deps() -> dict:
